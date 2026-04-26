@@ -226,13 +226,82 @@ func TestBytesAndNonLeadingStringNoOps(t *testing.T) {
 	}
 }
 
+func TestAssignModule(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		src         []byte
+		asgnLine    int
+		asgnName    string
+		nameLen     byte
+		valStartCol byte
+		valEndCol   byte
+		value       any
+		tail        []bytecode.NoOpStmt
+	}{
+		{"x = None", []byte("x = None\n"), 1, "x", 1, 4, 8, nil, nil},
+		{"x = True", []byte("x = True\n"), 1, "x", 1, 4, 8, true, nil},
+		{"x = False", []byte("x = False\n"), 1, "x", 1, 4, 9, false, nil},
+		{"x = \"hi\"", []byte("x = \"hi\"\n"), 1, "x", 1, 4, 8, "hi", nil},
+		{"x = 'hi'", []byte("x = 'hi'\n"), 1, "x", 1, 4, 8, "hi", nil},
+		{"xx = None", []byte("xx = None\n"), 1, "xx", 2, 5, 9, nil, nil},
+		{"longername = None", []byte("longername = None\n"), 1, "longername", 10, 13, 17, nil, nil},
+		{"x = None + pass", []byte("x = None\npass\n"), 1, "x", 1, 4, 8, nil,
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"x = True + blank + pass", []byte("x = True\n\npass\n"), 1, "x", 1, 4, 8, true,
+			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
+		{"x = None on line 2", []byte("\nx = None\n"), 2, "x", 1, 4, 8, nil, nil},
+		{"x = None + comment + pass", []byte("x = None\n# gap\npass\n"), 1, "x", 1, 4, 8, nil,
+			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
+		{"x = \"hello world\"", []byte("x = \"hello world\"\n"), 1, "x", 1, 4, 17, "hello world", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			noneIdx := byte(1)
+			wantConsts := []any{tc.value, nil}
+			if tc.value == nil {
+				noneIdx = 0
+				wantConsts = []any{nil}
+			}
+			wantBC := bytecode.AssignBytecode(noneIdx, len(tc.tail))
+			if !bytes.Equal(c.Bytecode, wantBC) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
+			}
+			wantLT := bytecode.AssignLineTable(tc.asgnLine, tc.nameLen, tc.valStartCol, tc.valEndCol, tc.tail)
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+			if len(c.Consts) != len(wantConsts) {
+				t.Fatalf("consts len = %d; want %d (%v)", len(c.Consts), len(wantConsts), wantConsts)
+			}
+			for i := range wantConsts {
+				if c.Consts[i] != wantConsts[i] {
+					t.Errorf("consts[%d] = %v; want %v", i, c.Consts[i], wantConsts[i])
+				}
+			}
+			if len(c.Names) != 1 || c.Names[0] != tc.asgnName {
+				t.Errorf("names = %v; want (%q,)", c.Names, tc.asgnName)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		src  []byte
 	}{
-		{"assignment", []byte("x = 1\n")},
+		{"int assignment", []byte("x = 1\n")},
+		{"ellipsis assignment", []byte("x = ...\n")},
+		{"bytes assignment", []byte("x = b\"hi\"\n")},
+		{"assignment to reserved name", []byte("None = 1\n")},
+		{"chained assignment", []byte("x = y = None\n")},
+		{"augmented assignment", []byte("x += 1\n")},
 		{"call", []byte("print('hi')\n")},
 		{"import", []byte("import sys\n")},
 		{"docstring with backslash escape", []byte("\"hi\\nthere\"\n")},
@@ -245,7 +314,7 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"unary negative", []byte("-1\n")},
 		{"binary op", []byte("1 + 2\n")},
 		{"trailing comma", []byte("1,\n")},
-		{"pass then assignment", []byte("pass\nx = 1\n")},
+		{"pass then assignment", []byte("pass\nx = None\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

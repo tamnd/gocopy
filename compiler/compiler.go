@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.6 supports three body shapes:
+// v0.0.7 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -15,10 +15,16 @@
 //     STORE_NAME __doc__` after the synthetic RESUME, then the no-op
 //     tail. Multi-line docstrings emit a LONG line-table entry whose
 //     end_line_delta covers the closing triple quote's source line.
+//  4. A leading `name = literal` assignment where literal is one of
+//     None, True, False, or a plain-ASCII string literal, optionally
+//     followed by N >= 0 no-op statements. Compiles to `LOAD_CONST
+//     <value>; STORE_NAME <name>` after the synthetic RESUME, then
+//     the no-op tail. Names tuple is `(name,)`.
 //
 // The first two shapes share the consts tuple `(None,)` and an empty
 // names tuple. The docstring shape uses `(docstring, None)` and
-// `('__doc__',)`.
+// `('__doc__',)`. The assign shape uses `(value, None)` (or `(None,)`
+// when value is None itself) and `(name,)`.
 //
 // Anything else returns ErrUnsupportedSource. Wiring github.com/tamnd/
 // gopapy as the parser, which would replace this hand-rolled scanner,
@@ -67,6 +73,19 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 			bytecode.DocstringLineTable(cls.docLine, cls.docEndLine, cls.docCol, cls.stmts),
 			[]any{cls.docText, nil},
 			[]string{"__doc__"},
+		), nil
+	case modAssign:
+		consts := []any{cls.asgnValue, nil}
+		noneIdx := byte(1)
+		if cls.asgnValue == nil {
+			consts = []any{nil}
+			noneIdx = 0
+		}
+		return module(opts.Filename,
+			bytecode.AssignBytecode(noneIdx, len(cls.stmts)),
+			bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts),
+			consts,
+			[]string{cls.asgnName},
 		), nil
 	}
 	return nil, ErrUnsupportedSource
