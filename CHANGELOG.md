@@ -9,6 +9,38 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-04-26
+
+`gocopy compile` accepts a float literal on the right-hand side of a
+leading `name = literal` assignment. Any value `strconv.ParseFloat`
+accepts is valid — `1.0`, `3.14`, `0.0`, `1e100`, `1_000.5` — except
+complex literals (trailing `j`/`J` are rejected).
+
+CPython always uses `LOAD_CONST 0` for floats (no `LOAD_SMALL_INT`
+path). `consts = (float_val, None)`. Marshal emits `TYPE_BINARY_FLOAT`
+(0x67): 8 bytes, IEEE 754 double-precision, little-endian. Floats are
+not immortal in CPython 3.14, so `FLAG_REF` is set only when the same
+float appears more than once in the const-walk (never in the plain
+assignment case).
+
+### Added
+
+- `marshal.emitObject` handles `float64` → `TYPE_BINARY_FLOAT` with
+  an 8-byte little-endian double payload.
+- `float64KeyType` / `float64Key()` in `marshal/writer.go`; `tupleKey`
+  and `refCounter.tuple` updated to track `float64` consts.
+- `parseFloatLiteral` in `compiler/classify.go`: accepts tokens with
+  `.`, `e`, or `E`; rejects complex suffixes; strips underscores.
+- Five new fixtures: `048_assign_float_one.py` through
+  `052_assign_float_then_pass.py`.
+
+### Deferred
+
+- Complex literals (`1j`, `2.5j`).
+- Negative float literals (unary minus not yet parsed).
+- Docstring + assignment combo.
+- Wiring gopapy as the parser.
+
 ## [0.0.9] - 2026-04-26
 
 `gocopy compile` accepts a non-negative integer literal on the
@@ -409,7 +441,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.9...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/tamnd/gocopy/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/tamnd/gocopy/releases/tag/v0.0.9
 [0.0.8]: https://github.com/tamnd/gocopy/releases/tag/v0.0.8
 [0.0.7]: https://github.com/tamnd/gocopy/releases/tag/v0.0.7

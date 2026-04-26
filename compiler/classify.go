@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"math"
+	"strconv"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
 )
@@ -366,9 +367,14 @@ func tryParseAssign(s []byte) (asgn, bool) {
 	case "...":
 		value = bytecode.Ellipsis
 	default:
-		// Try integer literal first.
+		// Integer first (no decimal point, no e/E as exponent marker).
 		if iv, ok := parseIntLiteral(rhs); ok {
 			value = iv
+			break
+		}
+		// Float next (has '.', 'e', or 'E'; not complex).
+		if fv, ok := parseFloatLiteral(rhs); ok {
+			value = fv
 			break
 		}
 		text, isString, ok := parseStringOrBytes(rhs)
@@ -421,6 +427,47 @@ func parseIntLiteral(s []byte) (int64, bool) {
 		return 0, false
 	}
 	return parseBaseLiteral(s, 10)
+}
+
+// parseFloatLiteral recognises a Python float literal (not complex, not pure
+// integer) on the right-hand side of an assignment. It accepts any form that
+// strconv.ParseFloat accepts after stripping Python's underscore separators,
+// provided the literal:
+//   - does not end with j/J (that would be complex)
+//   - contains at least one of '.', 'e', 'E' (pure integers are handled by
+//     parseIntLiteral and should not fall through here)
+//
+// Returns (value, true) on success, (0, false) otherwise.
+func parseFloatLiteral(s []byte) (float64, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+	last := s[len(s)-1]
+	if last == 'j' || last == 'J' {
+		return 0, false
+	}
+	hasFloatChar := false
+	for _, c := range s {
+		if c == '.' || c == 'e' || c == 'E' {
+			hasFloatChar = true
+			break
+		}
+	}
+	if !hasFloatChar {
+		return 0, false
+	}
+	// Strip underscore separators before handing to strconv.
+	buf := make([]byte, 0, len(s))
+	for _, c := range s {
+		if c != '_' {
+			buf = append(buf, c)
+		}
+	}
+	f, err := strconv.ParseFloat(string(buf), 64)
+	if err != nil {
+		return 0, false
+	}
+	return f, true
 }
 
 // parseBaseLiteral parses digits (with underscore separators allowed) in the

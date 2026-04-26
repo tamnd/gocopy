@@ -272,6 +272,12 @@ func TestAssignModule(t *testing.T) {
 		{"x = 0x100", []byte("x = 0x100\n"), 1, "x", 1, 4, 9, int64(256), nil},
 		{"x = 1 + pass", []byte("x = 1\npass\n"), 1, "x", 1, 4, 5, int64(1),
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"x = 1.0", []byte("x = 1.0\n"), 1, "x", 1, 4, 7, float64(1.0), nil},
+		{"x = 3.14", []byte("x = 3.14\n"), 1, "x", 1, 4, 8, float64(3.14), nil},
+		{"x = 0.0", []byte("x = 0.0\n"), 1, "x", 1, 4, 7, float64(0.0), nil},
+		{"x = 1e100", []byte("x = 1e100\n"), 1, "x", 1, 4, 9, float64(1e100), nil},
+		{"x = 1.0 + pass", []byte("x = 1.0\npass\n"), 1, "x", 1, 4, 7, float64(1.0),
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
