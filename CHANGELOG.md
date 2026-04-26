@@ -9,6 +9,35 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-04-26
+
+`gocopy compile` accepts N >= 2 sequential `name = literal` assignments
+at module level. Any mix of the literal types from v0.0.7-v0.0.12
+(None, True, False, `...`, string, bytes, integer, float, complex,
+negative) is accepted.
+
+The consts tuple follows CPython's layout: the first assignment's value
+is always present; subsequent small integers (0..255) are loaded via
+`LOAD_SMALL_INT` and are not added; other values are appended in
+encounter order (deduplicated); `None` is appended if absent; negated
+values from negative literals are appended last. Names are deduplicated
+too.
+
+### Added
+
+- `modMultiAssign` classifier kind; multi-assignment recognition in the
+  `classify` loop; `asgns []asgn` on `classification`.
+- `compileMultiAssign` in `compiler/compiler.go`.
+- `bytecode.AssignInfo` and `MultiAssignLineTable` in `bytecode/assign.go`.
+- Seven new fixtures: `061`-`067`.
+- `TestMultiAssign` in `compiler/compiler_test.go`.
+
+### Deferred
+
+- Chained assignment (`x = y = 1`).
+- Augmented and annotated assignment.
+- Wiring gopapy as the parser.
+
 ## [0.0.12] - 2026-04-26
 
 `gocopy compile` accepts a pure-imaginary complex literal on the
@@ -492,7 +521,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.12...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.13...HEAD
+[0.0.13]: https://github.com/tamnd/gocopy/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/tamnd/gocopy/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/tamnd/gocopy/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/tamnd/gocopy/compare/v0.0.9...v0.0.10

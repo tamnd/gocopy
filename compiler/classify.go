@@ -36,13 +36,14 @@ const (
 	modNoOps
 	modDocstring
 	modAssign
+	modMultiAssign
 )
 
 type classification struct {
 	kind modKind
 	// modNoOps: every statement, in source order.
-	// modDocstring / modAssign: the no-op tail, after the leading
-	// docstring or assignment.
+	// modDocstring / modAssign / modMultiAssign: the no-op tail, after
+	// the leading docstring or assignment(s).
 	stmts []bytecode.NoOpStmt
 	// modDocstring fields:
 	docLine    int
@@ -56,6 +57,8 @@ type classification struct {
 	asgnValStart byte
 	asgnValEnd   byte
 	asgnValue    any
+	// modMultiAssign fields:
+	asgns []asgn
 }
 
 // rawStmt is the parser's intermediate form: a no-op token, a string
@@ -111,9 +114,9 @@ func classify(src []byte) (classification, bool) {
 		if len(bare) > 255 {
 			return classification{}, false
 		}
-		// Assignment is only valid as the first statement in v0.0.7.
-		// Subsequent assignments fall through to default (rejected).
-		if len(stmts) == 0 {
+		// Assignments are allowed at the top of the module and can repeat
+		// consecutively; a no-op after the last assignment ends the run.
+		if len(stmts) == 0 || stmts[len(stmts)-1].kind == stmtAssign {
 			if a, ok := tryParseAssign(bare); ok {
 				stmts = append(stmts, rawStmt{
 					line:         i + 1,
@@ -161,20 +164,41 @@ func classify(src []byte) (classification, bool) {
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtAssign {
-		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
-		for _, s := range stmts[1:] {
+		numAsgn := 0
+		for _, s := range stmts {
+			if s.kind != stmtAssign {
+				break
+			}
+			numAsgn++
+		}
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-numAsgn)
+		for _, s := range stmts[numAsgn:] {
 			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
 		}
-		return classification{
-			kind:         modAssign,
-			stmts:        tail,
-			asgnLine:     first.line,
-			asgnName:     first.text,
-			asgnNameLen:  first.asgnNameLen,
-			asgnValStart: first.asgnValStart,
-			asgnValEnd:   first.asgnValEnd,
-			asgnValue:    first.asgnValue,
-		}, true
+		if numAsgn == 1 {
+			return classification{
+				kind:         modAssign,
+				stmts:        tail,
+				asgnLine:     first.line,
+				asgnName:     first.text,
+				asgnNameLen:  first.asgnNameLen,
+				asgnValStart: first.asgnValStart,
+				asgnValEnd:   first.asgnValEnd,
+				asgnValue:    first.asgnValue,
+			}, true
+		}
+		as := make([]asgn, numAsgn)
+		for k, s := range stmts[:numAsgn] {
+			as[k] = asgn{
+				name:     s.text,
+				nameLen:  s.asgnNameLen,
+				valStart: s.asgnValStart,
+				valEnd:   s.asgnValEnd,
+				value:    s.asgnValue,
+				line:     s.line,
+			}
+		}
+		return classification{kind: modMultiAssign, stmts: tail, asgns: as}, true
 	}
 	out := make([]bytecode.NoOpStmt, 0, len(stmts))
 	for _, s := range stmts {
@@ -310,6 +334,7 @@ type asgn struct {
 	valStart byte
 	valEnd   byte
 	value    any
+	line     int
 }
 
 // negLiteral is the value type for `name = -literal` assignments.

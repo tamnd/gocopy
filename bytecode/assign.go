@@ -164,3 +164,39 @@ func appendShort0Entry(out []byte, length int, startCol, endCol byte) []byte {
 }
 
 const codeShort0 = 0
+
+// AssignInfo describes one `name = value` assignment for multi-assign
+// line-table generation.
+type AssignInfo struct {
+	Line     int    // 1-indexed source line
+	NameLen  byte   // number of bytes in the name (1..15)
+	ValStart byte   // 0-indexed start column of the value text
+	ValEnd   byte   // 0-indexed exclusive end column of the value text
+}
+
+// MultiAssignLineTable returns the PEP 626 line table for a sequence of
+// N >= 1 `name = value` assignments followed by optional tail no-ops.
+// It generalises AssignLineTable to the multi-assignment case.
+func MultiAssignLineTable(asgns []AssignInfo, tail []NoOpStmt) []byte {
+	out := make([]byte, 0, 5+5*len(asgns)+4*len(tail))
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // prologue (RESUME)
+	prevLine := 0
+	for i, a := range asgns {
+		out = appendValueEntry(out, a.Line-prevLine, a.ValStart, a.ValEnd)
+		prevLine = a.Line
+		storeLen := 1
+		if i == len(asgns)-1 && len(tail) == 0 {
+			storeLen = 3
+		}
+		out = appendShort0Entry(out, storeLen, 0, a.NameLen)
+	}
+	for i, s := range tail {
+		length := 1
+		if i == len(tail)-1 {
+			length = 2
+		}
+		out = appendNoOpEntry(out, s.Line-prevLine, length, s.EndCol)
+		prevLine = s.Line
+	}
+	return out
+}

@@ -20,6 +20,7 @@ for at least one fixture exercising that node and the
 | Module-level assignment (`name = <float>`) | done | v0.0.10 | tests/fixtures/048_assign_float_one.py |
 | Module-level assignment (`name = -<int or float>`) | done | v0.0.11 | tests/fixtures/053_assign_neg_one.py |
 | Module-level assignment (`name = <complex>`, pure-imaginary) | done | v0.0.12 | tests/fixtures/058_assign_complex_one.py |
+| N >= 2 sequential module-level assignments (any literal type) | done | v0.0.13 | tests/fixtures/061_multi_assign_two_ints.py |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |
