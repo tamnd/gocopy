@@ -136,26 +136,32 @@ func TestMultiNoOpStatements(t *testing.T) {
 func TestDocstringModule(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		src       []byte
-		docLine   int
-		docEndCol byte
-		docText   string
-		tail      []bytecode.NoOpStmt
+		name       string
+		src        []byte
+		docLine    int
+		docEndLine int
+		docEndCol  byte
+		docText    string
+		tail       []bytecode.NoOpStmt
 	}{
-		{"plain double", []byte("\"hi\"\n"), 1, 4, "hi", nil},
-		{"plain single", []byte("'hi'\n"), 1, 4, "hi", nil},
-		{"triple double", []byte("\"\"\"hi\"\"\"\n"), 1, 8, "hi", nil},
-		{"triple single", []byte("'''hi'''\n"), 1, 8, "hi", nil},
-		{"docstring then pass", []byte("\"hi\"\npass\n"), 1, 4, "hi",
+		{"plain double", []byte("\"hi\"\n"), 1, 1, 4, "hi", nil},
+		{"plain single", []byte("'hi'\n"), 1, 1, 4, "hi", nil},
+		{"triple double", []byte("\"\"\"hi\"\"\"\n"), 1, 1, 8, "hi", nil},
+		{"triple single", []byte("'''hi'''\n"), 1, 1, 8, "hi", nil},
+		{"docstring then pass", []byte("\"hi\"\npass\n"), 1, 1, 4, "hi",
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
-		{"docstring then None", []byte("\"hi\"\nNone\n"), 1, 4, "hi",
+		{"docstring then None", []byte("\"hi\"\nNone\n"), 1, 1, 4, "hi",
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
-		{"docstring blank pass", []byte("\"hi\"\n\npass\n"), 1, 4, "hi",
+		{"docstring blank pass", []byte("\"hi\"\n\npass\n"), 1, 1, 4, "hi",
 			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
-		{"leading blank docstring", []byte("\n\"hi\"\n"), 2, 4, "hi", nil},
-		{"empty docstring", []byte("\"\"\n"), 1, 2, "", nil},
-		{"longer ascii", []byte("\"hello world\"\n"), 1, 13, "hello world", nil},
+		{"leading blank docstring", []byte("\n\"hi\"\n"), 2, 2, 4, "hi", nil},
+		{"empty docstring", []byte("\"\"\n"), 1, 1, 2, "", nil},
+		{"longer ascii", []byte("\"hello world\"\n"), 1, 1, 13, "hello world", nil},
+		{"two-line triple", []byte("\"\"\"a\nb\"\"\"\n"), 1, 2, 4, "a\nb", nil},
+		{"three-line triple", []byte("\"\"\"a\nb\nc\"\"\"\n"), 1, 3, 4, "a\nb\nc", nil},
+		{"two-line triple + tail", []byte("\"\"\"a\nb\"\"\"\npass\n"), 1, 2, 4, "a\nb",
+			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
+		{"two-line triple single quotes", []byte("'''a\nb'''\n"), 1, 2, 4, "a\nb", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,7 +173,7 @@ func TestDocstringModule(t *testing.T) {
 			if !bytes.Equal(c.Bytecode, wantBC) {
 				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
 			}
-			wantLT := bytecode.DocstringLineTable(tc.docLine, tc.docEndCol, tc.tail)
+			wantLT := bytecode.DocstringLineTable(tc.docLine, tc.docEndLine, tc.docEndCol, tc.tail)
 			if !bytes.Equal(c.LineTable, wantLT) {
 				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
 			}

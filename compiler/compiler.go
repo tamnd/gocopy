@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.5 supports three body shapes:
+// v0.0.6 supports three body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -9,10 +9,12 @@
 //     statements). The no-op set is: `pass`, `None`, `True`, `False`,
 //     `...`, a numeric literal, a non-leading string or bytes
 //     literal, or a leading bytes literal.
-//  3. A leading single-line ASCII string literal (the docstring),
-//     optionally followed by N >= 0 no-op statements. Compiles to
-//     `LOAD_CONST docstring; STORE_NAME __doc__` after the synthetic
-//     RESUME, then the no-op tail.
+//  3. A leading ASCII string literal (the docstring), single-line or
+//     triple-quoted across multiple lines, optionally followed by
+//     N >= 0 no-op statements. Compiles to `LOAD_CONST docstring;
+//     STORE_NAME __doc__` after the synthetic RESUME, then the no-op
+//     tail. Multi-line docstrings emit a LONG line-table entry whose
+//     end_line_delta covers the closing triple quote's source line.
 //
 // The first two shapes share the consts tuple `(None,)` and an empty
 // names tuple. The docstring shape uses `(docstring, None)` and
@@ -62,7 +64,7 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	case modDocstring:
 		return module(opts.Filename,
 			bytecode.DocstringBytecode(len(cls.stmts)),
-			bytecode.DocstringLineTable(cls.docLine, cls.docCol, cls.stmts),
+			bytecode.DocstringLineTable(cls.docLine, cls.docEndLine, cls.docCol, cls.stmts),
 			[]any{cls.docText, nil},
 			[]string{"__doc__"},
 		), nil

@@ -92,6 +92,55 @@ func TestEmptyModuleGolden(t *testing.T) {
 	}
 }
 
+// TestStringConstInterningRule pins the all-name-chars test that decides
+// whether a string const is emitted as TYPE_SHORT_ASCII_INTERNED|FLAG_REF
+// (0xda) or plain TYPE_SHORT_ASCII (0x7a). CPython's
+// intern_string_constants only interns when every byte is ASCII
+// alphanumeric or underscore; multi-line docstrings, strings with
+// spaces, and strings with punctuation must come out non-interned.
+func TestStringConstInterningRule(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		s       string
+		wantTag byte
+	}{
+		{"identifier-like", "hi", TYPE_SHORT_ASCII_INTERNED | FlagRef},
+		{"underscore", "abc_def", TYPE_SHORT_ASCII_INTERNED | FlagRef},
+		{"leading digit", "1abc", TYPE_SHORT_ASCII_INTERNED | FlagRef},
+		{"with space", "a b", TYPE_SHORT_ASCII},
+		{"with newline", "a\nb", TYPE_SHORT_ASCII},
+		{"with hyphen", "a-b", TYPE_SHORT_ASCII},
+	}
+	for _, tc := range cases {
+		c := &bytecode.CodeObject{
+			Bytecode:        []byte{0x80, 0},
+			Consts:          []any{tc.s, nil},
+			Names:           []string{},
+			LocalsPlusNames: []string{},
+			LocalsPlusKinds: []byte{},
+			Filename:        "x.py",
+			Name:            "<module>",
+			QualName:        "<module>",
+			FirstLineNo:     1,
+			LineTable:       []byte{0xf0},
+			ExcTable:        []byte{},
+		}
+		got, err := Marshal(c)
+		if err != nil {
+			t.Fatalf("%s: Marshal: %v", tc.name, err)
+		}
+		i := bytes.Index(got, []byte(tc.s))
+		if i < 2 {
+			t.Fatalf("%s: payload not found in output", tc.name)
+		}
+		tag := got[i-2]
+		if tag != tc.wantTag {
+			t.Errorf("%s: type byte = 0x%02x, want 0x%02x", tc.name, tag, tc.wantTag)
+		}
+	}
+}
+
 // TestRefDedupsRepeatedString covers the FLAG_REF / TYPE_REF roundtrip for
 // an interned string used twice in the walk (Name and QualName both
 // "<module>"). The qualname slot must come out as a back-reference.

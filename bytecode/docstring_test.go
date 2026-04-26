@@ -43,46 +43,62 @@ func TestDocstringBytecodeGolden(t *testing.T) {
 	}
 }
 
-// TestDocstringLineTableGolden covers the entries CPython emits for a
-// docstring on its own, a docstring followed by a single-line tail,
-// and a docstring on line 2 (leading blank).
+// TestDocstringLineTableGolden covers the entries CPython emits for
+// single-line docstrings (with and without a tail) and multi-line
+// triple-quoted docstrings (LONG entry path).
 func TestDocstringLineTableGolden(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name      string
-		docLine   int
-		docEndCol byte
-		tail      []NoOpStmt
-		want      []byte
+		name       string
+		docLine    int
+		docEndLine int
+		docEndCol  byte
+		tail       []NoOpStmt
+		want       []byte
 	}{
 		{
 			"docstring only line 1",
-			1, 4, nil,
+			1, 1, 4, nil,
 			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xdb, 0x00, 0x04},
 		},
 		{
 			"triple-quoted docstring only line 1",
-			1, 8, nil,
+			1, 1, 8, nil,
 			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xdb, 0x00, 0x08},
 		},
 		{
 			"docstring + pass",
-			1, 4, []NoOpStmt{{Line: 2, EndCol: 4}},
+			1, 1, 4, []NoOpStmt{{Line: 2, EndCol: 4}},
 			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd9, 0x00, 0x04, 0xd9, 0x00, 0x04},
 		},
 		{
 			"docstring + blank + pass",
-			1, 4, []NoOpStmt{{Line: 3, EndCol: 4}},
+			1, 1, 4, []NoOpStmt{{Line: 3, EndCol: 4}},
 			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd9, 0x00, 0x04, 0xe1, 0x00, 0x04},
 		},
 		{
 			"docstring on line 2 only (leading blank)",
-			2, 4, nil,
+			2, 2, 4, nil,
 			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xe3, 0x00, 0x04},
+		},
+		{
+			"two-line triple docstring",
+			1, 2, 4, nil,
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xf3, 0x02, 0x01, 0x01, 0x05},
+		},
+		{
+			"five-line triple docstring",
+			1, 5, 9, nil,
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xf3, 0x02, 0x04, 0x01, 0x0a},
+		},
+		{
+			"two-line triple docstring + pass on line 3",
+			1, 2, 4, []NoOpStmt{{Line: 3, EndCol: 4}},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xf1, 0x02, 0x01, 0x01, 0x05, 0xe1, 0x00, 0x04},
 		},
 	}
 	for _, c := range cases {
-		got := DocstringLineTable(c.docLine, c.docEndCol, c.tail)
+		got := DocstringLineTable(c.docLine, c.docEndLine, c.docEndCol, c.tail)
 		if !bytes.Equal(got, c.want) {
 			t.Errorf("DocstringLineTable(%s): want %x got %x", c.name, c.want, got)
 		}

@@ -38,20 +38,23 @@ type classification struct {
 	// modDocstring: the no-op tail, after the leading docstring.
 	stmts []bytecode.NoOpStmt
 	// modDocstring fields:
-	docLine int
-	docCol  byte
-	docText string
+	docLine    int
+	docEndLine int
+	docCol     byte
+	docText    string
 }
 
 // rawStmt is the parser's intermediate form: either a no-op token
 // (kind=stmtNoOp) or a string literal whose contents are captured
 // in `text` (kind=stmtString). Bytes literals collapse to
-// stmtNoOp because CPython drops them.
+// stmtNoOp because CPython drops them. For a single-line statement
+// endLine == line.
 type rawStmt struct {
-	line   int
-	endCol byte
-	kind   rawStmtKind
-	text   string
+	line    int
+	endLine int
+	endCol  byte
+	kind    rawStmtKind
+	text    string
 }
 
 type rawStmtKind uint8
@@ -65,12 +68,23 @@ func classify(src []byte) (classification, bool) {
 	lines := splitLines(src)
 
 	stmts := make([]rawStmt, 0, len(lines))
-	for idx, ln := range lines {
+	for i := 0; i < len(lines); {
+		ln := lines[i]
 		if lineIsBlankOrComment(ln) {
+			i++
 			continue
 		}
 		if len(ln) > 0 && (ln[0] == ' ' || ln[0] == '\t') {
 			return classification{}, false
+		}
+		// Multi-line triple-quoted string opens on this line and
+		// continues across subsequent lines until the matching
+		// closing triple. The single-line form (open and close on
+		// the same line) falls through to the standard scanner.
+		if multi, n, ok := tryConsumeMultilineString(lines, i); ok {
+			stmts = append(stmts, multi)
+			i = n
+			continue
 		}
 		bare := stripLineComment(ln)
 		bare = trimRight(bare)
@@ -80,14 +94,15 @@ func classify(src []byte) (classification, bool) {
 		text, isString, isStringOrBytes := parseStringOrBytes(bare)
 		switch {
 		case isStringOrBytes && isString:
-			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtString, text: text})
+			stmts = append(stmts, rawStmt{line: i + 1, endLine: i + 1, endCol: byte(len(bare)), kind: stmtString, text: text})
 		case isStringOrBytes:
-			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtNoOp})
+			stmts = append(stmts, rawStmt{line: i + 1, endLine: i + 1, endCol: byte(len(bare)), kind: stmtNoOp})
 		case isNoOpStatement(bare):
-			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtNoOp})
+			stmts = append(stmts, rawStmt{line: i + 1, endLine: i + 1, endCol: byte(len(bare)), kind: stmtNoOp})
 		default:
 			return classification{}, false
 		}
+		i++
 	}
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
@@ -98,11 +113,12 @@ func classify(src []byte) (classification, bool) {
 			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
 		}
 		return classification{
-			kind:    modDocstring,
-			stmts:   tail,
-			docLine: first.line,
-			docCol:  first.endCol,
-			docText: first.text,
+			kind:       modDocstring,
+			stmts:      tail,
+			docLine:    first.line,
+			docEndLine: first.endLine,
+			docCol:     first.endCol,
+			docText:    first.text,
 		}, true
 	}
 	out := make([]bytecode.NoOpStmt, 0, len(stmts))
@@ -110,6 +126,126 @@ func classify(src []byte) (classification, bool) {
 		out = append(out, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
 	}
 	return classification{kind: modNoOps, stmts: out}, true
+}
+
+// tryConsumeMultilineString reports whether `lines[i]` opens a
+// triple-quoted string at column 0 that closes on a later line. On
+// success it returns the assembled rawStmt (line range, end column
+// on the close line, body text) and the next line index to resume
+// from. The body must be plain ASCII with no backslashes and no
+// occurrence of the matching quote character. A bytes prefix is
+// honoured (the result becomes a no-op stmt). Single-line triple
+// quotes return ok=false so the standard scanner picks them up.
+func tryConsumeMultilineString(lines [][]byte, i int) (rawStmt, int, bool) {
+	ln := lines[i]
+	s := ln
+	isBytes := false
+	if len(s) > 0 && (s[0] == 'b' || s[0] == 'B') {
+		isBytes = true
+		s = s[1:]
+	}
+	if len(s) < 3 {
+		return rawStmt{}, 0, false
+	}
+	q := s[0]
+	if q != '"' && q != '\'' {
+		return rawStmt{}, 0, false
+	}
+	if s[1] != q || s[2] != q {
+		return rawStmt{}, 0, false
+	}
+	body := s[3:]
+	// If the closing triple is on this same line, defer to the
+	// single-line scanner.
+	if hasTriple(body, q) {
+		return rawStmt{}, 0, false
+	}
+	if !isPlainAscii(body, q) {
+		return rawStmt{}, 0, false
+	}
+	parts := []string{string(body)}
+	for j := i + 1; j < len(lines); j++ {
+		next := lines[j]
+		idx := indexTriple(next, q)
+		if idx < 0 {
+			if !isPlainAscii(next, q) {
+				return rawStmt{}, 0, false
+			}
+			parts = append(parts, string(next))
+			continue
+		}
+		head := next[:idx]
+		if !isPlainAscii(head, q) {
+			return rawStmt{}, 0, false
+		}
+		// The closing triple must end the line (no trailing junk
+		// other than a comment). Anything past the close becomes a
+		// new statement which we don't support today.
+		tail := next[idx+3:]
+		tail = stripLineComment(tail)
+		tail = trimRight(tail)
+		if len(tail) != 0 {
+			return rawStmt{}, 0, false
+		}
+		parts = append(parts, string(head))
+		text := joinNL(parts)
+		if len(text) > 255 {
+			return rawStmt{}, 0, false
+		}
+		endCol := idx + 3
+		if endCol > 255 {
+			return rawStmt{}, 0, false
+		}
+		kind := stmtString
+		if isBytes {
+			kind = stmtNoOp
+			text = ""
+		}
+		return rawStmt{
+			line:    i + 1,
+			endLine: j + 1,
+			endCol:  byte(endCol),
+			kind:    kind,
+			text:    text,
+		}, j + 1, true
+	}
+	return rawStmt{}, 0, false
+}
+
+// hasTriple reports whether b contains three consecutive bytes equal
+// to q anywhere.
+func hasTriple(b []byte, q byte) bool {
+	return indexTriple(b, q) >= 0
+}
+
+// indexTriple returns the index of the first qqq run in b, or -1.
+func indexTriple(b []byte, q byte) int {
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] == q && b[i+1] == q && b[i+2] == q {
+			return i
+		}
+	}
+	return -1
+}
+
+// joinNL joins parts with '\n'. Used to reconstruct a multi-line
+// string body from per-source-line fragments.
+func joinNL(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	n := len(parts) - 1
+	for _, p := range parts {
+		n += len(p)
+	}
+	out := make([]byte, 0, n)
+	for i, p := range parts {
+		if i > 0 {
+			out = append(out, '\n')
+		}
+		out = append(out, p...)
+	}
+	return string(out)
 }
 
 // parseStringOrBytes recognises the v0.0.5 string-literal grammar:
