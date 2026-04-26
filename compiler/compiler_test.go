@@ -278,6 +278,11 @@ func TestAssignModule(t *testing.T) {
 		{"x = 1e100", []byte("x = 1e100\n"), 1, "x", 1, 4, 9, float64(1e100), nil},
 		{"x = 1.0 + pass", []byte("x = 1.0\npass\n"), 1, "x", 1, 4, 7, float64(1.0),
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"x = -1", []byte("x = -1\n"), 1, "x", 1, 4, 6, negLiteral{int64(1), int64(-1)}, nil},
+		{"x = -5", []byte("x = -5\n"), 1, "x", 1, 4, 6, negLiteral{int64(5), int64(-5)}, nil},
+		{"x = -256", []byte("x = -256\n"), 1, "x", 1, 4, 8, negLiteral{int64(256), int64(-256)}, nil},
+		{"x = -3.14", []byte("x = -3.14\n"), 1, "x", 1, 4, 9, negLiteral{float64(3.14), float64(-3.14)}, nil},
+		{"x = -1e10", []byte("x = -1e10\n"), 1, "x", 1, 4, 9, negLiteral{float64(1e10), float64(-1e10)}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -285,17 +290,23 @@ func TestAssignModule(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile: %v", err)
 			}
-			noneIdx := byte(1)
-			wantConsts := []any{tc.value, nil}
-			if tc.value == nil {
-				noneIdx = 0
-				wantConsts = []any{nil}
-			}
+			var wantConsts []any
 			var wantBC []byte
-			if iv, ok := tc.value.(int64); ok && iv >= 0 && iv <= 255 {
-				wantBC = bytecode.AssignSmallIntBytecode(byte(iv), len(tc.tail))
+			if nl, ok := tc.value.(negLiteral); ok {
+				wantConsts = []any{nl.pos, nil, nl.neg}
+				wantBC = bytecode.AssignBytecodeAt(2, 1, len(tc.tail))
 			} else {
-				wantBC = bytecode.AssignBytecode(noneIdx, len(tc.tail))
+				noneIdx := byte(1)
+				wantConsts = []any{tc.value, nil}
+				if tc.value == nil {
+					noneIdx = 0
+					wantConsts = []any{nil}
+				}
+				if iv, ok := tc.value.(int64); ok && iv >= 0 && iv <= 255 {
+					wantBC = bytecode.AssignSmallIntBytecode(byte(iv), len(tc.tail))
+				} else {
+					wantBC = bytecode.AssignBytecode(noneIdx, len(tc.tail))
+				}
 			}
 			if !bytes.Equal(c.Bytecode, wantBC) {
 				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)

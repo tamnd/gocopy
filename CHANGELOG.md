@@ -9,6 +9,33 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-04-26
+
+`gocopy compile` accepts a leading `-` on the right-hand side of a
+`name = literal` assignment, for negative integer and float constants.
+
+CPython's constant folder keeps both the original un-negated literal
+and the folded negative in the consts tuple: `(N, None, -N)` with
+`LOAD_CONST 2` pointing at the negated value. Immortal-range rules
+apply: integers in [-5, -1] get FLAG_REF; below -5 they do not.
+
+### Added
+
+- `negLiteral{pos, neg any}` in `compiler/classify.go`.
+- Negative-prefix detection in `tryParseAssign` (checked before the
+  positive-float parser, which also accepts a leading `-`).
+- `bytecode.AssignBytecodeAt(valueIdx, noneIdx, tailStmts)`: the
+  general form of `AssignBytecode` with an explicit value const index.
+- Five new fixtures: `053_assign_neg_one.py` through
+  `057_assign_neg_float_sci.py`.
+
+### Deferred
+
+- `-0` (integer negative zero).
+- Complex literal RHS (`x = 1j`).
+- Multiple sequential assignments.
+- Wiring gopapy as the parser.
+
 ## [0.0.10] - 2026-04-26
 
 `gocopy compile` accepts a float literal on the right-hand side of a
@@ -441,7 +468,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/tamnd/gocopy/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/tamnd/gocopy/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/tamnd/gocopy/releases/tag/v0.0.9
 [0.0.8]: https://github.com/tamnd/gocopy/releases/tag/v0.0.8

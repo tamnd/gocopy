@@ -18,6 +18,7 @@ for at least one fixture exercising that node and the
 | Module-level assignment (`name = ... / b"bytes"`) | done | v0.0.8 | tests/fixtures/035_assign_ellipsis.py |
 | Module-level assignment (`name = <integer>`) | done | v0.0.9 | tests/fixtures/040_assign_int_zero.py |
 | Module-level assignment (`name = <float>`) | done | v0.0.10 | tests/fixtures/048_assign_float_one.py |
+| Module-level assignment (`name = -<int or float>`) | done | v0.0.11 | tests/fixtures/053_assign_neg_one.py |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |

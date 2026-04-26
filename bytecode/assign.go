@@ -22,10 +22,18 @@ package bytecode
 // followed by `tailStmts` no-op statements. `noneIdx` is the const
 // index for the implicit `LOAD_CONST None` at the end: 0 when the
 // assigned value itself is None (consts collapses to `(None,)`), 1
-// otherwise.
+// otherwise. The value is always at const index 0.
 func AssignBytecode(noneIdx byte, tailStmts int) []byte {
+	return AssignBytecodeAt(0, noneIdx, tailStmts)
+}
+
+// AssignBytecodeAt is the general form of AssignBytecode. valueIdx is
+// the const index for the value (0 in the common case; 2 when CPython's
+// constant folder places the folded result after the original literal
+// and None, as in `x = -1` where consts = (1, None, -1)).
+func AssignBytecodeAt(valueIdx, noneIdx byte, tailStmts int) []byte {
 	if tailStmts < 0 {
-		panic("bytecode.AssignBytecode: tailStmts must be >= 0")
+		panic("bytecode.AssignBytecodeAt: tailStmts must be >= 0")
 	}
 	nops := 0
 	if tailStmts > 1 {
@@ -34,7 +42,7 @@ func AssignBytecode(noneIdx byte, tailStmts int) []byte {
 	out := make([]byte, 0, 10+2*nops)
 	out = append(out,
 		byte(RESUME), 0,
-		byte(LOAD_CONST), 0,
+		byte(LOAD_CONST), valueIdx,
 		byte(STORE_NAME), 0,
 	)
 	for range nops {
