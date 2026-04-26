@@ -1,12 +1,12 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.3 supports two body shapes:
+// v0.0.4 supports two body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
-//  2. N >= 1 no-op statements on consecutive lines starting at line 1,
-//     each at column 0, with no blank or comment lines BETWEEN
-//     statements. The no-op set is: `pass`, `None`, `True`, `False`,
+//  2. N >= 1 no-op statements, each at column 0, with arbitrary blank
+//     or comment-only lines anywhere (leading, trailing, or between
+//     statements). The no-op set is: `pass`, `None`, `True`, `False`,
 //     `...`, an integer literal, a float literal, or a complex
 //     literal.
 //
@@ -47,8 +47,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return module(opts.Filename, bytecode.NoOpBytecode(1), bytecode.LineTableEmpty()), nil
 	case modNoOps:
 		return module(opts.Filename,
-			bytecode.NoOpBytecode(len(cls.endCols)),
-			bytecode.LineTableNoOps(cls.endCols),
+			bytecode.NoOpBytecode(len(cls.stmts)),
+			bytecode.LineTableNoOps(cls.stmts),
 		), nil
 	}
 	return nil, ErrUnsupportedSource
@@ -60,9 +60,9 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 // body shape.
 //
 // Bytes verified against `python3.14 -m py_compile` for empty modules
-// and the v0.0.3 N-statement no-op set. Consts, names,
-// localsplusnames, localspluskinds, exctable are identical across
-// every in-scope shape.
+// and the v0.0.4 N-statement no-op set with arbitrary blank/comment
+// gaps. Consts, names, localsplusnames, localspluskinds, exctable are
+// identical across every in-scope shape.
 func module(filename string, bc, lineTable []byte) *bytecode.CodeObject {
 	return &bytecode.CodeObject{
 		ArgCount:        0,
