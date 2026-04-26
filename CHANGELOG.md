@@ -9,6 +9,52 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-04-26
+
+`gocopy compile` accepts blank or comment-only lines anywhere in the
+source: leading, trailing, or between no-op statements. v0.0.3
+required the body to be on consecutive lines starting at line 1;
+this rung lifts that constraint without enlarging the no-op token
+set.
+
+CPython's lowering once a statement is no longer on `prev_line + 1`:
+
+- delta = 1 - ONE_LINE1 (already covered in v0.0.3).
+- delta = 2 - ONE_LINE2.
+- delta >= 3 - LONG entry: svarint(line_delta), end_line_delta=0,
+  varint(start_col+1), varint(end_col+1).
+
+A leading blank pushes the first statement off line 1, which
+collapses to a single LONG entry covering the whole body.
+
+Verified against `python3.14 -m py_compile` for gaps from one line
+up through ten blank lines.
+
+### Added
+
+- `bytecode.NoOpStmt{Line, EndCol}` carries each statement's source
+  line so the encoder can compute deltas.
+- Private `appendVarint` and `appendSignedVarint` primitives in
+  `bytecode`, implementing CPython's base-64 varint and zigzag
+  svarint from `Objects/locations.md`.
+- Five new fixtures: `014_pass_blank_pass.py` through
+  `018_mixed_gaps.py`.
+
+### Changed
+
+- `bytecode.LineTableNoOps` now takes `[]NoOpStmt` instead of
+  `[]byte`. The single-no-op helper still wraps it in one line.
+- The classifier accepts blank/comment lines anywhere and records
+  each statement's source line.
+
+### Deferred
+
+- Multiple statements on the same line (`pass; pass`); the encoder
+  could already emit `ONE_LINE0` but the scanner has no semicolon
+  parser, so this whole branch waits on real parsing.
+- String / bytes literal as a top-level statement (docstring path).
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.3] - 2026-04-26
 
 `gocopy compile` accepts multiple no-op statements on consecutive
@@ -140,7 +186,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/tamnd/gocopy/releases/tag/v0.0.4
 [0.0.3]: https://github.com/tamnd/gocopy/releases/tag/v0.0.3
 [0.0.2]: https://github.com/tamnd/gocopy/releases/tag/v0.0.2
 [0.0.1]: https://github.com/tamnd/gocopy/releases/tag/v0.0.1

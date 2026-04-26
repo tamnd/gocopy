@@ -99,16 +99,22 @@ func TestSingleNoOpStatement(t *testing.T) {
 func TestMultiNoOpStatements(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name    string
-		src     []byte
-		endCols []byte
+		name  string
+		src   []byte
+		stmts []bytecode.NoOpStmt
 	}{
-		{"two pass", []byte("pass\npass\n"), []byte{4, 4}},
-		{"three pass", []byte("pass\npass\npass\n"), []byte{4, 4, 4}},
-		{"None False", []byte("None\nFalse\n"), []byte{4, 5}},
-		{"int int", []byte("1\n2\n"), []byte{1, 1}},
-		{"five mixed", []byte("pass\nNone\nTrue\nFalse\n...\n"), []byte{4, 4, 4, 5, 3}},
-		{"two pass trailing comments", []byte("pass # a\npass\n"), []byte{4, 4}},
+		{"two pass", []byte("pass\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 4}}},
+		{"three pass", []byte("pass\npass\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 4}, {Line: 3, EndCol: 4}}},
+		{"None False", []byte("None\nFalse\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 5}}},
+		{"int int", []byte("1\n2\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 1}, {Line: 2, EndCol: 1}}},
+		{"five mixed", []byte("pass\nNone\nTrue\nFalse\n...\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 4}, {Line: 3, EndCol: 4}, {Line: 4, EndCol: 5}, {Line: 5, EndCol: 3}}},
+		{"two pass trailing comments", []byte("pass # a\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 4}}},
+		{"pass blank pass", []byte("pass\n\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 3, EndCol: 4}}},
+		{"pass two blanks pass", []byte("pass\n\n\n\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 5, EndCol: 4}}},
+		{"pass comment pass", []byte("pass\n# gap\npass\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 3, EndCol: 4}}},
+		{"leading blank single pass", []byte("\n\npass\n"), []bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
+		{"leading comment single None", []byte("# header\nNone\n"), []bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"mixed gaps three stmts", []byte("pass\n\nNone\nTrue\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 3, EndCol: 4}, {Line: 4, EndCol: 4}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,12 +122,12 @@ func TestMultiNoOpStatements(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile: %v", err)
 			}
-			n := len(tc.endCols)
+			n := len(tc.stmts)
 			if !bytes.Equal(c.Bytecode, bytecode.NoOpBytecode(n)) {
 				t.Errorf("bytecode = %x; want %x", c.Bytecode, bytecode.NoOpBytecode(n))
 			}
-			if !bytes.Equal(c.LineTable, bytecode.LineTableNoOps(tc.endCols)) {
-				t.Errorf("linetable = %x; want %x", c.LineTable, bytecode.LineTableNoOps(tc.endCols))
+			if !bytes.Equal(c.LineTable, bytecode.LineTableNoOps(tc.stmts)) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, bytecode.LineTableNoOps(tc.stmts))
 			}
 		})
 	}
@@ -138,15 +144,13 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"import", []byte("import sys\n")},
 		{"docstring", []byte("\"hi\"\n")},
 		{"bytes literal", []byte("b'x'\n")},
-		{"pass on line 2 (leading blank)", []byte("\npass\n")},
-		{"pass on line 2 (leading comment)", []byte("# c\npass\n")},
 		{"indented pass", []byte("  pass\n")},
+		{"indented pass after blank", []byte("\n  pass\n")},
 		{"name Ellipsis", []byte("Ellipsis\n")},
 		{"unary negative", []byte("-1\n")},
 		{"binary op", []byte("1 + 2\n")},
 		{"trailing comma", []byte("1,\n")},
-		{"pass blank pass (gap)", []byte("pass\n\npass\n")},
-		{"pass comment pass (gap)", []byte("pass\n# gap\npass\n")},
+		{"pass then assignment", []byte("pass\nx = 1\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,7 +11,7 @@ for at least one fixture exercising that node and the
 | `pass` statement (single, line 1) | done | v0.0.2 | tests/fixtures/002_pass.py |
 | Bare non-string constant expression statement (single, line 1) | done | v0.0.2 | tests/fixtures/003_const_none.py |
 | Multi-statement no-op bodies (consecutive lines) | done | v0.0.3 | tests/fixtures/009_two_pass.py |
-| Blank / comment lines between no-op statements | planned | - | - |
+| Blank / comment lines between no-op statements | done | v0.0.4 | tests/fixtures/014_pass_blank_pass.py |
 | Constant expression statement: string / bytes (docstring path) | planned | - | - |
 | Module-level assignment | planned | - | - |
 | Arithmetic and unary | planned | - | - |

@@ -1,14 +1,15 @@
 package compiler
 
+import "github.com/tamnd/gocopy/v1/bytecode"
+
 // classify scans Python source and returns the body shape if it falls
 // inside the v0.0.x supported set, plus ok=false otherwise. The
 // supported shapes are:
 //
 //   - modEmpty: file contains only blank lines and comments.
-//   - modNoOps: file contains N >= 1 no-op statements on consecutive
-//     lines starting at line 1, each at column 0, with no blank or
-//     comment lines BETWEEN statements. Leading and trailing blank
-//     or comment-only lines are allowed.
+//   - modNoOps: file contains N >= 1 no-op statements, each at
+//     column 0, with arbitrary blank or comment-only lines anywhere
+//     (leading, trailing, or between statements).
 //
 // Trailing comments on the same line as a statement are allowed and
 // excluded from the recorded end column. Statements cannot be
@@ -24,44 +25,22 @@ const (
 )
 
 type classification struct {
-	kind    modKind
-	endCols []byte // end column of each no-op statement, in order; only valid for modNoOps
+	kind  modKind
+	stmts []bytecode.NoOpStmt // one entry per no-op statement; only valid for modNoOps
 }
 
 func classify(src []byte) (classification, bool) {
 	lines := splitLines(src)
 
-	// Find the first non-blank, non-comment line.
-	firstIdx := -1
-	for i, ln := range lines {
-		if !lineIsBlankOrComment(ln) {
-			firstIdx = i
-			break
+	stmts := make([]bytecode.NoOpStmt, 0, len(lines))
+	for idx, ln := range lines {
+		if lineIsBlankOrComment(ln) {
+			continue
 		}
-	}
-	if firstIdx < 0 {
-		return classification{kind: modEmpty}, true
-	}
-
-	// v0.0.x only handles bodies that start on line 1 (index 0).
-	// Leading blank or comment-only lines push the first statement
-	// to a later line, which would change the line table encoding
-	// (non-`+1` line delta) and is held off until a later rung.
-	if firstIdx != 0 {
-		return classification{}, false
-	}
-
-	// Walk consecutive non-blank, non-comment lines. Each must be a
-	// no-op statement at column 0. The first blank/comment line ends
-	// the run; everything after it must also be blank/comment.
-	endCols := make([]byte, 0, len(lines))
-	i := 0
-	for i < len(lines) && !lineIsBlankOrComment(lines[i]) {
-		stmt := lines[i]
-		if len(stmt) > 0 && (stmt[0] == ' ' || stmt[0] == '\t') {
+		if len(ln) > 0 && (ln[0] == ' ' || ln[0] == '\t') {
 			return classification{}, false
 		}
-		bare := stripLineComment(stmt)
+		bare := stripLineComment(ln)
 		bare = trimRight(bare)
 		if !isNoOpStatement(bare) {
 			return classification{}, false
@@ -69,15 +48,12 @@ func classify(src []byte) (classification, bool) {
 		if len(bare) > 255 {
 			return classification{}, false
 		}
-		endCols = append(endCols, byte(len(bare)))
-		i++
+		stmts = append(stmts, bytecode.NoOpStmt{Line: idx + 1, EndCol: byte(len(bare))})
 	}
-	for _, ln := range lines[i:] {
-		if !lineIsBlankOrComment(ln) {
-			return classification{}, false
-		}
+	if len(stmts) == 0 {
+		return classification{kind: modEmpty}, true
 	}
-	return classification{kind: modNoOps, endCols: endCols}, true
+	return classification{kind: modNoOps, stmts: stmts}, true
 }
 
 // splitLines splits src on '\n'. A trailing newline does NOT produce an
