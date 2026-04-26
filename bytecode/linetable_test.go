@@ -42,3 +42,69 @@ func TestLineTableSingleNoOpGolden(t *testing.T) {
 		}
 	}
 }
+
+// TestLineTableNoOpsGolden covers multi-statement no-op bodies. Each
+// expectation was generated from
+// `compile(src, "x.py", "exec").co_linetable.hex()` on Python 3.14.4.
+func TestLineTableNoOpsGolden(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		endCols []byte
+		want    []byte
+	}{
+		{
+			"pass\\npass",
+			[]byte{4, 4},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd8, 0x00, 0x04, 0xd9, 0x00, 0x04},
+		},
+		{
+			"pass\\npass\\npass",
+			[]byte{4, 4, 4},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd8, 0x00, 0x04, 0xd8, 0x00, 0x04, 0xd9, 0x00, 0x04},
+		},
+		{
+			"None\\nFalse",
+			[]byte{4, 5},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd8, 0x00, 0x04, 0xd9, 0x00, 0x05},
+		},
+		{
+			"1\\n2",
+			[]byte{1, 1},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd8, 0x00, 0x01, 0xd9, 0x00, 0x01},
+		},
+		{
+			"five passes",
+			[]byte{4, 4, 4, 4, 4},
+			[]byte{0xf0, 0x03, 0x01, 0x01, 0x01, 0xd8, 0x00, 0x04, 0xd8, 0x00, 0x04, 0xd8, 0x00, 0x04, 0xd8, 0x00, 0x04, 0xd9, 0x00, 0x04},
+		},
+	}
+	for _, c := range cases {
+		got := LineTableNoOps(c.endCols)
+		if !bytes.Equal(got, c.want) {
+			t.Errorf("LineTableNoOps(%s): want %x got %x", c.name, c.want, got)
+		}
+	}
+}
+
+// TestNoOpBytecodeGolden covers the bytecode stream for N consecutive
+// no-op statements. Each expectation was generated from
+// `compile(src, "x.py", "exec").co_code.hex()` on Python 3.14.4.
+func TestNoOpBytecodeGolden(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		n    int
+		want []byte
+	}{
+		{1, []byte{0x80, 0, 0x52, 0, 0x23, 0}},
+		{2, []byte{0x80, 0, 0x1b, 0, 0x52, 0, 0x23, 0}},
+		{3, []byte{0x80, 0, 0x1b, 0, 0x1b, 0, 0x52, 0, 0x23, 0}},
+		{5, []byte{0x80, 0, 0x1b, 0, 0x1b, 0, 0x1b, 0, 0x1b, 0, 0x52, 0, 0x23, 0}},
+	}
+	for _, c := range cases {
+		got := NoOpBytecode(c.n)
+		if !bytes.Equal(got, c.want) {
+			t.Errorf("NoOpBytecode(%d): want %x got %x", c.n, c.want, got)
+		}
+	}
+}

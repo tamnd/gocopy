@@ -35,8 +35,8 @@ func TestEmptyModule(t *testing.T) {
 			if c.Filename != "x.py" {
 				t.Errorf("filename = %q; want x.py", c.Filename)
 			}
-			if len(c.Bytecode) != 6 {
-				t.Errorf("bytecode len = %d; want 6", len(c.Bytecode))
+			if !bytes.Equal(c.Bytecode, bytecode.NoOpBytecode(1)) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, bytecode.NoOpBytecode(1))
 			}
 			if len(c.Consts) != 1 || c.Consts[0] != nil {
 				t.Errorf("consts = %v; want (None,)", c.Consts)
@@ -86,11 +86,42 @@ func TestSingleNoOpStatement(t *testing.T) {
 			if !bytes.Equal(c.LineTable, want) {
 				t.Errorf("linetable = %x; want %x", c.LineTable, want)
 			}
-			if len(c.Bytecode) != 6 {
-				t.Errorf("bytecode len = %d; want 6", len(c.Bytecode))
+			if !bytes.Equal(c.Bytecode, bytecode.NoOpBytecode(1)) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, bytecode.NoOpBytecode(1))
 			}
 			if len(c.Consts) != 1 || c.Consts[0] != nil {
 				t.Errorf("consts = %v; want (None,)", c.Consts)
+			}
+		})
+	}
+}
+
+func TestMultiNoOpStatements(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		src     []byte
+		endCols []byte
+	}{
+		{"two pass", []byte("pass\npass\n"), []byte{4, 4}},
+		{"three pass", []byte("pass\npass\npass\n"), []byte{4, 4, 4}},
+		{"None False", []byte("None\nFalse\n"), []byte{4, 5}},
+		{"int int", []byte("1\n2\n"), []byte{1, 1}},
+		{"five mixed", []byte("pass\nNone\nTrue\nFalse\n...\n"), []byte{4, 4, 4, 5, 3}},
+		{"two pass trailing comments", []byte("pass # a\npass\n"), []byte{4, 4}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			n := len(tc.endCols)
+			if !bytes.Equal(c.Bytecode, bytecode.NoOpBytecode(n)) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, bytecode.NoOpBytecode(n))
+			}
+			if !bytes.Equal(c.LineTable, bytecode.LineTableNoOps(tc.endCols)) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, bytecode.LineTableNoOps(tc.endCols))
 			}
 		})
 	}
@@ -107,7 +138,6 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"import", []byte("import sys\n")},
 		{"docstring", []byte("\"hi\"\n")},
 		{"bytes literal", []byte("b'x'\n")},
-		{"two passes", []byte("pass\npass\n")},
 		{"pass on line 2 (leading blank)", []byte("\npass\n")},
 		{"pass on line 2 (leading comment)", []byte("# c\npass\n")},
 		{"indented pass", []byte("  pass\n")},
@@ -115,6 +145,8 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"unary negative", []byte("-1\n")},
 		{"binary op", []byte("1 + 2\n")},
 		{"trailing comma", []byte("1,\n")},
+		{"pass blank pass (gap)", []byte("pass\n\npass\n")},
+		{"pass comment pass (gap)", []byte("pass\n# gap\npass\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,16 +1,18 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.2 supports two body shapes:
+// v0.0.3 supports two body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
-//  2. Exactly one no-op statement on line 1 starting at column 0,
-//     followed only by blank or comment-only lines. The no-op set is:
-//     `pass`, `None`, `True`, `False`, `...`, an integer literal, a
-//     float literal, or a complex literal.
+//  2. N >= 1 no-op statements on consecutive lines starting at line 1,
+//     each at column 0, with no blank or comment lines BETWEEN
+//     statements. The no-op set is: `pass`, `None`, `True`, `False`,
+//     `...`, an integer literal, a float literal, or a complex
+//     literal.
 //
-// Both shapes compile to the same bytecode + consts as the empty
-// module; only the line table differs (see bytecode/linetable.go).
+// Both shapes compile to the same consts tuple `(None,)`; the
+// bytecode and line table grow with statement count (see
+// bytecode/linetable.go).
 //
 // Anything else returns ErrUnsupportedSource. Wiring github.com/tamnd/
 // gopapy as the parser, which would replace this hand-rolled scanner,
@@ -42,32 +44,33 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	}
 	switch cls.kind {
 	case modEmpty:
-		return module(opts.Filename, bytecode.LineTableEmpty()), nil
-	case modSingleNoOp:
-		return module(opts.Filename, bytecode.LineTableSingleNoOp(byte(cls.endCol))), nil
+		return module(opts.Filename, bytecode.NoOpBytecode(1), bytecode.LineTableEmpty()), nil
+	case modNoOps:
+		return module(opts.Filename,
+			bytecode.NoOpBytecode(len(cls.endCols)),
+			bytecode.LineTableNoOps(cls.endCols),
+		), nil
 	}
 	return nil, ErrUnsupportedSource
 }
 
 // module returns the canonical Code object for any module body that
 // compiles to "implicit return None" with no real local state. The
-// caller supplies the line table appropriate to the body shape.
+// caller supplies the bytecode and line table appropriate to the
+// body shape.
 //
 // Bytes verified against `python3.14 -m py_compile` for empty modules
-// and the v0.0.2 no-op statement set. The bytecode and consts are
-// identical across all in-scope shapes; only the line table differs.
-func module(filename string, lineTable []byte) *bytecode.CodeObject {
+// and the v0.0.3 N-statement no-op set. Consts, names,
+// localsplusnames, localspluskinds, exctable are identical across
+// every in-scope shape.
+func module(filename string, bc, lineTable []byte) *bytecode.CodeObject {
 	return &bytecode.CodeObject{
 		ArgCount:        0,
 		PosOnlyArgCount: 0,
 		KwOnlyArgCount:  0,
 		StackSize:       1, // implicit None on the return path
 		Flags:           0, // module scope: not optimized, not new-locals
-		Bytecode: []byte{
-			byte(bytecode.RESUME), 0,
-			byte(bytecode.LOAD_CONST), 0,
-			byte(bytecode.RETURN_VALUE), 0,
-		},
+		Bytecode:        bc,
 		Consts:          []any{nil}, // (None,)
 		Names:           []string{},
 		LocalsPlusNames: []string{},

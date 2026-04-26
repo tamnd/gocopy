@@ -15,9 +15,10 @@ type Opcode uint8
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (run `go generate ./op` in
 // goipy to regenerate from upstream).
 const (
-	RESUME       Opcode = 128
-	LOAD_CONST   Opcode = 82
+	NOP          Opcode = 27
 	RETURN_VALUE Opcode = 35
+	LOAD_CONST   Opcode = 82
+	RESUME       Opcode = 128
 )
 
 // CacheSize maps each opcode to the number of inline cache entries that
@@ -29,6 +30,6 @@ const (
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
 var CacheSize = [256]uint8{
-	// Filled per opcode as features land. Empty in v0.0.1 because none of
-	// the three opcodes RESUME / LOAD_CONST / RETURN_VALUE carries a cache.
+	// Filled per opcode as features land. Empty through v0.0.3 because
+	// none of NOP / RETURN_VALUE / LOAD_CONST / RESUME carries a cache.
 }
