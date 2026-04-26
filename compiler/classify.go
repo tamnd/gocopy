@@ -1,6 +1,10 @@
 package compiler
 
-import "github.com/tamnd/gocopy/v1/bytecode"
+import (
+	"math"
+
+	"github.com/tamnd/gocopy/v1/bytecode"
+)
 
 // classify scans Python source and returns the body shape if it falls
 // inside the v0.0.x supported set, plus ok=false otherwise. The
@@ -362,6 +366,11 @@ func tryParseAssign(s []byte) (asgn, bool) {
 	case "...":
 		value = bytecode.Ellipsis
 	default:
+		// Try integer literal first.
+		if iv, ok := parseIntLiteral(rhs); ok {
+			value = iv
+			break
+		}
 		text, isString, ok := parseStringOrBytes(rhs)
 		if !ok {
 			return asgn{}, false
@@ -379,6 +388,77 @@ func tryParseAssign(s []byte) (asgn, bool) {
 		valEnd:   byte(len(s)),
 		value:    value,
 	}, true
+}
+
+// parseIntLiteral attempts to parse a non-negative Python integer literal
+// (decimal, hex 0x, octal 0o, binary 0b, with optional underscore
+// separators) from s. It returns (value, true) if the literal is valid and
+// the numeric value fits in int32 range [0, 2^31-1]. Floats, complex, and
+// values that overflow int32 return (0, false).
+func parseIntLiteral(s []byte) (int64, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+	// Strip underscores after validation of overall shape.
+	if s[0] == '0' && len(s) >= 2 {
+		switch s[1] {
+		case 'x', 'X':
+			return parseBaseLiteral(s[2:], 16)
+		case 'o', 'O':
+			return parseBaseLiteral(s[2:], 8)
+		case 'b', 'B':
+			return parseBaseLiteral(s[2:], 2)
+		}
+		// A bare "0" is valid; anything else starting with "0" (like "01")
+		// is not a valid Python integer literal.
+		if len(s) == 1 {
+			return 0, true
+		}
+		return 0, false
+	}
+	// Decimal: must start with a digit.
+	if s[0] < '0' || s[0] > '9' {
+		return 0, false
+	}
+	return parseBaseLiteral(s, 10)
+}
+
+// parseBaseLiteral parses digits (with underscore separators allowed) in the
+// given base and returns the value if it fits in int32 [0, 2^31-1].
+func parseBaseLiteral(s []byte, base int64) (int64, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+	var v int64
+	hasDigit := false
+	for _, c := range s {
+		if c == '_' {
+			continue
+		}
+		var d int64
+		switch {
+		case c >= '0' && c <= '9':
+			d = int64(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = int64(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = int64(c-'A') + 10
+		default:
+			return 0, false
+		}
+		if d >= base {
+			return 0, false
+		}
+		hasDigit = true
+		v = v*base + d
+		if v > math.MaxInt32 {
+			return 0, false
+		}
+	}
+	if !hasDigit {
+		return 0, false
+	}
+	return v, true
 }
 
 // isIdentStart reports whether b can start a Python identifier

@@ -47,6 +47,34 @@ func AssignBytecode(noneIdx byte, tailStmts int) []byte {
 	return out
 }
 
+// AssignSmallIntBytecode returns the instruction stream for `name = <int>`
+// where the integer value fits in 0..255. CPython uses LOAD_SMALL_INT with
+// the value embedded in the oparg instead of LOAD_CONST; None is always at
+// const index 1 (the consts tuple is `(int_val, None)`).
+func AssignSmallIntBytecode(val byte, tailStmts int) []byte {
+	if tailStmts < 0 {
+		panic("bytecode.AssignSmallIntBytecode: tailStmts must be >= 0")
+	}
+	nops := 0
+	if tailStmts > 1 {
+		nops = tailStmts - 1
+	}
+	out := make([]byte, 0, 10+2*nops)
+	out = append(out,
+		byte(RESUME), 0,
+		byte(LOAD_SMALL_INT), val,
+		byte(STORE_NAME), 0,
+	)
+	for range nops {
+		out = append(out, byte(NOP), 0)
+	}
+	out = append(out,
+		byte(LOAD_CONST), 1,
+		byte(RETURN_VALUE), 0,
+	)
+	return out
+}
+
 // AssignLineTable returns the PEP 626 line table for a single
 // `name = value` assignment on `line`, where the value occupies
 // columns `valStartCol`..`valEndCol` and the name occupies columns

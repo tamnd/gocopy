@@ -9,6 +9,37 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-04-26
+
+`gocopy compile` accepts a non-negative integer literal on the
+right-hand side of a leading `name = literal` assignment. Decimal,
+hex (`0x`), octal (`0o`), and binary (`0b`) literals, with optional
+underscore separators, are all recognised. Values must fit in `int32`
+[0, 2^31-1].
+
+CPython uses `LOAD_SMALL_INT <val>` for 0..255 (value in oparg) and
+`LOAD_CONST 0` for 256+. Both paths use `consts = (int_val, None)`.
+Marshal emits `TYPE_INT` (0x69); integers in CPython's immortal
+small-int cache range [−5, 256] get `FLAG_REF`, larger ones do not
+(they appear only once in the walk).
+
+### Added
+
+- `LOAD_SMALL_INT Opcode = 94` in `bytecode`.
+- `bytecode.AssignSmallIntBytecode(val, tailStmts)` for the 0..255
+  path.
+- `marshal.emitObject` handles `int64` with the immortal-range
+  FLAG_REF rule.
+- `parseIntLiteral` / `parseBaseLiteral` in `compiler/classify.go`.
+- Eight new fixtures: `040_assign_int_zero.py` through
+  `047_assign_int_hex_large.py`.
+
+### Deferred
+
+- Negative integer literals, integers > 2^31-1, floats, complex.
+- Docstring + assignment combo.
+- Wiring gopapy as the parser.
+
 ## [0.0.8] - 2026-04-26
 
 `gocopy compile` accepts two more right-hand sides on a leading
@@ -378,7 +409,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.9...HEAD
+[0.0.9]: https://github.com/tamnd/gocopy/releases/tag/v0.0.9
 [0.0.8]: https://github.com/tamnd/gocopy/releases/tag/v0.0.8
 [0.0.7]: https://github.com/tamnd/gocopy/releases/tag/v0.0.7
 [0.0.6]: https://github.com/tamnd/gocopy/releases/tag/v0.0.6

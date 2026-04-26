@@ -250,6 +250,25 @@ func (w *writer) emitObject(v any) {
 		w.bytestring(x)
 	case bytecode.EllipsisType:
 		w.buf = append(w.buf, TYPE_ELLIPSIS)
+	case int64:
+		if x < -1<<31 || x > 1<<31-1 {
+			w.err = fmt.Errorf("marshal: int64 const %d out of TYPE_INT range", x)
+			return
+		}
+		key := intKey(x)
+		if w.emitRef(key) {
+			return
+		}
+		// CPython 3.14: immortal small ints [-5, 256] always get FLAG_REF
+		// (refcount is permanently > 1). Larger ints only if seen > 1x.
+		immortal := x >= -5 && x <= 256
+		if immortal || w.counts[key] > 1 {
+			w.reserveKey(key)
+			w.buf = append(w.buf, TYPE_INT|FlagRef)
+		} else {
+			w.buf = append(w.buf, TYPE_INT)
+		}
+		w.writeI32(int32(x))
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -299,8 +318,10 @@ type saKey struct {
 }
 type tupleKeyType struct{ s string }
 type strTupleKeyType struct{ s string }
+type intKeyType struct{ v int64 }
 
-func bsKey(b []byte) any { return bsKeyType{s: string(b)} }
+func bsKey(b []byte) any  { return bsKeyType{s: string(b)} }
+func intKey(v int64) any  { return intKeyType{v: v} }
 
 func tupleKey(items []any) any {
 	buf := make([]byte, 0, len(items)*2)
@@ -320,6 +341,9 @@ func tupleKey(items []any) any {
 			buf = append(buf, 0)
 		case bytecode.EllipsisType:
 			buf = append(buf, 'E')
+		case int64:
+			buf = append(buf, 'I',
+				byte(x), byte(x>>8), byte(x>>16), byte(x>>24))
 		default:
 			buf = append(buf, '?')
 		}
@@ -390,6 +414,8 @@ func (rc *refCounter) tuple(items []any) {
 			rc.shortAscii(x, isAllNameChars(x))
 		case []byte:
 			rc.bytestring(x)
+		case int64:
+			rc.bump(intKey(x))
 		}
 	}
 }

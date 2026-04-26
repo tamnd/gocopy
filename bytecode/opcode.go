@@ -15,11 +15,12 @@ type Opcode uint8
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (run `go generate ./op` in
 // goipy to regenerate from upstream).
 const (
-	NOP          Opcode = 27
-	RETURN_VALUE Opcode = 35
-	LOAD_CONST   Opcode = 82
-	STORE_NAME   Opcode = 116
-	RESUME       Opcode = 128
+	NOP            Opcode = 27
+	RETURN_VALUE   Opcode = 35
+	LOAD_CONST     Opcode = 82
+	LOAD_SMALL_INT Opcode = 94
+	STORE_NAME     Opcode = 116
+	RESUME         Opcode = 128
 )
 
 // CacheSize maps each opcode to the number of inline cache entries that

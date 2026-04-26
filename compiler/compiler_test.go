@@ -262,6 +262,16 @@ func TestAssignModule(t *testing.T) {
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
 		{"x = b\"hi\" + pass", []byte("x = b\"hi\"\npass\n"), 1, "x", 1, 4, 9, []byte("hi"),
 			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"x = 0", []byte("x = 0\n"), 1, "x", 1, 4, 5, int64(0), nil},
+		{"x = 1", []byte("x = 1\n"), 1, "x", 1, 4, 5, int64(1), nil},
+		{"x = 42", []byte("x = 42\n"), 1, "x", 1, 4, 6, int64(42), nil},
+		{"x = 255", []byte("x = 255\n"), 1, "x", 1, 4, 7, int64(255), nil},
+		{"x = 256", []byte("x = 256\n"), 1, "x", 1, 4, 7, int64(256), nil},
+		{"x = 1000000", []byte("x = 1000000\n"), 1, "x", 1, 4, 11, int64(1000000), nil},
+		{"x = 0xff", []byte("x = 0xff\n"), 1, "x", 1, 4, 8, int64(255), nil},
+		{"x = 0x100", []byte("x = 0x100\n"), 1, "x", 1, 4, 9, int64(256), nil},
+		{"x = 1 + pass", []byte("x = 1\npass\n"), 1, "x", 1, 4, 5, int64(1),
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -275,7 +285,12 @@ func TestAssignModule(t *testing.T) {
 				noneIdx = 0
 				wantConsts = []any{nil}
 			}
-			wantBC := bytecode.AssignBytecode(noneIdx, len(tc.tail))
+			var wantBC []byte
+			if iv, ok := tc.value.(int64); ok && iv >= 0 && iv <= 255 {
+				wantBC = bytecode.AssignSmallIntBytecode(byte(iv), len(tc.tail))
+			} else {
+				wantBC = bytecode.AssignBytecode(noneIdx, len(tc.tail))
+			}
 			if !bytes.Equal(c.Bytecode, wantBC) {
 				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
 			}
@@ -304,7 +319,6 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		name string
 		src  []byte
 	}{
-		{"int assignment", []byte("x = 1\n")},
 		{"assignment to reserved name", []byte("None = 1\n")},
 		{"chained assignment", []byte("x = y = None\n")},
 		{"augmented assignment", []byte("x += 1\n")},
