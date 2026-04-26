@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.7 supports four body shapes:
+// v0.0.8 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -16,10 +16,11 @@
 //     tail. Multi-line docstrings emit a LONG line-table entry whose
 //     end_line_delta covers the closing triple quote's source line.
 //  4. A leading `name = literal` assignment where literal is one of
-//     None, True, False, or a plain-ASCII string literal, optionally
-//     followed by N >= 0 no-op statements. Compiles to `LOAD_CONST
-//     <value>; STORE_NAME <name>` after the synthetic RESUME, then
-//     the no-op tail. Names tuple is `(name,)`.
+//     None, True, False, the `...` literal, a plain-ASCII string
+//     literal, or a plain-ASCII bytes literal, optionally followed by
+//     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
+//     STORE_NAME <name>` after the synthetic RESUME, then the no-op
+//     tail. Names tuple is `(name,)`.
 //
 // The first two shapes share the consts tuple `(None,)` and an empty
 // names tuple. The docstring shape uses `(docstring, None)` and

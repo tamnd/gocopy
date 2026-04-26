@@ -307,14 +307,15 @@ type asgn struct {
 	value    any
 }
 
-// tryParseAssign recognises the v0.0.7 assignment grammar:
+// tryParseAssign recognises the v0.0.7..0.0.8 assignment grammar:
 // `<identifier> = <literal>` at column 0, where literal is one of
-// None, True, False, or a single- or triple-quoted plain-ASCII string
-// literal. The identifier must be a Python name (letter/underscore
-// followed by name chars) of length 1..15 (the SHORT0 entry's
-// end_col-start_col field caps at 15). Any whitespace around `=` is
-// allowed; trailing comments have already been stripped by the caller.
-// Returns ok=false when the line does not match this grammar.
+// None, True, False, the `...` literal, a single- or triple-quoted
+// plain-ASCII string literal, or a plain-ASCII bytes literal. The
+// identifier must be a Python name (letter/underscore followed by
+// name chars) of length 1..15 (the SHORT0 entry's end_col-start_col
+// field caps at 15). Any whitespace around `=` is allowed; trailing
+// comments have already been stripped by the caller. Returns ok=false
+// when the line does not match this grammar.
 func tryParseAssign(s []byte) (asgn, bool) {
 	if len(s) == 0 || !isIdentStart(s[0]) {
 		return asgn{}, false
@@ -358,12 +359,18 @@ func tryParseAssign(s []byte) (asgn, bool) {
 		value = true
 	case "False":
 		value = false
+	case "...":
+		value = bytecode.Ellipsis
 	default:
 		text, isString, ok := parseStringOrBytes(rhs)
-		if !ok || !isString {
+		if !ok {
 			return asgn{}, false
 		}
-		value = text
+		if isString {
+			value = text
+		} else {
+			value = []byte(text)
+		}
 	}
 	return asgn{
 		name:     name,

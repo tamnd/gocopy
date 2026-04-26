@@ -1,0 +1,2 @@
+x = b"hi"
+pass

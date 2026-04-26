@@ -226,7 +226,10 @@ func (w *writer) stringTuple(items []string) {
 // String consts are emitted as TYPE_SHORT_ASCII_INTERNED when every
 // byte is a name char (alphanumeric or underscore) — the rule CPython's
 // `all_name_chars` applies in `intern_string_constants`. Anything else
-// (spaces, newlines, punctuation) is plain TYPE_SHORT_ASCII.
+// (spaces, newlines, punctuation) is plain TYPE_SHORT_ASCII. Bytes
+// consts route through the same TYPE_STRING bytestring path used by
+// linetable/exctable, which handles the empty-bytes singleton rule.
+// Ellipsis emits as a single TYPE_ELLIPSIS byte with no FLAG_REF.
 func (w *writer) emitObject(v any) {
 	switch x := v.(type) {
 	case nil:
@@ -243,6 +246,10 @@ func (w *writer) emitObject(v any) {
 			return
 		}
 		w.shortAscii(x, isAllNameChars(x))
+	case []byte:
+		w.bytestring(x)
+	case bytecode.EllipsisType:
+		w.buf = append(w.buf, TYPE_ELLIPSIS)
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -307,6 +314,12 @@ func tupleKey(items []any) any {
 			buf = append(buf, 's', 0)
 			buf = append(buf, x...)
 			buf = append(buf, 0)
+		case []byte:
+			buf = append(buf, 'B', 0)
+			buf = append(buf, x...)
+			buf = append(buf, 0)
+		case bytecode.EllipsisType:
+			buf = append(buf, 'E')
 		default:
 			buf = append(buf, '?')
 		}
@@ -375,6 +388,8 @@ func (rc *refCounter) tuple(items []any) {
 			rc.code(x, false)
 		case string:
 			rc.shortAscii(x, isAllNameChars(x))
+		case []byte:
+			rc.bytestring(x)
 		}
 	}
 }

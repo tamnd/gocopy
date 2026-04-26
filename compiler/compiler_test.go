@@ -3,6 +3,7 @@ package compiler
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
@@ -254,6 +255,13 @@ func TestAssignModule(t *testing.T) {
 		{"x = None + comment + pass", []byte("x = None\n# gap\npass\n"), 1, "x", 1, 4, 8, nil,
 			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
 		{"x = \"hello world\"", []byte("x = \"hello world\"\n"), 1, "x", 1, 4, 17, "hello world", nil},
+		{"x = ...", []byte("x = ...\n"), 1, "x", 1, 4, 7, bytecode.Ellipsis, nil},
+		{"x = b\"hi\"", []byte("x = b\"hi\"\n"), 1, "x", 1, 4, 9, []byte("hi"), nil},
+		{"x = b\"\"", []byte("x = b\"\"\n"), 1, "x", 1, 4, 7, []byte(""), nil},
+		{"x = ... + pass", []byte("x = ...\npass\n"), 1, "x", 1, 4, 7, bytecode.Ellipsis,
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"x = b\"hi\" + pass", []byte("x = b\"hi\"\npass\n"), 1, "x", 1, 4, 9, []byte("hi"),
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,7 +287,7 @@ func TestAssignModule(t *testing.T) {
 				t.Fatalf("consts len = %d; want %d (%v)", len(c.Consts), len(wantConsts), wantConsts)
 			}
 			for i := range wantConsts {
-				if c.Consts[i] != wantConsts[i] {
+				if !reflect.DeepEqual(c.Consts[i], wantConsts[i]) {
 					t.Errorf("consts[%d] = %v; want %v", i, c.Consts[i], wantConsts[i])
 				}
 			}
@@ -297,8 +305,6 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		src  []byte
 	}{
 		{"int assignment", []byte("x = 1\n")},
-		{"ellipsis assignment", []byte("x = ...\n")},
-		{"bytes assignment", []byte("x = b\"hi\"\n")},
 		{"assignment to reserved name", []byte("None = 1\n")},
 		{"chained assignment", []byte("x = y = None\n")},
 		{"augmented assignment", []byte("x += 1\n")},

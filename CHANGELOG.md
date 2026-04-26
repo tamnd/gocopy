@@ -9,6 +9,42 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-04-26
+
+`gocopy compile` accepts two more right-hand sides on a leading
+`name = literal` assignment: the `...` literal (Python's `Ellipsis`
+singleton) and a plain-ASCII bytes literal (`b"hi"`, `b""`). The
+bytecode shape is identical to v0.0.7's assignment lowering; only
+the marshal layer learns two new const types.
+
+`Ellipsis` marshals as a single `TYPE_ELLIPSIS` (`0x2e`) byte with
+no `FLAG_REF`. Bytes consts route through the existing
+`TYPE_STRING` bytestring path, which already handles the empty-bytes
+singleton (always `FLAG_REF`, dedups with empty `localspluskinds` /
+`exctable`) and the non-empty case (no `FLAG_REF` unless the same
+content appears twice in the walk).
+
+### Added
+
+- `bytecode.Ellipsis` and `bytecode.EllipsisType`: the gocopy
+  sentinel for Python's `Ellipsis`.
+- `marshal.emitObject` cases for `[]byte` and
+  `bytecode.EllipsisType`, plus the matching `tupleKey` and
+  `refCounter` recursion so the empty-bytes singleton dedups
+  correctly when a const is also `b""`.
+- `tryParseAssign` accepts `...` and `b"..."` on the right-hand
+  side. Identifier rules are unchanged.
+- Five new fixtures: `035_assign_ellipsis.py` through
+  `039_assign_ellipsis_then_pass.py`.
+
+### Deferred
+
+- Right-hand side integer / float / complex literals.
+- Docstring + assignment combo (needs a wider bytecode shape).
+- Non-ASCII bytes (parser still rejects backslashes).
+- Multi-target / augmented / expression assignment.
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.7] - 2026-04-26
 
 `gocopy compile` accepts a leading `name = literal` assignment where
@@ -342,7 +378,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/tamnd/gocopy/releases/tag/v0.0.8
 [0.0.7]: https://github.com/tamnd/gocopy/releases/tag/v0.0.7
 [0.0.6]: https://github.com/tamnd/gocopy/releases/tag/v0.0.6
 [0.0.5]: https://github.com/tamnd/gocopy/releases/tag/v0.0.5
