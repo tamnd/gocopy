@@ -12,7 +12,7 @@ for at least one fixture exercising that node and the
 | Bare non-string constant expression statement (single, line 1) | done | v0.0.2 | tests/fixtures/003_const_none.py |
 | Multi-statement no-op bodies (consecutive lines) | done | v0.0.3 | tests/fixtures/009_two_pass.py |
 | Blank / comment lines between no-op statements | done | v0.0.4 | tests/fixtures/014_pass_blank_pass.py |
-| Constant expression statement: string / bytes (docstring path) | planned | - | - |
+| Constant expression statement: string / bytes (docstring path) | done | v0.0.5 | tests/fixtures/019_docstring.py |
 | Module-level assignment | planned | - | - |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |

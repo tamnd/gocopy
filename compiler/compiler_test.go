@@ -133,6 +133,93 @@ func TestMultiNoOpStatements(t *testing.T) {
 	}
 }
 
+func TestDocstringModule(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		src       []byte
+		docLine   int
+		docEndCol byte
+		docText   string
+		tail      []bytecode.NoOpStmt
+	}{
+		{"plain double", []byte("\"hi\"\n"), 1, 4, "hi", nil},
+		{"plain single", []byte("'hi'\n"), 1, 4, "hi", nil},
+		{"triple double", []byte("\"\"\"hi\"\"\"\n"), 1, 8, "hi", nil},
+		{"triple single", []byte("'''hi'''\n"), 1, 8, "hi", nil},
+		{"docstring then pass", []byte("\"hi\"\npass\n"), 1, 4, "hi",
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"docstring then None", []byte("\"hi\"\nNone\n"), 1, 4, "hi",
+			[]bytecode.NoOpStmt{{Line: 2, EndCol: 4}}},
+		{"docstring blank pass", []byte("\"hi\"\n\npass\n"), 1, 4, "hi",
+			[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}}},
+		{"leading blank docstring", []byte("\n\"hi\"\n"), 2, 4, "hi", nil},
+		{"empty docstring", []byte("\"\"\n"), 1, 2, "", nil},
+		{"longer ascii", []byte("\"hello world\"\n"), 1, 13, "hello world", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			wantBC := bytecode.DocstringBytecode(len(tc.tail))
+			if !bytes.Equal(c.Bytecode, wantBC) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
+			}
+			wantLT := bytecode.DocstringLineTable(tc.docLine, tc.docEndCol, tc.tail)
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+			if len(c.Consts) != 2 || c.Consts[0] != tc.docText || c.Consts[1] != nil {
+				t.Errorf("consts = %v; want (%q, None)", c.Consts, tc.docText)
+			}
+			if len(c.Names) != 1 || c.Names[0] != "__doc__" {
+				t.Errorf("names = %v; want (__doc__,)", c.Names)
+			}
+		})
+	}
+}
+
+// TestBytesAndNonLeadingStringNoOps covers the cases where a string
+// or bytes literal compiles to the no-op bytecode path.
+func TestBytesAndNonLeadingStringNoOps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		src   []byte
+		stmts []bytecode.NoOpStmt
+	}{
+		{"bytes only", []byte("b\"hi\"\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 5}}},
+		{"bytes single quoted", []byte("b'x'\n"), []bytecode.NoOpStmt{{Line: 1, EndCol: 4}}},
+		{"pass then string", []byte("pass\n\"hi\"\n"),
+			[]bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 4}}},
+		{"pass then bytes", []byte("pass\nb\"hi\"\n"),
+			[]bytecode.NoOpStmt{{Line: 1, EndCol: 4}, {Line: 2, EndCol: 5}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			n := len(tc.stmts)
+			if !bytes.Equal(c.Bytecode, bytecode.NoOpBytecode(n)) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, bytecode.NoOpBytecode(n))
+			}
+			if !bytes.Equal(c.LineTable, bytecode.LineTableNoOps(tc.stmts)) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, bytecode.LineTableNoOps(tc.stmts))
+			}
+			if len(c.Consts) != 1 || c.Consts[0] != nil {
+				t.Errorf("consts = %v; want (None,)", c.Consts)
+			}
+			if len(c.Names) != 0 {
+				t.Errorf("names = %v; want ()", c.Names)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -142,8 +229,10 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"assignment", []byte("x = 1\n")},
 		{"call", []byte("print('hi')\n")},
 		{"import", []byte("import sys\n")},
-		{"docstring", []byte("\"hi\"\n")},
-		{"bytes literal", []byte("b'x'\n")},
+		{"docstring with backslash escape", []byte("\"hi\\nthere\"\n")},
+		{"non-ascii docstring", []byte("\"héllo\"\n")},
+		{"raw string", []byte("r\"hi\"\n")},
+		{"f-string", []byte("f\"hi\"\n")},
 		{"indented pass", []byte("  pass\n")},
 		{"indented pass after blank", []byte("\n  pass\n")},
 		{"name Ellipsis", []byte("Ellipsis\n")},
