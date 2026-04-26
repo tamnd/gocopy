@@ -9,6 +9,47 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-04-26
+
+`gocopy compile` now accepts a single `pass` statement, or a single
+bare non-string constant expression statement, on top of v0.0.1's
+empty-module path. Output stays byte-identical to
+`python3.14 -m py_compile` for every shape in scope.
+
+The bytecode and consts tuple are unchanged from the empty-module
+case (CPython lowers all of these to the same RESUME / LOAD_CONST
+None / RETURN_VALUE prologue). The only thing that moves is the
+PEP 626 line table, which now picks up a ONE_LINE1 entry covering
+the real statement.
+
+### Added
+
+- `bytecode.LineTableEmpty` and `bytecode.LineTableSingleNoOp`,
+  two small PEP 626 emitters covering the empty-module and
+  single-no-op forms. Both are commented with the byte-level
+  meaning of each field so the bytes can be cross-checked against
+  CPython's `Objects/locations.md` directly.
+- A classifier in `compiler` that recognises a single no-op
+  statement (`pass`, `None`, `True`, `False`, `...`, integer /
+  float / complex literal) on line 1, with optional trailing
+  comments and trailing blank or comment-only lines.
+- Seven new fixtures under `tests/fixtures/`: `002_pass.py`
+  through `008_const_float.py`. Oracle byte-diff against
+  `python3.14 -m py_compile` is zero on every one.
+
+### Changed
+
+- `compiler.ErrNotEmptyModule` is renamed to
+  `compiler.ErrUnsupportedSource`. Returned for any module body
+  the v0.0.x rungs have not yet learned to compile.
+
+### Deferred
+
+- Multi-statement bodies, string / bytes docstrings, and wiring
+  `github.com/tamnd/gopapy/v1` as the parser. The gopapy module
+  path is `/v1` but no `v1.x.x` tag exists yet, so consumption
+  waits on a gopapy v1.0.0 cut.
+
 ## [0.0.1] - 2026-04-26
 
 First public cut. `gocopy compile FILE.py` produces a CPython 3.14
@@ -61,5 +102,6 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/tamnd/gocopy/releases/tag/v0.0.2
 [0.0.1]: https://github.com/tamnd/gocopy/releases/tag/v0.0.1
