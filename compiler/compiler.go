@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.10 supports four body shapes:
+// v0.0.11 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -19,8 +19,10 @@
 //     None, True, False, the `...` literal, a plain-ASCII string
 //     literal, a plain-ASCII bytes literal, a non-negative integer
 //     literal (decimal/hex/oct/bin with optional underscores, value in
-//     [0, 2^31-1]), or a float literal (any value strconv.ParseFloat
-//     accepts, excluding complex), optionally followed by
+//     [0, 2^31-1]), a float literal (any value strconv.ParseFloat
+//     accepts, excluding complex), or a negative integer or float
+//     (a leading `-` before an int or float literal, excluding -0),
+//     optionally followed by
 //     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
 //     STORE_NAME <name>` after the synthetic RESUME, then the no-op
 //     tail. Names tuple is `(name,)`.
@@ -95,6 +97,18 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 				bytecode.AssignBytecode(1, len(cls.stmts)),
 				lt,
 				[]any{iv, nil},
+				[]string{cls.asgnName},
+			), nil
+		}
+		// Negative literal: consts = (pos, None, neg), LOAD_CONST 2.
+		// CPython's constant folder keeps the original positive literal at
+		// index 0, None at index 1, and the folded negative at index 2.
+		if nl, ok := cls.asgnValue.(negLiteral); ok {
+			lt := bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts)
+			return module(opts.Filename,
+				bytecode.AssignBytecodeAt(2, 1, len(cls.stmts)),
+				lt,
+				[]any{nl.pos, nil, nl.neg},
 				[]string{cls.asgnName},
 			), nil
 		}

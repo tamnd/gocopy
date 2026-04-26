@@ -312,6 +312,15 @@ type asgn struct {
 	value    any
 }
 
+// negLiteral is the value type for `name = -literal` assignments.
+// CPython's constant folder keeps both the un-negated literal and the
+// negated result in the consts tuple: consts = (pos, None, neg), with
+// LOAD_CONST 2 pointing at the negated value.
+type negLiteral struct {
+	pos any // the original un-negated int64 or float64
+	neg any // the negated int64 or float64
+}
+
 // tryParseAssign recognises the v0.0.7..0.0.8 assignment grammar:
 // `<identifier> = <literal>` at column 0, where literal is one of
 // None, True, False, the `...` literal, a single- or triple-quoted
@@ -367,6 +376,23 @@ func tryParseAssign(s []byte) (asgn, bool) {
 	case "...":
 		value = bytecode.Ellipsis
 	default:
+		// Negative literal: `-int` or `-float`. Must be checked before the
+		// positive parsers because parseFloatLiteral accepts a leading `-`.
+		// CPython's constant folder keeps both the un-negated literal and
+		// the negated result: consts = (pos, None, neg), LOAD_CONST 2.
+		// We skip -0 (integer) since -int64(0) == 0 and would duplicate.
+		if len(rhs) > 1 && rhs[0] == '-' {
+			rest := rhs[1:]
+			if iv, ok := parseIntLiteral(rest); ok && iv != 0 {
+				value = negLiteral{pos: iv, neg: -iv}
+				break
+			}
+			if fv, ok := parseFloatLiteral(rest); ok {
+				value = negLiteral{pos: fv, neg: -fv}
+				break
+			}
+			return asgn{}, false
+		}
 		// Integer first (no decimal point, no e/E as exponent marker).
 		if iv, ok := parseIntLiteral(rhs); ok {
 			value = iv
