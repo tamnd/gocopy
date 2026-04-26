@@ -3,6 +3,7 @@ package marshal
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
 )
@@ -269,6 +270,21 @@ func (w *writer) emitObject(v any) {
 			w.buf = append(w.buf, TYPE_INT)
 		}
 		w.writeI32(int32(x))
+	case float64:
+		key := float64Key(x)
+		if w.emitRef(key) {
+			return
+		}
+		// Floats are not immortal; FLAG_REF only if seen more than once.
+		if w.counts[key] > 1 {
+			w.reserveKey(key)
+			w.buf = append(w.buf, TYPE_BINARY_FLOAT|FlagRef)
+		} else {
+			w.buf = append(w.buf, TYPE_BINARY_FLOAT)
+		}
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(x))
+		w.buf = append(w.buf, b[:]...)
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -319,9 +335,11 @@ type saKey struct {
 type tupleKeyType struct{ s string }
 type strTupleKeyType struct{ s string }
 type intKeyType struct{ v int64 }
+type float64KeyType struct{ v uint64 }
 
-func bsKey(b []byte) any  { return bsKeyType{s: string(b)} }
-func intKey(v int64) any  { return intKeyType{v: v} }
+func bsKey(b []byte) any      { return bsKeyType{s: string(b)} }
+func intKey(v int64) any      { return intKeyType{v: v} }
+func float64Key(v float64) any { return float64KeyType{v: math.Float64bits(v)} }
 
 func tupleKey(items []any) any {
 	buf := make([]byte, 0, len(items)*2)
@@ -344,6 +362,11 @@ func tupleKey(items []any) any {
 		case int64:
 			buf = append(buf, 'I',
 				byte(x), byte(x>>8), byte(x>>16), byte(x>>24))
+		case float64:
+			bits := math.Float64bits(x)
+			buf = append(buf, 'G',
+				byte(bits), byte(bits>>8), byte(bits>>16), byte(bits>>24),
+				byte(bits>>32), byte(bits>>40), byte(bits>>48), byte(bits>>56))
 		default:
 			buf = append(buf, '?')
 		}
@@ -416,6 +439,8 @@ func (rc *refCounter) tuple(items []any) {
 			rc.bytestring(x)
 		case int64:
 			rc.bump(intKey(x))
+		case float64:
+			rc.bump(float64Key(x))
 		}
 	}
 }

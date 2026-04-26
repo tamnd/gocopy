@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.9 supports four body shapes:
+// v0.0.10 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -17,9 +17,10 @@
 //     end_line_delta covers the closing triple quote's source line.
 //  4. A leading `name = literal` assignment where literal is one of
 //     None, True, False, the `...` literal, a plain-ASCII string
-//     literal, a plain-ASCII bytes literal, or a non-negative integer
+//     literal, a plain-ASCII bytes literal, a non-negative integer
 //     literal (decimal/hex/oct/bin with optional underscores, value in
-//     [0, 2^31-1]), optionally followed by
+//     [0, 2^31-1]), or a float literal (any value strconv.ParseFloat
+//     accepts, excluding complex), optionally followed by
 //     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
 //     STORE_NAME <name>` after the synthetic RESUME, then the no-op
 //     tail. Names tuple is `(name,)`.
