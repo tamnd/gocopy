@@ -39,11 +39,13 @@ source.py
   mode uses SipHash-1-3 to mirror CPython's `_imp.source_hash`.
 - `cmd/gocopy/`: the CLI.
 
-## v0.0.1 status
+## Current status
 
-Only an empty module compiles. The whole point of v0.0.1 is to
-exercise every package end-to-end on the smallest possible program
-so that every subsequent feature is a localised change.
+Empty modules and a single no-op statement (a `pass`, or a bare
+non-string non-bytes constant expression) on line 1 compile. The
+v0.0.x rungs are deliberately narrow: every PR adds one shape
+that the oracle byte-diff stays zero on, and rebooting the
+plumbing is no longer something any rung has to do.
 
 ## Why bytes?
 

@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Pure-Go compiler from Python 3.14 source to a CPython-compatible <code>.pyc</code>.</b><br>
-  <sub>Built on <a href="https://github.com/tamnd/gopapy">gopapy</a> for parsing. No CPython at runtime.</sub>
+  <sub>Targeting <a href="https://github.com/tamnd/gopapy">gopapy</a> for parsing. No CPython at runtime.</sub>
 </p>
 
 ---
@@ -12,9 +12,11 @@ identical to the output of `python3.14 -m py_compile`. Same magic, same flags,
 same validation field, same marshal stream, same constant ordering, same line
 table, same exception table.
 
-The parser is `github.com/tamnd/gopapy`, which is already 100% AST-compatible
-with CPython 3.14, so gocopy never has to second-guess the AST it consumed.
-The marshal writer is the inverse of [goipy](https://github.com/tamnd/goipy)'s
+The intended parser is `github.com/tamnd/gopapy`, which is already 100%
+AST-compatible with CPython 3.14, so gocopy will never have to second-guess
+the AST it consumes. v0.0.x uses an internal token scanner sized to the
+shapes shipped so far; the gopapy swap lands once gopapy cuts a v1.0.0. The
+marshal writer is the inverse of [goipy](https://github.com/tamnd/goipy)'s
 reader: same wire format, opposite direction.
 
 This is the bootstrap branch. Track scope and progress in

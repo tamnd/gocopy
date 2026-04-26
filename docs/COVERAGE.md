@@ -8,7 +8,10 @@ for at least one fixture exercising that node and the
 | Feature | Status | Version | Fixture |
 |---|---|---|---|
 | Empty module | done | v0.0.1 | tests/fixtures/001_empty.py |
-| Constant expression statement (None / True / False / int / float / str / bytes) | planned | - | - |
+| `pass` statement (single, line 1) | done | v0.0.2 | tests/fixtures/002_pass.py |
+| Bare non-string constant expression statement (single, line 1) | done | v0.0.2 | tests/fixtures/003_const_none.py |
+| Constant expression statement: string / bytes (docstring path) | planned | - | - |
+| Multi-statement no-op bodies (`pass\npass`, etc.) | planned | - | - |
 | Module-level assignment | planned | - | - |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
