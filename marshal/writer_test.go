@@ -16,6 +16,10 @@ import (
 //	python3.14 -m py_compile /tmp/empty.py
 //	xxd /tmp/__pycache__/empty.cpython-314.pyc | tail +2  # everything past the 16-byte header
 //
+// The Filename field below is the path the compiler bakes into the Code
+// object, not the path on disk; the oracle harness uses
+// tests/fixtures/001_empty.py.
+//
 // If this golden ever breaks under a Python 3.14.x patch bump, the bump is
 // either: (a) a marshal-format fix on CPython side that we should mirror,
 // or (b) a CPython bug. Investigate before regenerating.

@@ -84,9 +84,8 @@ jobs:
         run: go build -o bin/gocopy ./cmd/gocopy
 
       # Print pass/fail counts of byte-identical compiles over the local
-      # CPython 3.14 stdlib. Not a hard gate in v0.1.x: most files still
-      # use language features the compiler does not support yet. The
-      # roadmap in notes/Spec/1100/1158 plans the climb up to 100%.
+      # CPython 3.14 stdlib. Not a hard gate in v0.0.x: most files still
+      # use language features the compiler does not support yet.
       - name: gocopy compile stdlib (informational)
         run: |
           PYDIR=$(python3.14 -c "import sysconfig; print(sysconfig.get_paths()['stdlib'])")

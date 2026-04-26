@@ -23,12 +23,12 @@ const (
 // CacheSize maps each opcode to the number of inline cache entries that
 // follow it in the bytecode stream. Each entry is two bytes (one
 // instruction word). Values are zero-initialized for opcodes we do not
-// list; v0.1.0 does not emit any cached opcode, so the empty defaults are
+// list; v0.0.1 does not emit any cached opcode, so the empty defaults are
 // correct.
 //
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
 var CacheSize = [256]uint8{
-	// Filled per opcode as features land. Empty in v0.1.0 because none of
+	// Filled per opcode as features land. Empty in v0.0.1 because none of
 	// the three opcodes RESUME / LOAD_CONST / RETURN_VALUE carries a cache.
 }
