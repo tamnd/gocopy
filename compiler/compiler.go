@@ -1,18 +1,22 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.4 supports two body shapes:
+// v0.0.5 supports three body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
 //  2. N >= 1 no-op statements, each at column 0, with arbitrary blank
 //     or comment-only lines anywhere (leading, trailing, or between
 //     statements). The no-op set is: `pass`, `None`, `True`, `False`,
-//     `...`, an integer literal, a float literal, or a complex
-//     literal.
+//     `...`, a numeric literal, a non-leading string or bytes
+//     literal, or a leading bytes literal.
+//  3. A leading single-line ASCII string literal (the docstring),
+//     optionally followed by N >= 0 no-op statements. Compiles to
+//     `LOAD_CONST docstring; STORE_NAME __doc__` after the synthetic
+//     RESUME, then the no-op tail.
 //
-// Both shapes compile to the same consts tuple `(None,)`; the
-// bytecode and line table grow with statement count (see
-// bytecode/linetable.go).
+// The first two shapes share the consts tuple `(None,)` and an empty
+// names tuple. The docstring shape uses `(docstring, None)` and
+// `('__doc__',)`.
 //
 // Anything else returns ErrUnsupportedSource. Wiring github.com/tamnd/
 // gopapy as the parser, which would replace this hand-rolled scanner,
@@ -44,35 +48,49 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	}
 	switch cls.kind {
 	case modEmpty:
-		return module(opts.Filename, bytecode.NoOpBytecode(1), bytecode.LineTableEmpty()), nil
+		return module(opts.Filename,
+			bytecode.NoOpBytecode(1),
+			bytecode.LineTableEmpty(),
+			[]any{nil}, nil,
+		), nil
 	case modNoOps:
 		return module(opts.Filename,
 			bytecode.NoOpBytecode(len(cls.stmts)),
 			bytecode.LineTableNoOps(cls.stmts),
+			[]any{nil}, nil,
+		), nil
+	case modDocstring:
+		return module(opts.Filename,
+			bytecode.DocstringBytecode(len(cls.stmts)),
+			bytecode.DocstringLineTable(cls.docLine, cls.docCol, cls.stmts),
+			[]any{cls.docText, nil},
+			[]string{"__doc__"},
 		), nil
 	}
 	return nil, ErrUnsupportedSource
 }
 
-// module returns the canonical Code object for any module body that
-// compiles to "implicit return None" with no real local state. The
-// caller supplies the bytecode and line table appropriate to the
-// body shape.
+// module returns the canonical Code object for the given body. Only
+// bytecode, line table, consts, and names vary across the v0.0.x
+// shapes; everything else (locals, filename, qualname, exception
+// table) is identical.
 //
-// Bytes verified against `python3.14 -m py_compile` for empty modules
-// and the v0.0.4 N-statement no-op set with arbitrary blank/comment
-// gaps. Consts, names, localsplusnames, localspluskinds, exctable are
-// identical across every in-scope shape.
-func module(filename string, bc, lineTable []byte) *bytecode.CodeObject {
+// Bytes verified against `python3.14 -m py_compile` for empty
+// modules, the v0.0.4 N-statement no-op set, and the v0.0.5
+// docstring shape.
+func module(filename string, bc, lineTable []byte, consts []any, names []string) *bytecode.CodeObject {
+	if names == nil {
+		names = []string{}
+	}
 	return &bytecode.CodeObject{
 		ArgCount:        0,
 		PosOnlyArgCount: 0,
 		KwOnlyArgCount:  0,
-		StackSize:       1, // implicit None on the return path
-		Flags:           0, // module scope: not optimized, not new-locals
+		StackSize:       1,
+		Flags:           0,
 		Bytecode:        bc,
-		Consts:          []any{nil}, // (None,)
-		Names:           []string{},
+		Consts:          consts,
+		Names:           names,
 		LocalsPlusNames: []string{},
 		LocalsPlusKinds: []byte{},
 		Filename:        filename,

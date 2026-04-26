@@ -223,7 +223,8 @@ func (w *writer) stringTuple(items []string) {
 }
 
 // emitObject dispatches on the dynamic type of a constant value.
-// v0.0.1 only encounters nil (None); subsequent versions extend this.
+// v0.0.5 covers None, bool, and short ASCII strings (interned, the
+// shape CPython uses for module-level docstring consts).
 func (w *writer) emitObject(v any) {
 	switch x := v.(type) {
 	case nil:
@@ -234,9 +235,29 @@ func (w *writer) emitObject(v any) {
 		} else {
 			w.buf = append(w.buf, TYPE_FALSE)
 		}
+	case string:
+		if !isShortAscii(x) {
+			w.err = fmt.Errorf("marshal: string const not short-ASCII (len %d)", len(x))
+			return
+		}
+		w.shortAscii(x, true)
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
+}
+
+// isShortAscii reports whether s fits the TYPE_SHORT_ASCII_INTERNED
+// constraints: pure ASCII bytes and length up to 255.
+func isShortAscii(s string) bool {
+	if len(s) > 255 {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // --- ref-key helpers ----------------------------------------------------
@@ -254,11 +275,15 @@ func bsKey(b []byte) any { return bsKeyType{s: string(b)} }
 func tupleKey(items []any) any {
 	buf := make([]byte, 0, len(items)*2)
 	for _, e := range items {
-		switch e.(type) {
+		switch x := e.(type) {
 		case nil:
 			buf = append(buf, 'N')
 		case bool:
 			buf = append(buf, 'b')
+		case string:
+			buf = append(buf, 's', 0)
+			buf = append(buf, x...)
+			buf = append(buf, 0)
 		default:
 			buf = append(buf, '?')
 		}
@@ -325,6 +350,8 @@ func (rc *refCounter) tuple(items []any) {
 		switch x := e.(type) {
 		case *bytecode.CodeObject:
 			rc.code(x, false)
+		case string:
+			rc.shortAscii(x, true)
 		}
 	}
 }

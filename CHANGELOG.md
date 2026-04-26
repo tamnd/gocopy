@@ -9,6 +9,63 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-04-26
+
+`gocopy compile` accepts a leading single-line ASCII string literal
+as the module docstring, plus string and bytes literals as no-op
+statements anywhere else. Output still matches `python3.14 -m
+py_compile` byte-for-byte.
+
+CPython lowers a leading string literal to:
+
+    RESUME 0
+    LOAD_CONST <docstring>
+    STORE_NAME __doc__
+    [trailing-tail body]
+    LOAD_CONST None
+    RETURN_VALUE
+
+`consts` becomes `(docstring, None)` and `names` becomes
+`('__doc__',)`. The docstring's line table entry covers length 4
+when the docstring is the only statement and length 2 otherwise; the
+trailing tail of t no-op statements adds `max(0, t-1)` NOPs because
+the last tail statement's line entry absorbs the implicit
+`LOAD_CONST None / RETURN_VALUE` pair.
+
+Bytes literals and any non-leading string literal are no-ops:
+CPython drops the value and the body collapses to the v0.0.4 no-op
+shape.
+
+### Added
+
+- `bytecode.STORE_NAME` opcode (CPython 3.14 opcode 116).
+- `bytecode.DocstringBytecode(t)` and `bytecode.DocstringLineTable(
+  docLine, docCol, tail)`.
+- A string-literal scanner: single, double, and triple-quoted ASCII
+  literals with no backslash escapes and no embedded matching
+  quote, plus the same shapes prefixed with `b` or `B`.
+- `marshal.emitObject` learns the `string` case (encoded as
+  `TYPE_SHORT_ASCII_INTERNED | FLAG_REF`).
+- Seven new fixtures: `019_docstring.py` through
+  `025_docstring_two_tail.py`.
+
+### Changed
+
+- `compiler.classify` returns three shapes (`modEmpty`, `modNoOps`,
+  `modDocstring`); the docstring shape carries the docstring text
+  and the no-op tail.
+- `compiler.module` takes the consts and names tuples as
+  parameters so the docstring shape can supply its own
+  `(docstring, None)` and `('__doc__',)`.
+
+### Deferred
+
+- Backslash escapes inside string literals.
+- Triple-quoted docstrings spanning multiple source lines.
+- Raw, f-, and t-strings, plus the remaining prefix combos.
+- Non-ASCII docstring contents and strings longer than 255 bytes.
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.4] - 2026-04-26
 
 `gocopy compile` accepts blank or comment-only lines anywhere in the
@@ -186,7 +243,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/tamnd/gocopy/releases/tag/v0.0.5
 [0.0.4]: https://github.com/tamnd/gocopy/releases/tag/v0.0.4
 [0.0.3]: https://github.com/tamnd/gocopy/releases/tag/v0.0.3
 [0.0.2]: https://github.com/tamnd/gocopy/releases/tag/v0.0.2

@@ -18,6 +18,7 @@ const (
 	NOP          Opcode = 27
 	RETURN_VALUE Opcode = 35
 	LOAD_CONST   Opcode = 82
+	STORE_NAME   Opcode = 116
 	RESUME       Opcode = 128
 )
 
@@ -30,6 +31,7 @@ const (
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
 var CacheSize = [256]uint8{
-	// Filled per opcode as features land. Empty through v0.0.3 because
-	// none of NOP / RETURN_VALUE / LOAD_CONST / RESUME carries a cache.
+	// Filled per opcode as features land. Empty through v0.0.5 because
+	// none of NOP / RETURN_VALUE / LOAD_CONST / STORE_NAME / RESUME
+	// carries a cache.
 }

@@ -9,7 +9,14 @@ import "github.com/tamnd/gocopy/v1/bytecode"
 //   - modEmpty: file contains only blank lines and comments.
 //   - modNoOps: file contains N >= 1 no-op statements, each at
 //     column 0, with arbitrary blank or comment-only lines anywhere
-//     (leading, trailing, or between statements).
+//     (leading, trailing, or between statements). The no-op set is
+//     `pass`, the keyword constants None/True/False, the literal
+//     `...`, a numeric literal, a non-leading string or bytes
+//     literal, or a leading bytes literal (CPython drops the value
+//     in all of these cases).
+//   - modDocstring: file's first statement is a string literal that
+//     CPython binds to `__doc__`, optionally followed by N >= 0
+//     no-op statements.
 //
 // Trailing comments on the same line as a statement are allowed and
 // excluded from the recorded end column. Statements cannot be
@@ -22,17 +29,42 @@ const (
 	modUnsupported modKind = iota
 	modEmpty
 	modNoOps
+	modDocstring
 )
 
 type classification struct {
-	kind  modKind
-	stmts []bytecode.NoOpStmt // one entry per no-op statement; only valid for modNoOps
+	kind modKind
+	// modNoOps: every statement, in source order.
+	// modDocstring: the no-op tail, after the leading docstring.
+	stmts []bytecode.NoOpStmt
+	// modDocstring fields:
+	docLine int
+	docCol  byte
+	docText string
 }
+
+// rawStmt is the parser's intermediate form: either a no-op token
+// (kind=stmtNoOp) or a string literal whose contents are captured
+// in `text` (kind=stmtString). Bytes literals collapse to
+// stmtNoOp because CPython drops them.
+type rawStmt struct {
+	line   int
+	endCol byte
+	kind   rawStmtKind
+	text   string
+}
+
+type rawStmtKind uint8
+
+const (
+	stmtNoOp rawStmtKind = iota
+	stmtString
+)
 
 func classify(src []byte) (classification, bool) {
 	lines := splitLines(src)
 
-	stmts := make([]bytecode.NoOpStmt, 0, len(lines))
+	stmts := make([]rawStmt, 0, len(lines))
 	for idx, ln := range lines {
 		if lineIsBlankOrComment(ln) {
 			continue
@@ -42,18 +74,101 @@ func classify(src []byte) (classification, bool) {
 		}
 		bare := stripLineComment(ln)
 		bare = trimRight(bare)
-		if !isNoOpStatement(bare) {
-			return classification{}, false
-		}
 		if len(bare) > 255 {
 			return classification{}, false
 		}
-		stmts = append(stmts, bytecode.NoOpStmt{Line: idx + 1, EndCol: byte(len(bare))})
+		text, isString, isStringOrBytes := parseStringOrBytes(bare)
+		switch {
+		case isStringOrBytes && isString:
+			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtString, text: text})
+		case isStringOrBytes:
+			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtNoOp})
+		case isNoOpStatement(bare):
+			stmts = append(stmts, rawStmt{line: idx + 1, endCol: byte(len(bare)), kind: stmtNoOp})
+		default:
+			return classification{}, false
+		}
 	}
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
 	}
-	return classification{kind: modNoOps, stmts: stmts}, true
+	if first := stmts[0]; first.kind == stmtString {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:    modDocstring,
+			stmts:   tail,
+			docLine: first.line,
+			docCol:  first.endCol,
+			docText: first.text,
+		}, true
+	}
+	out := make([]bytecode.NoOpStmt, 0, len(stmts))
+	for _, s := range stmts {
+		out = append(out, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+	}
+	return classification{kind: modNoOps, stmts: out}, true
+}
+
+// parseStringOrBytes recognises the v0.0.5 string-literal grammar:
+// pure ASCII contents, no backslash escapes, no embedded matching
+// quote, single or triple `"`/`'` quoting, optional `b`/`B` prefix
+// for bytes. Returns (text, isString, ok). isString is true for
+// string literals (docstring candidate) and false for bytes
+// literals (always a no-op). ok is false when the line is not a
+// recognised string or bytes literal.
+func parseStringOrBytes(s []byte) (text string, isString bool, ok bool) {
+	if len(s) == 0 {
+		return "", false, false
+	}
+	isBytes := false
+	if s[0] == 'b' || s[0] == 'B' {
+		isBytes = true
+		s = s[1:]
+		if len(s) == 0 {
+			return "", false, false
+		}
+	}
+	q := s[0]
+	if q != '"' && q != '\'' {
+		return "", false, false
+	}
+	if len(s) >= 6 && s[1] == q && s[2] == q {
+		if s[len(s)-1] != q || s[len(s)-2] != q || s[len(s)-3] != q {
+			return "", false, false
+		}
+		body := s[3 : len(s)-3]
+		if !isPlainAscii(body, q) {
+			return "", false, false
+		}
+		return string(body), !isBytes, true
+	}
+	if len(s) < 2 || s[len(s)-1] != q {
+		return "", false, false
+	}
+	body := s[1 : len(s)-1]
+	if !isPlainAscii(body, q) {
+		return "", false, false
+	}
+	return string(body), !isBytes, true
+}
+
+// isPlainAscii reports whether body is printable ASCII (0x20..0x7e)
+// with no backslashes and no copies of the quote byte. This is the
+// strict subset v0.0.5 will marshal as TYPE_SHORT_ASCII_INTERNED
+// without needing to interpret escape sequences.
+func isPlainAscii(body []byte, quote byte) bool {
+	for _, c := range body {
+		if c < 0x20 || c > 0x7e {
+			return false
+		}
+		if c == '\\' || c == quote {
+			return false
+		}
+	}
+	return true
 }
 
 // splitLines splits src on '\n'. A trailing newline does NOT produce an
