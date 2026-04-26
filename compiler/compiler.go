@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.11 supports four body shapes:
+// v0.0.12 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -19,10 +19,9 @@
 //     None, True, False, the `...` literal, a plain-ASCII string
 //     literal, a plain-ASCII bytes literal, a non-negative integer
 //     literal (decimal/hex/oct/bin with optional underscores, value in
-//     [0, 2^31-1]), a float literal (any value strconv.ParseFloat
-//     accepts, excluding complex), or a negative integer or float
-//     (a leading `-` before an int or float literal, excluding -0),
-//     optionally followed by
+//     [0, 2^31-1]), a float literal, a pure-imaginary complex literal
+//     (`1j`, `0.5j`), or a negative integer or float (leading `-`,
+//     excluding -0), optionally followed by
 //     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
 //     STORE_NAME <name>` after the synthetic RESUME, then the no-op
 //     tail. Names tuple is `(name,)`.

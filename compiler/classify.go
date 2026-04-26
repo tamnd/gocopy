@@ -403,6 +403,11 @@ func tryParseAssign(s []byte) (asgn, bool) {
 			value = fv
 			break
 		}
+		// Complex literal (`1j`, `0.5j`, `1e2j`). The real part is always 0.
+		if cv, ok := parseComplexLiteral(rhs); ok {
+			value = cv
+			break
+		}
 		text, isString, ok := parseStringOrBytes(rhs)
 		if !ok {
 			return asgn{}, false
@@ -494,6 +499,32 @@ func parseFloatLiteral(s []byte) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// parseComplexLiteral recognises a pure-imaginary Python complex literal
+// (a number followed by `j` or `J`). Only the imaginary form is supported
+// here (`1j`, `0.5j`, `1e2j`); the `1+2j` form requires expression parsing.
+// The real part of the returned complex128 is always 0.0.
+func parseComplexLiteral(s []byte) (complex128, bool) {
+	if len(s) < 2 {
+		return 0, false
+	}
+	last := s[len(s)-1]
+	if last != 'j' && last != 'J' {
+		return 0, false
+	}
+	body := s[:len(s)-1]
+	buf := make([]byte, 0, len(body))
+	for _, c := range body {
+		if c != '_' {
+			buf = append(buf, c)
+		}
+	}
+	f, err := strconv.ParseFloat(string(buf), 64)
+	if err != nil {
+		return 0, false
+	}
+	return complex(0, f), true
 }
 
 // parseBaseLiteral parses digits (with underscore separators allowed) in the
