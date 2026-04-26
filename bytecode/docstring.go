@@ -46,26 +46,34 @@ func DocstringBytecode(tailStmts int) []byte {
 }
 
 // DocstringLineTable returns the PEP 626 line table for a module
-// whose first statement is a docstring on `docLine` ending at
-// column `docEndCol`, followed by `tail` no-op statements.
+// whose first statement is a docstring on `docLine` ending on
+// `docEndLine` at column `docEndCol`, followed by `tail` no-op
+// statements.
 //
 // The docstring entry covers two code units (LOAD_CONST + STORE_NAME)
-// when the tail is non-empty. When the tail is empty it absorbs the
-// trailing LOAD_CONST None + RETURN_VALUE too, growing to four code
-// units. Tail statements use the v0.0.4 single-statement encoding,
-// with the final statement covering the LOAD_CONST None +
-// RETURN_VALUE pair.
-func DocstringLineTable(docLine int, docEndCol byte, tail []NoOpStmt) []byte {
-	if docLine < 1 {
-		panic("bytecode.DocstringLineTable: docLine must be >= 1")
+// when the tail is non-empty, four when not. Single-line docstrings
+// (docEndLine == docLine) use the compact ONE_LINE_* dispatch in
+// appendNoOpEntry. Multi-line docstrings always use a LONG entry
+// because the ONE_LINE codes implicitly mean end_line == start_line;
+// `appendDocstringLong` handles that path.
+//
+// Tail line deltas are computed from the docstring's *start* line
+// (the v0.0.4 entry-to-entry rule), not its end line.
+func DocstringLineTable(docLine, docEndLine int, docEndCol byte, tail []NoOpStmt) []byte {
+	if docLine < 1 || docEndLine < docLine {
+		panic("bytecode.DocstringLineTable: bad docLine/docEndLine")
 	}
-	out := make([]byte, 0, 5+4+4*len(tail))
+	out := make([]byte, 0, 5+5+4*len(tail))
 	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01)
 	docLength := 2
 	if len(tail) == 0 {
 		docLength = 4
 	}
-	out = appendNoOpEntry(out, docLine, docLength, docEndCol)
+	if docEndLine == docLine {
+		out = appendNoOpEntry(out, docLine, docLength, docEndCol)
+	} else {
+		out = appendDocstringLong(out, docLine, docEndLine-docLine, docLength, docEndCol)
+	}
 	prevLine := docLine
 	for i, s := range tail {
 		length := 1
@@ -75,5 +83,18 @@ func DocstringLineTable(docLine int, docEndCol byte, tail []NoOpStmt) []byte {
 		out = appendNoOpEntry(out, s.Line-prevLine, length, s.EndCol)
 		prevLine = s.Line
 	}
+	return out
+}
+
+// appendDocstringLong writes a LONG entry for a multi-line statement
+// at column 0, using the docstring's line_delta from the previous
+// entry, the given end_line_delta, length, and end_col. start_col is
+// implicit 0 for our docstring grammar.
+func appendDocstringLong(out []byte, lineDelta, endLineDelta, length int, endCol byte) []byte {
+	out = append(out, entryHeader(codeLong, length))
+	out = appendSignedVarint(out, lineDelta)
+	out = appendVarint(out, uint(endLineDelta))
+	out = appendVarint(out, 1)
+	out = appendVarint(out, uint(endCol)+1)
 	return out
 }

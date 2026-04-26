@@ -223,8 +223,10 @@ func (w *writer) stringTuple(items []string) {
 }
 
 // emitObject dispatches on the dynamic type of a constant value.
-// v0.0.5 covers None, bool, and short ASCII strings (interned, the
-// shape CPython uses for module-level docstring consts).
+// String consts are emitted as TYPE_SHORT_ASCII_INTERNED when every
+// byte is a name char (alphanumeric or underscore) — the rule CPython's
+// `all_name_chars` applies in `intern_string_constants`. Anything else
+// (spaces, newlines, punctuation) is plain TYPE_SHORT_ASCII.
 func (w *writer) emitObject(v any) {
 	switch x := v.(type) {
 	case nil:
@@ -240,7 +242,7 @@ func (w *writer) emitObject(v any) {
 			w.err = fmt.Errorf("marshal: string const not short-ASCII (len %d)", len(x))
 			return
 		}
-		w.shortAscii(x, true)
+		w.shortAscii(x, isAllNameChars(x))
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -254,6 +256,27 @@ func isShortAscii(s string) bool {
 	}
 	for i := range len(s) {
 		if s[i] > 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// isAllNameChars mirrors CPython's all_name_chars: every byte must be
+// ASCII alphanumeric or underscore. The empty string returns false to
+// match CPython (empty strings aren't interned via this path).
+func isAllNameChars(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_':
+		default:
 			return false
 		}
 	}
@@ -351,7 +374,7 @@ func (rc *refCounter) tuple(items []any) {
 		case *bytecode.CodeObject:
 			rc.code(x, false)
 		case string:
-			rc.shortAscii(x, true)
+			rc.shortAscii(x, isAllNameChars(x))
 		}
 	}
 }

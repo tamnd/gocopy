@@ -9,6 +9,61 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-04-26
+
+`gocopy compile` accepts triple-quoted docstrings that span multiple
+source lines. v0.0.5 only handled single-line docstrings; this rung
+adds the LONG line-table entry CPython emits when the docstring's
+end line differs from its start line, plus the matching marshal
+change so non-identifier-shaped string consts come out un-interned.
+
+The PEP 626 LONG payload for a multi-line statement at column 0:
+
+    header: 0xf0..0xf3 (LONG, length 1..4 code units)
+    svarint(line_delta)
+    varint(end_line_delta)
+    varint(start_col + 1)
+    varint(end_col + 1)
+
+The trailing tail of t no-op statements after a multi-line docstring
+keeps the v0.0.5 rule (each entry's line delta is computed from the
+previous statement's start line, not its end line) and still adds
+`max(0, t-1)` NOPs.
+
+The marshal change tracks CPython's `intern_string_constants`: a
+string const is emitted as `TYPE_SHORT_ASCII_INTERNED | FLAG_REF`
+only when every byte is ASCII alphanumeric or underscore. Anything
+with a space, newline, or punctuation goes out as plain
+`TYPE_SHORT_ASCII` with no ref flag.
+
+### Added
+
+- `bytecode.DocstringLineTable` takes a `docEndLine` parameter and
+  emits a LONG entry when the docstring spans multiple lines.
+- A multi-line triple-quoted-string scanner in `compiler.classify`
+  for plain-ASCII bodies across many source lines, honouring the
+  optional `b`/`B` bytes prefix.
+- Three new fixtures: `026_docstring_multi.py`,
+  `027_docstring_three_line.py`, and
+  `028_docstring_multi_with_tail.py`.
+
+### Changed
+
+- `marshal` decides string-const interning per byte instead of always
+  interning. Empty strings are also non-interned now.
+- `compiler.classify` records `docEndLine` alongside the docstring
+  text so the bytecode layer can pick the right line-table entry.
+
+### Deferred
+
+- Backslash escapes inside string literals.
+- Triple-quoted docstrings whose body contains the matching quote
+  character or a `#` that should not be treated as a comment.
+- Module-level assignments and other expression statements.
+- Raw, f-, and t-strings, plus the remaining prefix combos.
+- Non-ASCII docstring contents and strings longer than 255 bytes.
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.5] - 2026-04-26
 
 `gocopy compile` accepts a leading single-line ASCII string literal
@@ -243,7 +298,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/tamnd/gocopy/releases/tag/v0.0.6
 [0.0.5]: https://github.com/tamnd/gocopy/releases/tag/v0.0.5
 [0.0.4]: https://github.com/tamnd/gocopy/releases/tag/v0.0.4
 [0.0.3]: https://github.com/tamnd/gocopy/releases/tag/v0.0.3
