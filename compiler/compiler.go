@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.8 supports four body shapes:
+// v0.0.9 supports four body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -17,7 +17,9 @@
 //     end_line_delta covers the closing triple quote's source line.
 //  4. A leading `name = literal` assignment where literal is one of
 //     None, True, False, the `...` literal, a plain-ASCII string
-//     literal, or a plain-ASCII bytes literal, optionally followed by
+//     literal, a plain-ASCII bytes literal, or a non-negative integer
+//     literal (decimal/hex/oct/bin with optional underscores, value in
+//     [0, 2^31-1]), optionally followed by
 //     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
 //     STORE_NAME <name>` after the synthetic RESUME, then the no-op
 //     tail. Names tuple is `(name,)`.
@@ -76,6 +78,25 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 			[]string{"__doc__"},
 		), nil
 	case modAssign:
+		// Integer RHS: small ints (0..255) use LOAD_SMALL_INT; larger ints
+		// use LOAD_CONST. Either way consts = (int_val, None).
+		if iv, ok := cls.asgnValue.(int64); ok {
+			lt := bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts)
+			if iv >= 0 && iv <= 255 {
+				return module(opts.Filename,
+					bytecode.AssignSmallIntBytecode(byte(iv), len(cls.stmts)),
+					lt,
+					[]any{iv, nil},
+					[]string{cls.asgnName},
+				), nil
+			}
+			return module(opts.Filename,
+				bytecode.AssignBytecode(1, len(cls.stmts)),
+				lt,
+				[]any{iv, nil},
+				[]string{cls.asgnName},
+			), nil
+		}
 		consts := []any{cls.asgnValue, nil}
 		noneIdx := byte(1)
 		if cls.asgnValue == nil {
