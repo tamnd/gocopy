@@ -9,6 +9,44 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-04-26
+
+`gocopy compile` accepts multiple no-op statements on consecutive
+lines. The N=1 case is v0.0.2; everything from `pass\npass\n` up
+through five mixed constants on five lines now matches
+`python3.14 -m py_compile` byte-for-byte.
+
+CPython's lowering for an N-statement no-op body:
+
+- bytecode: `RESUME` + (N-1) × `NOP` + `LOAD_CONST 0` + `RETURN_VALUE`
+- consts tuple: `(None,)`
+- line table: synthetic prologue + (N-1) × `ONE_LINE1`(1 unit) +
+  one `ONE_LINE1`(2 units)
+
+We mirror that exactly.
+
+### Added
+
+- `bytecode.NoOpBytecode(n)` and `bytecode.LineTableNoOps(endCols)`,
+  the multi-statement generalisation of v0.0.2's single-no-op
+  helpers. The single-no-op helper now wraps `LineTableNoOps`.
+- `bytecode.NOP` opcode constant (CPython 3.14 opcode 27).
+- Five new fixtures: `009_two_pass.py` through `013_five_consts.py`.
+
+### Changed
+
+- The classifier in `compiler` collects a slice of statement end
+  columns instead of returning one. Body shape enum collapses
+  `modSingleNoOp` into a general `modNoOps`.
+
+### Deferred
+
+- Blank or comment lines BETWEEN statements (the encoder will
+  pick up `ONE_LINE0` / `ONE_LINE2` entries for the larger line
+  deltas).
+- String / bytes literal as a top-level statement (docstring path).
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.2] - 2026-04-26
 
 `gocopy compile` now accepts a single `pass` statement, or a single
@@ -102,6 +140,7 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/tamnd/gocopy/releases/tag/v0.0.3
 [0.0.2]: https://github.com/tamnd/gocopy/releases/tag/v0.0.2
 [0.0.1]: https://github.com/tamnd/gocopy/releases/tag/v0.0.1

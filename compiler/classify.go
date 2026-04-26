@@ -1,29 +1,31 @@
 package compiler
 
 // classify scans Python source and returns the body shape if it falls
-// inside the v0.0.2 supported set, plus ok=false otherwise. The
+// inside the v0.0.x supported set, plus ok=false otherwise. The
 // supported shapes are:
 //
 //   - modEmpty: file contains only blank lines and comments.
-//   - modSingleNoOp: file contains exactly one no-op statement on
-//     line 1 starting at column 0, optionally followed by trailing
-//     blank or comment-only lines.
+//   - modNoOps: file contains N >= 1 no-op statements on consecutive
+//     lines starting at line 1, each at column 0, with no blank or
+//     comment lines BETWEEN statements. Leading and trailing blank
+//     or comment-only lines are allowed.
 //
-// Trailing comments on the same line as the statement are allowed and
-// excluded from endCol. The statement cannot be indented and cannot
-// start past column 0; CPython would raise IndentationError.
+// Trailing comments on the same line as a statement are allowed and
+// excluded from the recorded end column. Statements cannot be
+// indented and cannot start past column 0; CPython would raise
+// IndentationError.
 
 type modKind uint8
 
 const (
 	modUnsupported modKind = iota
 	modEmpty
-	modSingleNoOp
+	modNoOps
 )
 
 type classification struct {
-	kind   modKind
-	endCol int // 0-based column where the statement ends (exclusive); only valid for modSingleNoOp
+	kind    modKind
+	endCols []byte // end column of each no-op statement, in order; only valid for modNoOps
 }
 
 func classify(src []byte) (classification, bool) {
@@ -41,35 +43,41 @@ func classify(src []byte) (classification, bool) {
 		return classification{kind: modEmpty}, true
 	}
 
-	// v0.0.2 only handles a statement on line 1 (index 0).
+	// v0.0.x only handles bodies that start on line 1 (index 0).
+	// Leading blank or comment-only lines push the first statement
+	// to a later line, which would change the line table encoding
+	// (non-`+1` line delta) and is held off until a later rung.
 	if firstIdx != 0 {
 		return classification{}, false
 	}
 
-	// The statement must start at column 0 (no indentation).
-	stmt := lines[0]
-	if len(stmt) > 0 && (stmt[0] == ' ' || stmt[0] == '\t') {
-		return classification{}, false
+	// Walk consecutive non-blank, non-comment lines. Each must be a
+	// no-op statement at column 0. The first blank/comment line ends
+	// the run; everything after it must also be blank/comment.
+	endCols := make([]byte, 0, len(lines))
+	i := 0
+	for i < len(lines) && !lineIsBlankOrComment(lines[i]) {
+		stmt := lines[i]
+		if len(stmt) > 0 && (stmt[0] == ' ' || stmt[0] == '\t') {
+			return classification{}, false
+		}
+		bare := stripLineComment(stmt)
+		bare = trimRight(bare)
+		if !isNoOpStatement(bare) {
+			return classification{}, false
+		}
+		if len(bare) > 255 {
+			return classification{}, false
+		}
+		endCols = append(endCols, byte(len(bare)))
+		i++
 	}
-
-	// Strip a trailing line comment, then trailing whitespace, to get
-	// the bare statement text and its end column.
-	bare := stripLineComment(stmt)
-	bare = trimRight(bare)
-	if !isNoOpStatement(bare) {
-		return classification{}, false
-	}
-
-	// Every subsequent line must be blank or comment-only. A second
-	// real statement would be a multi-statement body, which is out of
-	// scope.
-	for _, ln := range lines[1:] {
+	for _, ln := range lines[i:] {
 		if !lineIsBlankOrComment(ln) {
 			return classification{}, false
 		}
 	}
-
-	return classification{kind: modSingleNoOp, endCol: len(bare)}, true
+	return classification{kind: modNoOps, endCols: endCols}, true
 }
 
 // splitLines splits src on '\n'. A trailing newline does NOT produce an
