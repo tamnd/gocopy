@@ -9,6 +9,50 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-04-26
+
+`gocopy compile` accepts a leading `name = literal` assignment where
+literal is `None`, `True`, `False`, or a plain-ASCII string literal,
+optionally followed by the same no-op tail v0.0.4..0.0.6 already
+accepted. Output stays byte-identical to `python3.14 -m py_compile`.
+
+CPython's lowering:
+
+    RESUME 0
+    LOAD_CONST <value>
+    STORE_NAME <name>
+    [no-op tail]
+    LOAD_CONST <None>
+    RETURN_VALUE
+
+`consts` is `(value, None)` when value is non-None and `(None,)`
+when value is None itself. `names` is `(name,)` — the first
+non-empty names tuple gocopy emits.
+
+The line table gains a new SHORT0 entry primitive for the
+STORE_NAME slot. SHORT0 encodes (start_col, end_col) in one payload
+byte; CPython uses it for STORE_NAME because the target name span
+always fits.
+
+### Added
+
+- `bytecode.AssignBytecode` and `bytecode.AssignLineTable` for the
+  assignment shape.
+- A `name = literal` parser branch in `compiler.classify`.
+- Six new fixtures: `029_assign_none.py` through
+  `034_assign_long_name.py`.
+
+### Changed
+
+- `compiler.classify` returns a fourth body shape `modAssign`.
+
+### Deferred
+
+- Right-hand side `Ellipsis`, bytes literals, integers, floats.
+- Multi-target / augmented / expression assignment.
+- Assignment after a leading docstring or after other statements.
+- Wiring gopapy as the parser; still waiting on a gopapy v1.0.0.
+
 ## [0.0.6] - 2026-04-26
 
 `gocopy compile` accepts triple-quoted docstrings that span multiple
@@ -298,7 +342,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/tamnd/gocopy/releases/tag/v0.0.7
 [0.0.6]: https://github.com/tamnd/gocopy/releases/tag/v0.0.6
 [0.0.5]: https://github.com/tamnd/gocopy/releases/tag/v0.0.5
 [0.0.4]: https://github.com/tamnd/gocopy/releases/tag/v0.0.4

@@ -14,7 +14,7 @@ for at least one fixture exercising that node and the
 | Blank / comment lines between no-op statements | done | v0.0.4 | tests/fixtures/014_pass_blank_pass.py |
 | Constant expression statement: string / bytes (docstring path) | done | v0.0.5 | tests/fixtures/019_docstring.py |
 | Multi-line triple-quoted docstring (LONG line-table entry) | done | v0.0.6 | tests/fixtures/026_docstring_multi.py |
-| Module-level assignment | planned | - | - |
+| Module-level assignment (`name = None / True / False / "str"`) | done | v0.0.7 | tests/fixtures/029_assign_none.py |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |

@@ -30,31 +30,45 @@ const (
 	modEmpty
 	modNoOps
 	modDocstring
+	modAssign
 )
 
 type classification struct {
 	kind modKind
 	// modNoOps: every statement, in source order.
-	// modDocstring: the no-op tail, after the leading docstring.
+	// modDocstring / modAssign: the no-op tail, after the leading
+	// docstring or assignment.
 	stmts []bytecode.NoOpStmt
 	// modDocstring fields:
 	docLine    int
 	docEndLine int
 	docCol     byte
 	docText    string
+	// modAssign fields:
+	asgnLine     int
+	asgnName     string
+	asgnNameLen  byte
+	asgnValStart byte
+	asgnValEnd   byte
+	asgnValue    any
 }
 
-// rawStmt is the parser's intermediate form: either a no-op token
-// (kind=stmtNoOp) or a string literal whose contents are captured
-// in `text` (kind=stmtString). Bytes literals collapse to
-// stmtNoOp because CPython drops them. For a single-line statement
-// endLine == line.
+// rawStmt is the parser's intermediate form: a no-op token, a string
+// literal whose contents are captured in `text`, or a `name = literal`
+// assignment with its name/value fields populated. Bytes literals
+// collapse to stmtNoOp because CPython drops them. For a single-line
+// statement endLine == line.
 type rawStmt struct {
 	line    int
 	endLine int
 	endCol  byte
 	kind    rawStmtKind
 	text    string
+	// stmtAssign fields:
+	asgnNameLen  byte
+	asgnValStart byte
+	asgnValEnd   byte
+	asgnValue    any
 }
 
 type rawStmtKind uint8
@@ -62,6 +76,7 @@ type rawStmtKind uint8
 const (
 	stmtNoOp rawStmtKind = iota
 	stmtString
+	stmtAssign
 )
 
 func classify(src []byte) (classification, bool) {
@@ -91,6 +106,25 @@ func classify(src []byte) (classification, bool) {
 		if len(bare) > 255 {
 			return classification{}, false
 		}
+		// Assignment is only valid as the first statement in v0.0.7.
+		// Subsequent assignments fall through to default (rejected).
+		if len(stmts) == 0 {
+			if a, ok := tryParseAssign(bare); ok {
+				stmts = append(stmts, rawStmt{
+					line:         i + 1,
+					endLine:      i + 1,
+					endCol:       byte(len(bare)),
+					kind:         stmtAssign,
+					text:         a.name,
+					asgnNameLen:  a.nameLen,
+					asgnValStart: a.valStart,
+					asgnValEnd:   a.valEnd,
+					asgnValue:    a.value,
+				})
+				i++
+				continue
+			}
+		}
 		text, isString, isStringOrBytes := parseStringOrBytes(bare)
 		switch {
 		case isStringOrBytes && isString:
@@ -119,6 +153,22 @@ func classify(src []byte) (classification, bool) {
 			docEndLine: first.endLine,
 			docCol:     first.endCol,
 			docText:    first.text,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtAssign {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:         modAssign,
+			stmts:        tail,
+			asgnLine:     first.line,
+			asgnName:     first.text,
+			asgnNameLen:  first.asgnNameLen,
+			asgnValStart: first.asgnValStart,
+			asgnValEnd:   first.asgnValEnd,
+			asgnValue:    first.asgnValue,
 		}, true
 	}
 	out := make([]bytecode.NoOpStmt, 0, len(stmts))
@@ -246,6 +296,107 @@ func joinNL(parts []string) string {
 		out = append(out, p...)
 	}
 	return string(out)
+}
+
+// asgn is the parsed form of a single `name = literal` assignment line.
+type asgn struct {
+	name     string
+	nameLen  byte
+	valStart byte
+	valEnd   byte
+	value    any
+}
+
+// tryParseAssign recognises the v0.0.7 assignment grammar:
+// `<identifier> = <literal>` at column 0, where literal is one of
+// None, True, False, or a single- or triple-quoted plain-ASCII string
+// literal. The identifier must be a Python name (letter/underscore
+// followed by name chars) of length 1..15 (the SHORT0 entry's
+// end_col-start_col field caps at 15). Any whitespace around `=` is
+// allowed; trailing comments have already been stripped by the caller.
+// Returns ok=false when the line does not match this grammar.
+func tryParseAssign(s []byte) (asgn, bool) {
+	if len(s) == 0 || !isIdentStart(s[0]) {
+		return asgn{}, false
+	}
+	nameEnd := 1
+	for nameEnd < len(s) && isIdentCont(s[nameEnd]) {
+		nameEnd++
+	}
+	if nameEnd > 15 {
+		return asgn{}, false
+	}
+	name := string(s[:nameEnd])
+	if isReservedName(name) {
+		return asgn{}, false
+	}
+	i := nameEnd
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) || s[i] != '=' {
+		return asgn{}, false
+	}
+	if i+1 < len(s) && s[i+1] == '=' {
+		// `==` is a comparison, not an assignment.
+		return asgn{}, false
+	}
+	i++
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) {
+		return asgn{}, false
+	}
+	valStart := i
+	rhs := s[valStart:]
+	var value any
+	switch string(rhs) {
+	case "None":
+		value = nil
+	case "True":
+		value = true
+	case "False":
+		value = false
+	default:
+		text, isString, ok := parseStringOrBytes(rhs)
+		if !ok || !isString {
+			return asgn{}, false
+		}
+		value = text
+	}
+	return asgn{
+		name:     name,
+		nameLen:  byte(nameEnd),
+		valStart: byte(valStart),
+		valEnd:   byte(len(s)),
+		value:    value,
+	}, true
+}
+
+// isIdentStart reports whether b can start a Python identifier
+// (ASCII letters and underscore only; non-ASCII identifiers are out
+// of scope for v0.0.7).
+func isIdentStart(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+// isIdentCont reports whether b can continue a Python identifier
+// (ASCII alphanumeric and underscore).
+func isIdentCont(b byte) bool {
+	return isIdentStart(b) || (b >= '0' && b <= '9')
+}
+
+// isReservedName rejects identifiers that would parse as a constant
+// or keyword. CPython raises SyntaxError on `None = 1` etc.; we want
+// to fall through to the standard scanner (which then rejects them
+// too) instead of producing a bogus assignment.
+func isReservedName(s string) bool {
+	switch s {
+	case "None", "True", "False":
+		return true
+	}
+	return false
 }
 
 // parseStringOrBytes recognises the v0.0.5 string-literal grammar:
