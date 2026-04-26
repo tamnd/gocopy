@@ -1,6 +1,6 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
 //
-// v0.0.12 supports four body shapes:
+// v0.0.13 supports five body shapes:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
@@ -25,6 +25,15 @@
 //     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
 //     STORE_NAME <name>` after the synthetic RESUME, then the no-op
 //     tail. Names tuple is `(name,)`.
+//  5. N >= 2 consecutive `name = literal` assignments of the same
+//     literal types as shape 4, optionally followed by no-op
+//     statements. Each assignment compiles to a LOAD / STORE_NAME
+//     pair. The consts tuple is built incrementally: the first
+//     assignment's value is always present (as a phantom slot for
+//     LOAD_SMALL_INT values), subsequent small ints are not added,
+//     other values are added in encounter order (deduplicated), None
+//     is appended after all non-negative values, and the negated
+//     results of negative literals are appended last.
 //
 // The first two shapes share the consts tuple `(None,)` and an empty
 // names tuple. The docstring shape uses `(docstring, None)` and
@@ -38,6 +47,7 @@
 package compiler
 
 import (
+	"bytes"
 	"errors"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
@@ -123,8 +133,146 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 			consts,
 			[]string{cls.asgnName},
 		), nil
+	case modMultiAssign:
+		return compileMultiAssign(opts.Filename, cls.asgns, cls.stmts)
 	}
 	return nil, ErrUnsupportedSource
+}
+
+// compileMultiAssign lowers N >= 2 consecutive `name = literal` assignments.
+func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt) (*bytecode.CodeObject, error) {
+	// Build names (deduplicated, insertion-ordered).
+	namesIdx := map[string]byte{}
+	names := []string{}
+	nameIdxs := make([]byte, len(asgns))
+	for i, a := range asgns {
+		if idx, ok := namesIdx[a.name]; ok {
+			nameIdxs[i] = idx
+		} else {
+			idx = byte(len(names))
+			namesIdx[a.name] = idx
+			names = append(names, a.name)
+			nameIdxs[i] = idx
+		}
+	}
+
+	// Build consts and per-assignment load info.
+	// loadSmall[i] == true → LOAD_SMALL_INT asgns[i].value.(int64)
+	// loadSmall[i] == false → LOAD_CONST loadIdx[i]
+	consts := []any{}
+	loadSmall := make([]bool, len(asgns))
+	loadIdx := make([]byte, len(asgns))
+	var pendingNegs []any // negative values appended after None
+
+	// constIdx returns the index of v in consts, or -1.
+	constIdx := func(v any) int {
+		if bv, ok := v.([]byte); ok {
+			for j, c := range consts {
+				if bc, ok2 := c.([]byte); ok2 && bytes.Equal(bv, bc) {
+					return j
+				}
+			}
+			return -1
+		}
+		for j, c := range consts {
+			if c == v {
+				return j
+			}
+		}
+		return -1
+	}
+	addConst := func(v any) byte {
+		if idx := constIdx(v); idx >= 0 {
+			return byte(idx)
+		}
+		idx := byte(len(consts))
+		consts = append(consts, v)
+		return idx
+	}
+
+	for i, a := range asgns {
+		v := a.value
+		switch tv := v.(type) {
+		case int64:
+			if tv >= 0 && tv <= 255 {
+				loadSmall[i] = true
+				if i == 0 {
+					// First assignment: add the value as a phantom slot.
+					addConst(tv)
+				}
+			} else {
+				loadIdx[i] = addConst(tv)
+			}
+		case negLiteral:
+			if i == 0 {
+				// First assignment: add pos as phantom slot.
+				addConst(tv.pos)
+			}
+			// neg value goes after None; record position later.
+			pendingNegs = append(pendingNegs, tv.neg)
+			loadIdx[i] = 0 // will be overwritten after None is inserted
+		case nil:
+			loadIdx[i] = addConst(nil)
+		default:
+			loadIdx[i] = addConst(v)
+		}
+	}
+
+	// Add None if not present; record noneIdx.
+	noneIdx := addConst(nil)
+
+	// Resolve pending negatives.
+	negStart := byte(len(consts))
+	negIdx := make(map[any]byte)
+	for _, neg := range pendingNegs {
+		if _, ok := negIdx[neg]; !ok {
+			negIdx[neg] = negStart + byte(len(negIdx))
+			consts = append(consts, neg)
+		}
+	}
+	// Assign resolved indices to negative assignments.
+	negI := 0
+	for i, a := range asgns {
+		if _, ok := a.value.(negLiteral); ok {
+			neg := a.value.(negLiteral).neg
+			loadIdx[i] = negIdx[neg]
+			negI++
+		}
+	}
+
+	// Build bytecode: RESUME + [LOAD, STORE_NAME]×N + NOPs + LOAD_CONST None + RV.
+	nops := 0
+	if len(tail) > 1 {
+		nops = len(tail) - 1
+	}
+	bc := make([]byte, 0, 2+4*len(asgns)+2*nops+4)
+	bc = append(bc, byte(bytecode.RESUME), 0)
+	for i, a := range asgns {
+		if loadSmall[i] {
+			bc = append(bc, byte(bytecode.LOAD_SMALL_INT), byte(a.value.(int64)))
+		} else {
+			bc = append(bc, byte(bytecode.LOAD_CONST), loadIdx[i])
+		}
+		bc = append(bc, byte(bytecode.STORE_NAME), nameIdxs[i])
+	}
+	for range nops {
+		bc = append(bc, byte(bytecode.NOP), 0)
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), noneIdx, byte(bytecode.RETURN_VALUE), 0)
+
+	// Build line table.
+	ltAsgns := make([]bytecode.AssignInfo, len(asgns))
+	for i, a := range asgns {
+		ltAsgns[i] = bytecode.AssignInfo{
+			Line:     a.line,
+			NameLen:  a.nameLen,
+			ValStart: a.valStart,
+			ValEnd:   a.valEnd,
+		}
+	}
+	lt := bytecode.MultiAssignLineTable(ltAsgns, tail)
+
+	return module(filename, bc, lt, consts, names), nil
 }
 
 // module returns the canonical Code object for the given body. Only

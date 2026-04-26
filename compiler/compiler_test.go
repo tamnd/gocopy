@@ -333,6 +333,75 @@ func TestAssignModule(t *testing.T) {
 	}
 }
 
+func TestMultiAssign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		src    []byte
+		consts []any
+		names  []string
+		bc     []byte
+	}{
+		{
+			name:   "two small ints",
+			src:    []byte("x = 1\ny = 2\n"),
+			consts: []any{int64(1), nil},
+			names:  []string{"x", "y"},
+			bc:     []byte{0x80, 0, 0x5e, 1, 0x74, 0, 0x5e, 2, 0x74, 1, 0x52, 1, 0x23, 0},
+		},
+		{
+			name:   "three small ints",
+			src:    []byte("x = 1\ny = 2\nz = 3\n"),
+			consts: []any{int64(1), nil},
+			names:  []string{"x", "y", "z"},
+			bc:     []byte{0x80, 0, 0x5e, 1, 0x74, 0, 0x5e, 2, 0x74, 1, 0x5e, 3, 0x74, 2, 0x52, 1, 0x23, 0},
+		},
+		{
+			name:   "large then small",
+			src:    []byte("x = 300\ny = 2\n"),
+			consts: []any{int64(300), nil},
+			names:  []string{"x", "y"},
+			bc:     []byte{0x80, 0, 0x52, 0, 0x74, 0, 0x5e, 2, 0x74, 1, 0x52, 1, 0x23, 0},
+		},
+		{
+			name:   "negative then small",
+			src:    []byte("x = -1\ny = 2\n"),
+			consts: []any{int64(1), nil, int64(-1)},
+			names:  []string{"x", "y"},
+			bc:     []byte{0x80, 0, 0x52, 2, 0x74, 0, 0x5e, 2, 0x74, 1, 0x52, 1, 0x23, 0},
+		},
+		{
+			name:   "None then small",
+			src:    []byte("x = None\ny = 2\n"),
+			consts: []any{nil},
+			names:  []string{"x", "y"},
+			bc:     []byte{0x80, 0, 0x52, 0, 0x74, 0, 0x5e, 2, 0x74, 1, 0x52, 0, 0x23, 0},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if !bytes.Equal(c.Bytecode, tc.bc) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, tc.bc)
+			}
+			if len(c.Consts) != len(tc.consts) {
+				t.Fatalf("consts len = %d; want %d (%v)", len(c.Consts), len(tc.consts), tc.consts)
+			}
+			for i := range tc.consts {
+				if !reflect.DeepEqual(c.Consts[i], tc.consts[i]) {
+					t.Errorf("consts[%d] = %v (%T); want %v (%T)", i, c.Consts[i], c.Consts[i], tc.consts[i], tc.consts[i])
+				}
+			}
+			if !reflect.DeepEqual(c.Names, tc.names) {
+				t.Errorf("names = %v; want %v", c.Names, tc.names)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
