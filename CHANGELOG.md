@@ -9,6 +9,30 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-04-26
+
+`gocopy compile` accepts a pure-imaginary complex literal on the
+right-hand side: `x = 1j`, `x = 0j`, `x = 0.5j`.
+
+CPython uses `LOAD_CONST 0` (same as float); `consts = (complex_val, None)`.
+Marshal emits `TYPE_BINARY_COMPLEX` (0x79): 16 bytes, real then imag as
+IEEE 754 float64 little-endian. No `FLAG_REF` (complex is not immortal).
+
+### Added
+
+- `marshal.emitObject` handles `complex128` → `TYPE_BINARY_COMPLEX`.
+- `complexKeyType` / `complexKey()` in marshal; `tupleKey` and
+  `refCounter.tuple` updated.
+- `parseComplexLiteral` in `compiler/classify.go`.
+- Three new fixtures: `058_assign_complex_one.py` through
+  `060_assign_complex_half.py`.
+
+### Deferred
+
+- Negative complex (`x = -1j`), the `a+bj` form.
+- Multiple sequential assignments.
+- Wiring gopapy as the parser.
+
 ## [0.0.11] - 2026-04-26
 
 `gocopy compile` accepts a leading `-` on the right-hand side of a
@@ -468,7 +492,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/tamnd/gocopy/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/tamnd/gocopy/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/tamnd/gocopy/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/tamnd/gocopy/releases/tag/v0.0.9

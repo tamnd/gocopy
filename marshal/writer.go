@@ -285,6 +285,23 @@ func (w *writer) emitObject(v any) {
 		var b [8]byte
 		binary.LittleEndian.PutUint64(b[:], math.Float64bits(x))
 		w.buf = append(w.buf, b[:]...)
+	case complex128:
+		key := complexKey(x)
+		if w.emitRef(key) {
+			return
+		}
+		// Complex is not immortal; FLAG_REF only if seen more than once.
+		if w.counts[key] > 1 {
+			w.reserveKey(key)
+			w.buf = append(w.buf, TYPE_BINARY_COMPLEX|FlagRef)
+		} else {
+			w.buf = append(w.buf, TYPE_BINARY_COMPLEX)
+		}
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(real(x)))
+		w.buf = append(w.buf, b[:]...)
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(imag(x)))
+		w.buf = append(w.buf, b[:]...)
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -336,10 +353,14 @@ type tupleKeyType struct{ s string }
 type strTupleKeyType struct{ s string }
 type intKeyType struct{ v int64 }
 type float64KeyType struct{ v uint64 }
+type complexKeyType struct{ r, i uint64 }
 
-func bsKey(b []byte) any      { return bsKeyType{s: string(b)} }
-func intKey(v int64) any      { return intKeyType{v: v} }
+func bsKey(b []byte) any       { return bsKeyType{s: string(b)} }
+func intKey(v int64) any       { return intKeyType{v: v} }
 func float64Key(v float64) any { return float64KeyType{v: math.Float64bits(v)} }
+func complexKey(v complex128) any {
+	return complexKeyType{r: math.Float64bits(real(v)), i: math.Float64bits(imag(v))}
+}
 
 func tupleKey(items []any) any {
 	buf := make([]byte, 0, len(items)*2)
@@ -367,6 +388,14 @@ func tupleKey(items []any) any {
 			buf = append(buf, 'G',
 				byte(bits), byte(bits>>8), byte(bits>>16), byte(bits>>24),
 				byte(bits>>32), byte(bits>>40), byte(bits>>48), byte(bits>>56))
+		case complex128:
+			r := math.Float64bits(real(x))
+			i := math.Float64bits(imag(x))
+			buf = append(buf, 'Y',
+				byte(r), byte(r>>8), byte(r>>16), byte(r>>24),
+				byte(r>>32), byte(r>>40), byte(r>>48), byte(r>>56),
+				byte(i), byte(i>>8), byte(i>>16), byte(i>>24),
+				byte(i>>32), byte(i>>40), byte(i>>48), byte(i>>56))
 		default:
 			buf = append(buf, '?')
 		}
@@ -441,6 +470,8 @@ func (rc *refCounter) tuple(items []any) {
 			rc.bump(intKey(x))
 		case float64:
 			rc.bump(float64Key(x))
+		case complex128:
+			rc.bump(complexKey(x))
 		}
 	}
 }
