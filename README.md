@@ -19,8 +19,7 @@ reader: same wire format, opposite direction.
 
 This is the bootstrap branch. Track scope and progress in
 [`docs/COVERAGE.md`](docs/COVERAGE.md). For a tour of the pipeline see
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The version-by-version plan
-lives in [`notes/Spec/1100/1158_gocopy_roadmap.md`](https://github.com/tamnd/notes).
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quick start
 

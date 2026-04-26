@@ -20,7 +20,7 @@ type CodeObject struct {
 
 	// Consts holds the value table. Each entry is one of: nil (None),
 	// bool, int64, float64, complex128, string, []byte, *CodeObject, or
-	// a tuple represented as []any. v0.1.0 only emits a single nil for
+	// a tuple represented as []any. v0.0.1 only emits a single nil for
 	// the implicit `return None`.
 	Consts []any
 

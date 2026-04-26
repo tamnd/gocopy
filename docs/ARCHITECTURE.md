@@ -1,7 +1,7 @@
 # Architecture
 
-For the canonical version see `notes/Spec/1100/1157_gocopy.md`. This
-file is a developer-facing condensed walk through the same pipeline.
+A developer-facing tour of the pipeline. Each section drills down into
+one stage of `source.py → .pyc`.
 
 ## Pipeline
 
@@ -39,12 +39,11 @@ source.py
   mode uses SipHash-1-3 to mirror CPython's `_imp.source_hash`.
 - `cmd/gocopy/`: the CLI.
 
-## v0.1.0 status
+## v0.0.1 status
 
-Only an empty module compiles. The whole point of v0.1.0 is to
+Only an empty module compiles. The whole point of v0.0.1 is to
 exercise every package end-to-end on the smallest possible program
-so that every subsequent feature is a localised change. See
-`notes/Spec/1100/1159_gocopy_v010.md` for the full v0.1.0 spec.
+so that every subsequent feature is a localised change.
 
 ## Why bytes?
 
@@ -64,7 +63,6 @@ mechanism.
 
 ## Working agreement
 
-- One spec doc per shipped version under `notes/Spec/1100/`.
 - One PR per version. Squash-merge.
 - Every PR adds at least one `tests/fixtures/*.py` whose
   oracle diff goes from non-zero to zero.

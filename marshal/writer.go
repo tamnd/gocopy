@@ -223,7 +223,7 @@ func (w *writer) stringTuple(items []string) {
 }
 
 // emitObject dispatches on the dynamic type of a constant value.
-// v0.1.0 only encounters nil (None); subsequent versions extend this.
+// v0.0.1 only encounters nil (None); subsequent versions extend this.
 func (w *writer) emitObject(v any) {
 	switch x := v.(type) {
 	case nil:
