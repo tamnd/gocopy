@@ -137,8 +137,42 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileMultiAssign(opts.Filename, cls.asgns, cls.stmts)
 	case modChainedAssign:
 		return compileChainedAssign(opts.Filename, cls.chainLine, cls.chainTargets, cls.chainValStart, cls.chainValEnd, cls.chainValue, cls.stmts)
+	case modAugAssign:
+		return compileAugAssign(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
+}
+
+// compileAugAssign lowers `name = initVal\nname += augVal\n` at module scope.
+// Only non-negative integer initVal and augVal are supported in v0.0.15.
+func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject, error) {
+	initVal, ok := cls.asgnValue.(int64)
+	if !ok {
+		return nil, ErrUnsupportedSource
+	}
+	augVal, ok := cls.augValue.(int64)
+	if !ok || augVal < 0 {
+		return nil, ErrUnsupportedSource
+	}
+
+	// Build consts: initVal always at [0], augVal at [1] if large, None last.
+	var consts []any
+	augSmall := augVal >= 0 && augVal <= 255
+	if augSmall {
+		consts = []any{initVal, nil}
+	} else {
+		consts = []any{initVal, augVal, nil}
+	}
+
+	bc := bytecode.AugAssignBytecode(initVal, augVal, len(cls.stmts))
+	lt := bytecode.AugAssignLineTable(
+		cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd,
+		cls.augLine, cls.augValStart, cls.augValEnd,
+		cls.stmts,
+	)
+	co := module(filename, bc, lt, consts, []string{cls.asgnName})
+	co.StackSize = 2 // LOAD_NAME + LOAD augVal both on stack at BINARY_OP
+	return co, nil
 }
 
 // compileChainedAssign lowers `t0 = t1 = ... = literal` (single line, N >= 2 targets).
