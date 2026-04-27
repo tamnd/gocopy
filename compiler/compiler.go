@@ -151,6 +151,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileWhile(opts.Filename, cls)
 	case modFor:
 		return compileFor(opts.Filename, cls)
+	case modFuncDef:
+		return compileFuncDef(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -709,4 +711,46 @@ func module(filename string, bc, lineTable []byte, consts []any, names []string)
 		LineTable:       lineTable,
 		ExcTable:        []byte{},
 	}
+}
+
+// compileFuncDef lowers `def f(arg): return arg` at module scope where f and
+// arg are single identifiers and the body is a single return-arg statement.
+func compileFuncDef(filename string, cls classification) (*bytecode.CodeObject, error) {
+	fd := cls.funcDefAsgn
+	funcCode := &bytecode.CodeObject{
+		ArgCount:        1,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       1,
+		Flags:           0x3,
+		Bytecode:        bytecode.FuncReturnArgBytecode(0),
+		Consts:          []any{nil},
+		Names:           []string{},
+		LocalsPlusNames: []string{fd.argName},
+		LocalsPlusKinds: []byte{0x26},
+		Filename:        filename,
+		Name:            fd.funcName,
+		QualName:        fd.funcName,
+		FirstLineNo:     int32(fd.defLine),
+		LineTable:       bytecode.FuncReturnArgLineTable(fd.defLine, fd.bodyLine, fd.argCol, fd.argEnd, fd.retKwCol),
+		ExcTable:        []byte{},
+	}
+	return &bytecode.CodeObject{
+		ArgCount:        0,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       1,
+		Flags:           0,
+		Bytecode:        bytecode.FuncDefModuleBytecode(0),
+		Consts:          []any{funcCode, nil},
+		Names:           []string{fd.funcName},
+		LocalsPlusNames: []string{},
+		LocalsPlusKinds: []byte{},
+		Filename:        filename,
+		Name:            "<module>",
+		QualName:        "<module>",
+		FirstLineNo:     int32(fd.defLine),
+		LineTable:       bytecode.FuncDefModuleLineTable(fd.defLine, fd.bodyLine, fd.argEnd),
+		ExcTable:        []byte{},
+	}, nil
 }
