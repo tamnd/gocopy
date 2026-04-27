@@ -1,5 +1,5 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
-// The parser is github.com/tamnd/gopapy/v2 (wired in v0.0.17). The
+// The parser is github.com/tamnd/gopapy (wired in v0.0.17). The
 // supported body shapes are:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
@@ -28,7 +28,7 @@ import (
 	"bytes"
 	"errors"
 
-	parser2 "github.com/tamnd/gopapy/v2/parser2"
+	parser2 "github.com/tamnd/gopapy/parser"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
 )

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	parser2 "github.com/tamnd/gopapy/v2/parser2"
+	parser2 "github.com/tamnd/gopapy/parser"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
 )
