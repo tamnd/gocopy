@@ -25,7 +25,9 @@ for at least one fixture exercising that node and the
 | Augmented assignment (`name = initVal; name += augVal`, integer) | done | v0.0.15 | tests/fixtures/074_aug_add_small_small.py |
 | Augmented assignment: all 12 inplace operators (`-=`, `*=`, `//=` …) | done | v0.0.16 | tests/fixtures/078_aug_sub_small.py |
 | gopapy/v2 AST parser (replaces hand-rolled scanner) | done | v0.0.17 | — |
-| Arithmetic and unary | planned | - | - |
+| Arithmetic binop `x = a op b` (two names, all 12 ops) | done | v0.1.3 | tests/fixtures/089_binop_add.py |
+| Unary `-x`, `~x`, `not x` (name operand) | done | v0.1.3 | tests/fixtures/101_unary_neg.py |
+| Arithmetic and unary (constant folding, mixed operands, `+x`) | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |
 | Sequence and dict literals | planned | - | - |

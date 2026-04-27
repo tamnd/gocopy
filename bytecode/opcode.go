@@ -15,15 +15,20 @@ type Opcode uint8
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (run `go generate ./op` in
 // goipy to regenerate from upstream).
 const (
-	NOP            Opcode = 27
-	RETURN_VALUE   Opcode = 35
-	BINARY_OP      Opcode = 44
-	COPY           Opcode = 59
-	LOAD_CONST     Opcode = 82
-	LOAD_NAME      Opcode = 93
-	LOAD_SMALL_INT Opcode = 94
-	STORE_NAME     Opcode = 116
-	RESUME         Opcode = 128
+	NOP              Opcode = 27
+	RETURN_VALUE     Opcode = 35
+	TO_BOOL          Opcode = 39
+	UNARY_INVERT     Opcode = 40
+	UNARY_NEGATIVE   Opcode = 41
+	UNARY_NOT        Opcode = 42
+	BINARY_OP        Opcode = 44
+	CALL_INTRINSIC_1 Opcode = 53
+	COPY             Opcode = 59
+	LOAD_CONST       Opcode = 82
+	LOAD_NAME        Opcode = 93
+	LOAD_SMALL_INT   Opcode = 94
+	STORE_NAME       Opcode = 116
+	RESUME           Opcode = 128
 )
 
 // CacheSize maps each opcode to the number of inline cache entries that
@@ -34,6 +39,29 @@ const (
 //
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
+var CacheSize = [256]uint8{
+	39: 3, // TO_BOOL: 3 inline-cache words (6 bytes)
+	44: 5, // BINARY_OP: 5 inline-cache words (10 bytes)
+}
+
+// BINARY_OP opargs for non-inplace binary operators (NB_* enum).
+// SOURCE: github.com/tamnd/goipy/op/opcodes.go (NB_* constants).
+const (
+	NbAdd            = 0
+	NbAnd            = 1
+	NbFloorDivide    = 2
+	NbLshift         = 3
+	NbMatrixMultiply = 4
+	NbMultiply       = 5
+	NbRemainder      = 6
+	NbOr             = 7
+	NbPower          = 8
+	NbRshift         = 9
+	NbSubtract       = 10
+	NbTrueDivide     = 11
+	NbXor            = 12
+)
+
 // BINARY_OP opargs for augmented assignment operators (NB_INPLACE_* enum).
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (NB_INPLACE_* constants).
 const (
@@ -50,7 +78,3 @@ const (
 	NbInplaceTrueDivide  = 24
 	NbInplaceXor         = 25
 )
-
-var CacheSize = [256]uint8{
-	44: 5, // BINARY_OP: 5 inline-cache words (10 bytes)
-}

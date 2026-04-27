@@ -13,6 +13,8 @@ const (
 	modMultiAssign
 	modChainedAssign
 	modAugAssign
+	modBinOpAssign   // x = a op b  (both operands are names)
+	modUnaryAssign   // x = -a / ~a / not a  (operand is a name)
 )
 
 type classification struct {
@@ -49,6 +51,10 @@ type classification struct {
 	augValEnd   byte
 	augValue    any
 	augOparg    byte
+	// modBinOpAssign fields:
+	binAsgn binOpAssign
+	// modUnaryAssign fields:
+	unaryAsgn unaryAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -71,6 +77,10 @@ type rawStmt struct {
 	chainTargets []chainedTarget
 	// stmtAugAssign fields:
 	augOparg byte
+	// stmtBinOpAssign fields:
+	binAsgn binOpAssign
+	// stmtUnaryAssign fields:
+	unaryAsgn unaryAssign
 }
 
 type rawStmtKind uint8
@@ -81,6 +91,8 @@ const (
 	stmtAssign
 	stmtChainedAssign
 	stmtAugAssign
+	stmtBinOpAssign  // x = a op b  (both operands are names)
+	stmtUnaryAssign  // x = -a / ~a / not a  (operand is a name)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -108,6 +120,43 @@ type negLiteral struct {
 	neg any
 }
 
+// binOpAssign holds the parsed form of `target = left op right`
+// where both operands are names.
+type binOpAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	leftName  string
+	leftCol   byte
+	leftLen   byte
+	rightName string
+	rightCol  byte
+	rightLen  byte
+	oparg     byte // NB_* constant for BINARY_OP
+}
+
+// unaryKind identifies which unary operator a modUnaryAssign uses.
+type unaryKind uint8
+
+const (
+	unaryNeg    unaryKind = iota // UNARY_NEGATIVE (-x)
+	unaryInvert                  // UNARY_INVERT (~x)
+	unaryNot                     // UNARY_NOT (not x; emits TO_BOOL + UNARY_NOT)
+)
+
+// unaryAssign holds the parsed form of `target = -operand`, `target = ~operand`,
+// or `target = not operand` where the operand is a name.
+type unaryAssign struct {
+	line        int
+	target      string
+	targetLen   byte
+	operand     string
+	operandCol  byte
+	operandLen  byte
+	opCol       byte      // column of the unary operator token (-, ~, or 'n' of not)
+	kind        unaryKind
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -115,6 +164,34 @@ type negLiteral struct {
 func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
+	}
+	if first := stmts[0]; first.kind == stmtBinOpAssign {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:    modBinOpAssign,
+			stmts:   tail,
+			binAsgn: first.binAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtUnaryAssign {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:      modUnaryAssign,
+			stmts:     tail,
+			unaryAsgn: first.unaryAsgn,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtChainedAssign {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)

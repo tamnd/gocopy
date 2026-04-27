@@ -666,6 +666,169 @@ func TestAugAssign(t *testing.T) {
 	}
 }
 
+func TestBinOpAssign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		src       []byte
+		oparg     byte
+		leftName  string
+		leftCol   byte
+		leftLen   byte
+		rightName string
+		rightCol  byte
+		rightLen  byte
+		target    string
+		targetLen byte
+	}{
+		{
+			name: "x = a + b", src: []byte("x = a + b\n"),
+			oparg: bytecode.NbAdd, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a - b", src: []byte("x = a - b\n"),
+			oparg: bytecode.NbSubtract, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a * b", src: []byte("x = a * b\n"),
+			oparg: bytecode.NbMultiply, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a / b", src: []byte("x = a / b\n"),
+			oparg: bytecode.NbTrueDivide, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a // b", src: []byte("x = a // b\n"),
+			oparg: bytecode.NbFloorDivide, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 9, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a ** b", src: []byte("x = a ** b\n"),
+			oparg: bytecode.NbPower, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 9, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a & b", src: []byte("x = a & b\n"),
+			oparg: bytecode.NbAnd, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a | b", src: []byte("x = a | b\n"),
+			oparg: bytecode.NbOr, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a ^ b", src: []byte("x = a ^ b\n"),
+			oparg: bytecode.NbXor, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 8, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a << b", src: []byte("x = a << b\n"),
+			oparg: bytecode.NbLshift, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 9, rightLen: 1, target: "x", targetLen: 1,
+		},
+		{
+			name: "x = a >> b", src: []byte("x = a >> b\n"),
+			oparg: bytecode.NbRshift, leftName: "a", leftCol: 4, leftLen: 1,
+			rightName: "b", rightCol: 9, rightLen: 1, target: "x", targetLen: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			wantNames := []string{tc.leftName, tc.rightName, tc.target}
+			if !reflect.DeepEqual(c.Names, wantNames) {
+				t.Errorf("names = %v; want %v", c.Names, wantNames)
+			}
+			if len(c.Consts) != 1 || c.Consts[0] != nil {
+				t.Errorf("consts = %v; want (None,)", c.Consts)
+			}
+			if c.StackSize != 2 {
+				t.Errorf("stacksize = %d; want 2", c.StackSize)
+			}
+			wantBC := bytecode.BinOpAssignBytecode(tc.oparg)
+			if !bytes.Equal(c.Bytecode, wantBC) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
+			}
+			wantLT := bytecode.BinOpAssignLineTable(1, tc.leftCol, tc.leftLen, tc.rightCol, tc.rightLen, tc.targetLen)
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+		})
+	}
+}
+
+func TestUnaryAssign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		src         []byte
+		kind        unaryKind
+		opCol       byte
+		operandCol  byte
+		operandLen  byte
+		operandName string
+		targetLen   byte
+	}{
+		{
+			name: "x = -a", src: []byte("x = -a\n"),
+			kind: unaryNeg, opCol: 4, operandCol: 5, operandLen: 1, operandName: "a", targetLen: 1,
+		},
+		{
+			name: "x = ~a", src: []byte("x = ~a\n"),
+			kind: unaryInvert, opCol: 4, operandCol: 5, operandLen: 1, operandName: "a", targetLen: 1,
+		},
+		{
+			name: "x = not a", src: []byte("x = not a\n"),
+			kind: unaryNot, opCol: 4, operandCol: 8, operandLen: 1, operandName: "a", targetLen: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			wantNames := []string{tc.operandName, "x"}
+			if !reflect.DeepEqual(c.Names, wantNames) {
+				t.Errorf("names = %v; want %v", c.Names, wantNames)
+			}
+			if len(c.Consts) != 1 || c.Consts[0] != nil {
+				t.Errorf("consts = %v; want (None,)", c.Consts)
+			}
+			if c.StackSize != 1 {
+				t.Errorf("stacksize = %d; want 1", c.StackSize)
+			}
+			var wantBC []byte
+			var wantLT []byte
+			switch tc.kind {
+			case unaryNeg:
+				wantBC = bytecode.UnaryNegInvertBytecode(bytecode.UNARY_NEGATIVE)
+				wantLT = bytecode.UnaryNegInvertLineTable(1, tc.opCol, tc.operandCol, tc.operandLen, tc.targetLen)
+			case unaryInvert:
+				wantBC = bytecode.UnaryNegInvertBytecode(bytecode.UNARY_INVERT)
+				wantLT = bytecode.UnaryNegInvertLineTable(1, tc.opCol, tc.operandCol, tc.operandLen, tc.targetLen)
+			case unaryNot:
+				wantBC = bytecode.UnaryNotBytecode()
+				wantLT = bytecode.UnaryNotLineTable(1, tc.opCol, tc.operandCol, tc.operandLen, tc.targetLen)
+			}
+			if !bytes.Equal(c.Bytecode, wantBC) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, wantBC)
+			}
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
