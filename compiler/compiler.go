@@ -155,6 +155,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileFuncDef(opts.Filename, cls)
 	case modClosureDef:
 		return compileClosure(opts.Filename, cls)
+	case modGenExpr:
+		return compileGenExpr(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }

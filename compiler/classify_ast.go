@@ -115,7 +115,12 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				}
 				rs, ok3 := extractExprAssign(line, target, s.Value, lines)
 				if !ok3 {
-					return classification{}, false
+					rs2, ok4 := extractGenExprAssign(line, ec, target, s.Value, lines)
+					if !ok4 {
+						return classification{}, false
+					}
+					stmts = append(stmts, rs2)
+					continue
 				}
 				stmts = append(stmts, rs)
 				continue
@@ -1194,6 +1199,63 @@ func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, b
 			outerRetKwCol:    byte(outerRet.P.Col),
 		},
 	}, true
+}
+
+// extractGenExprAssign checks whether value is a general expression
+// composed recursively of Name, small-int Constant, BinOp, and
+// UnaryOp (USub/Invert) nodes on a single source line. Returns a
+// stmtGenExpr rawStmt on success.
+func extractGenExprAssign(line int, lineEndCol byte, target *parser2.Name, value parser2.Expr, lines [][]byte) (rawStmt, bool) {
+	if len(target.Id) > 15 || target.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if !isGenExpr(value) {
+		return rawStmt{}, false
+	}
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtGenExpr,
+		genExprAsgn: genExprInfo{
+			targetName: target.Id,
+			targetLen:  byte(len(target.Id)),
+			line:       line,
+			lineEndCol: lineEndCol,
+			expr:       value,
+			srcLines:   lines,
+		},
+	}, true
+}
+
+// isGenExpr reports whether e is recursively a valid general expression:
+// Name, small-int Constant (0-255), BinOp with supported op, or
+// UnaryOp (USub/Invert).
+func isGenExpr(e parser2.Expr) bool {
+	switch n := e.(type) {
+	case *parser2.Name:
+		return len(n.Id) <= 15 && n.P.Col <= 255
+	case *parser2.Constant:
+		if n.P.Col > 255 {
+			return false
+		}
+		switch n.Kind {
+		case "int":
+			iv, ok := n.Value.(int64)
+			return ok && iv >= 0 && iv <= 255
+		case "None", "True", "False", "float", "complex":
+			return false // defer to later release
+		}
+		return false
+	case *parser2.BinOp:
+		_, ok := binOpargFromOp(n.Op)
+		return ok && isGenExpr(n.Left) && isGenExpr(n.Right)
+	case *parser2.UnaryOp:
+		if n.Op != "USub" && n.Op != "Invert" {
+			return false
+		}
+		return isGenExpr(n.Operand)
+	}
+	return false
 }
 
 func augOpargFromOp(op string) (byte, bool) {

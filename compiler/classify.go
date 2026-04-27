@@ -1,6 +1,9 @@
 package compiler
 
-import "github.com/tamnd/gocopy/v1/bytecode"
+import (
+	"github.com/tamnd/gocopy/v1/bytecode"
+	parser2 "github.com/tamnd/gopapy/parser"
+)
 
 type modKind uint8
 
@@ -29,6 +32,7 @@ const (
 	modFor            // for loopVar in iter: bodyVar=val  (single-assignment body, no break)
 	modFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 	modClosureDef     // def f(x): def g(): return x; return g  (simple one-free-var closure)
+	modGenExpr        // x = <general expression> (recursive Name/Constant/BinOp/UnaryOp)
 )
 
 type classification struct {
@@ -93,6 +97,8 @@ type classification struct {
 	funcDefAsgn funcDefClassify
 	// modClosureDef fields:
 	closureAsgn closureDef
+	// modGenExpr fields:
+	genExprAsgn genExprInfo
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -143,6 +149,8 @@ type rawStmt struct {
 	funcDefAsgn funcDefClassify
 	// stmtClosureDef fields:
 	closureAsgn closureDef
+	// stmtGenExpr fields:
+	genExprAsgn genExprInfo
 }
 
 type rawStmtKind uint8
@@ -169,6 +177,7 @@ const (
 	stmtFor            // for loopVar in iter: bodyVar=val  (single-assignment body)
 	stmtFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 	stmtClosureDef     // def f(x): def g(): return x; return g  (simple closure)
+	stmtGenExpr        // x = <general expression>
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -434,6 +443,18 @@ type closureDef struct {
 	outerRetKwCol  byte // column of `return` keyword in f's `return g`
 }
 
+// genExprInfo holds the parsed form of a general expression assignment
+// x = <expr> where <expr> is recursively composed of Name, small-int
+// Constant, BinOp, and UnaryOp (USub/Invert) nodes.
+type genExprInfo struct {
+	targetName string
+	targetLen  byte
+	line       int
+	lineEndCol byte
+	expr       parser2.Expr
+	srcLines   [][]byte
+}
+
 // whileAssign holds the parsed form of `while cond: name = val` where
 // cond is a name and val is a small integer (0-255).
 type whileAssign struct {
@@ -545,6 +566,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:        modClosureDef,
 			closureAsgn: first.closureAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtGenExpr {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:        modGenExpr,
+			genExprAsgn: first.genExprAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

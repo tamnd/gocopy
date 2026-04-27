@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.1.15](changelog/v0.1.15.md) - general expression compiler (2026-04-28)
 - [v0.1.14](changelog/v0.1.14.md) - gopapy import fix (2026-04-27)
 - [v0.1.13](changelog/v0.1.13.md) - closures (2026-04-27)
 - [v0.1.12](changelog/v0.1.12.md) - simple function definitions (2026-04-27)
