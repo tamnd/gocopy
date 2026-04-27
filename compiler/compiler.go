@@ -129,6 +129,10 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileUnaryAssign(opts.Filename, cls)
 	case modCmpAssign:
 		return compileCmpAssign(opts.Filename, cls)
+	case modBoolOp:
+		return compileBoolOp(opts.Filename, cls)
+	case modTernary:
+		return compileTernary(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -162,6 +166,33 @@ func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject
 	)
 	co := module(filename, bc, lt, consts, []string{cls.asgnName})
 	co.StackSize = 2 // LOAD_NAME + LOAD augVal both on stack at BINARY_OP
+	return co, nil
+}
+
+// compileBoolOp lowers `target = left and/or right` where both operands are names.
+func compileBoolOp(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.boolAsgn
+	var bc []byte
+	if a.isOr {
+		bc = bytecode.BoolOrBytecode()
+	} else {
+		bc = bytecode.BoolAndBytecode()
+	}
+	lt := bytecode.BoolAndOrLineTable(a.line, a.leftCol, a.leftLen, a.rightCol, a.rightLen, a.targetLen)
+	names := []string{a.leftName, a.rightName, a.target}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 2
+	return co, nil
+}
+
+// compileTernary lowers `target = trueVal if cond else falseVal` where all operands are names.
+func compileTernary(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.ternaryAsgn
+	bc := bytecode.TernaryBytecode()
+	lt := bytecode.TernaryLineTable(a.line, a.condCol, a.condLen, a.trueCol, a.trueLen, a.falseCol, a.falseLen, a.targetLen)
+	names := []string{a.condName, a.trueName, a.falseName, a.target}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 1
 	return co, nil
 }
 

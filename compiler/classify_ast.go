@@ -258,6 +258,72 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawS
 	targetLen := byte(len(target.Id))
 
 	switch e := value.(type) {
+	case *parser2.BoolOp:
+		if len(e.Values) != 2 {
+			return rawStmt{}, false // chained bool ops deferred
+		}
+		leftName, leftOK := e.Values[0].(*parser2.Name)
+		rightName, rightOK := e.Values[1].(*parser2.Name)
+		if !leftOK || !rightOK {
+			return rawStmt{}, false
+		}
+		if len(leftName.Id) > 15 || len(rightName.Id) > 15 {
+			return rawStmt{}, false
+		}
+		if leftName.P.Col > 255 || rightName.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		return rawStmt{
+			line:    line,
+			endLine: line,
+			kind:    stmtBoolOp,
+			boolAsgn: boolAssign{
+				line:      line,
+				target:    target.Id,
+				targetLen: targetLen,
+				leftName:  leftName.Id,
+				leftCol:   byte(leftName.P.Col),
+				leftLen:   byte(len(leftName.Id)),
+				rightName: rightName.Id,
+				rightCol:  byte(rightName.P.Col),
+				rightLen:  byte(len(rightName.Id)),
+				isOr:      e.Op == "Or",
+			},
+		}, true
+
+	case *parser2.IfExp:
+		condName, condOK := e.Test.(*parser2.Name)
+		trueName, trueOK := e.Body.(*parser2.Name)
+		falseName, falseOK := e.OrElse.(*parser2.Name)
+		if !condOK || !trueOK || !falseOK {
+			return rawStmt{}, false
+		}
+		if len(condName.Id) > 15 || len(trueName.Id) > 15 || len(falseName.Id) > 15 {
+			return rawStmt{}, false
+		}
+		if condName.P.Col > 255 || trueName.P.Col > 255 || falseName.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		return rawStmt{
+			line:    line,
+			endLine: line,
+			kind:    stmtTernary,
+			ternaryAsgn: ternaryAssign{
+				line:      line,
+				target:    target.Id,
+				targetLen: targetLen,
+				condName:  condName.Id,
+				condCol:   byte(condName.P.Col),
+				condLen:   byte(len(condName.Id)),
+				trueName:  trueName.Id,
+				trueCol:   byte(trueName.P.Col),
+				trueLen:   byte(len(trueName.Id)),
+				falseName: falseName.Id,
+				falseCol:  byte(falseName.P.Col),
+				falseLen:  byte(len(falseName.Id)),
+			},
+		}, true
+
 	case *parser2.Compare:
 		if len(e.Ops) != 1 {
 			return rawStmt{}, false // chained comparisons deferred
