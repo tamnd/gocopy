@@ -1079,37 +1079,119 @@ func extractFuncDef(s *parser2.FunctionDef) (rawStmt, bool) {
 	if len(s.Name) > 15 || s.P.Col > 255 {
 		return rawStmt{}, false
 	}
-	if len(s.Body) != 1 {
+	switch len(s.Body) {
+	case 1:
+		ret, isReturn := s.Body[0].(*parser2.Return)
+		if !isReturn || ret.Value == nil {
+			return rawStmt{}, false
+		}
+		retName, isName := ret.Value.(*parser2.Name)
+		if !isName || retName.Id != arg.Name {
+			return rawStmt{}, false
+		}
+		if ret.P.Col > 255 || retName.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		defLine := s.P.Line
+		bodyLine := ret.P.Line
+		retKwCol := byte(ret.P.Col)
+		argCol := byte(retName.P.Col)
+		argEnd := argCol + byte(len(retName.Id))
+		return rawStmt{
+			line:    defLine,
+			endLine: bodyLine,
+			kind:    stmtFuncDef,
+			funcDefAsgn: funcDefClassify{
+				funcName: s.Name,
+				argName:  arg.Name,
+				defLine:  defLine,
+				bodyLine: bodyLine,
+				retKwCol: retKwCol,
+				argCol:   argCol,
+				argEnd:   argEnd,
+			},
+		}, true
+	case 2:
+		return extractClosure(s, arg.Name)
+	}
+	return rawStmt{}, false
+}
+
+// extractClosure recognises `def f(outerArg): def g(): return outerArg; return g`
+// and returns a stmtClosureDef rawStmt with all source positions.
+func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, bool) {
+	// Body[0]: inner def with 0 args, single body statement `return outerArgName`
+	innerDef, ok := outer.Body[0].(*parser2.FunctionDef)
+	if !ok {
 		return rawStmt{}, false
 	}
-	ret, isReturn := s.Body[0].(*parser2.Return)
-	if !isReturn || ret.Value == nil {
+	if len(innerDef.DecoratorList) != 0 || innerDef.Returns != nil || len(innerDef.TypeParams) != 0 {
 		return rawStmt{}, false
 	}
-	retName, isName := ret.Value.(*parser2.Name)
-	if !isName || retName.Id != arg.Name {
+	innerArgs := innerDef.Args
+	if innerArgs == nil || len(innerArgs.Args) != 0 || len(innerArgs.PosOnly) != 0 ||
+		len(innerArgs.KwOnly) != 0 || innerArgs.Vararg != nil || innerArgs.Kwarg != nil {
 		return rawStmt{}, false
 	}
-	if ret.P.Col > 255 || retName.P.Col > 255 {
+	if len(innerDef.Body) != 1 {
 		return rawStmt{}, false
 	}
-	defLine := s.P.Line
-	bodyLine := ret.P.Line
-	retKwCol := byte(ret.P.Col)
-	argCol := byte(retName.P.Col)
-	argEnd := argCol + byte(len(retName.Id))
+	innerRet, ok := innerDef.Body[0].(*parser2.Return)
+	if !ok || innerRet.Value == nil {
+		return rawStmt{}, false
+	}
+	innerRetName, ok := innerRet.Value.(*parser2.Name)
+	if !ok || innerRetName.Id != outerArgName {
+		return rawStmt{}, false
+	}
+
+	// Body[1]: `return innerFuncName`
+	outerRet, ok := outer.Body[1].(*parser2.Return)
+	if !ok || outerRet.Value == nil {
+		return rawStmt{}, false
+	}
+	outerRetName, ok := outerRet.Value.(*parser2.Name)
+	if !ok || outerRetName.Id != innerDef.Name {
+		return rawStmt{}, false
+	}
+
+	// Bounds checks
+	if outer.P.Col > 255 || innerDef.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if innerRet.P.Col > 255 || innerRetName.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if outerRet.P.Col > 255 || outerRetName.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(outer.Name) > 15 || len(outerArgName) > 15 || len(innerDef.Name) > 15 {
+		return rawStmt{}, false
+	}
+
+	innerBodyEndCol := byte(innerRetName.P.Col) + byte(len(innerRetName.Id))
+	outerRetArgEnd := byte(outerRetName.P.Col) + byte(len(outerRetName.Id))
+
 	return rawStmt{
-		line:    defLine,
-		endLine: bodyLine,
-		kind:    stmtFuncDef,
-		funcDefAsgn: funcDefClassify{
-			funcName: s.Name,
-			argName:  arg.Name,
-			defLine:  defLine,
-			bodyLine: bodyLine,
-			retKwCol: retKwCol,
-			argCol:   argCol,
-			argEnd:   argEnd,
+		line:    outer.P.Line,
+		endLine: outerRet.P.Line,
+		kind:    stmtClosureDef,
+		closureAsgn: closureDef{
+			outerFuncName: outer.Name,
+			argName:       outerArgName,
+			innerFuncName: innerDef.Name,
+			outerDefLine:  outer.P.Line,
+			innerDefLine:  innerDef.P.Line,
+			innerRetLine:  innerRet.P.Line,
+			outerRetLine:  outerRet.P.Line,
+			innerDefCol:      byte(innerDef.P.Col),
+			innerBodyEndCol:  innerBodyEndCol,
+			innerFreeArgCol:  byte(innerRetName.P.Col),
+			innerFreeArgEnd:  innerBodyEndCol,
+			innerRetKwCol:    byte(innerRet.P.Col),
+			outerRetArgCol:   byte(outerRetName.P.Col),
+			outerRetArgEnd:   outerRetArgEnd,
+			outerRetKwCol:    byte(outerRet.P.Col),
 		},
 	}, true
 }

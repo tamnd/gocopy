@@ -153,6 +153,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileFor(opts.Filename, cls)
 	case modFuncDef:
 		return compileFuncDef(opts.Filename, cls)
+	case modClosureDef:
+		return compileClosure(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -752,5 +754,78 @@ func compileFuncDef(filename string, cls classification) (*bytecode.CodeObject, 
 		FirstLineNo:     int32(fd.defLine),
 		LineTable:       bytecode.FuncDefModuleLineTable(fd.defLine, fd.bodyLine, fd.argEnd),
 		ExcTable:        []byte{},
+	}, nil
+}
+
+// compileClosure lowers `def f(x): def g(): return x; return g` at module scope.
+// f has one arg (x, promoted to cell), one inner function g (no args, returns x),
+// and returns g. g captures x as a free variable.
+func compileClosure(filename string, cls classification) (*bytecode.CodeObject, error) {
+	cd := cls.closureAsgn
+
+	// Inner function g: captures outerArg as a free variable.
+	innerCode := &bytecode.CodeObject{
+		ArgCount:        0,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       1,
+		Flags:           0x13, // CO_OPTIMIZED | CO_NEWLOCALS | CO_NESTED
+		Bytecode:        bytecode.ClosureInnerBytecode(),
+		Consts:          []any{nil},
+		Names:           []string{},
+		LocalsPlusNames: []string{cd.argName},
+		LocalsPlusKinds: []byte{0x80}, // CO_FAST_FREE
+		Filename:        filename,
+		Name:            cd.innerFuncName,
+		QualName:        cd.outerFuncName + ".<locals>." + cd.innerFuncName,
+		FirstLineNo:     int32(cd.innerDefLine),
+		LineTable: bytecode.ClosureInnerLineTable(
+			cd.innerDefLine, cd.innerRetLine,
+			cd.innerFreeArgCol, cd.innerFreeArgEnd, cd.innerRetKwCol),
+		ExcTable: []byte{},
+	}
+
+	// Outer function f: x is a cell+arg, g is a plain local.
+	outerCode := &bytecode.CodeObject{
+		ArgCount:        1,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       2,
+		Flags:           0x03, // CO_OPTIMIZED | CO_NEWLOCALS
+		Bytecode:        bytecode.ClosureOuterBytecode(),
+		Consts:          []any{innerCode}, // no None; all paths return explicitly
+		Names:           []string{},
+		LocalsPlusNames: []string{cd.argName, cd.innerFuncName},
+		LocalsPlusKinds: []byte{0x66, 0x20}, // arg+cell, local
+		Filename:        filename,
+		Name:            cd.outerFuncName,
+		QualName:        cd.outerFuncName,
+		FirstLineNo:     int32(cd.outerDefLine),
+		LineTable: bytecode.ClosureOuterLineTable(
+			cd.outerDefLine, cd.innerDefLine, cd.innerRetLine, cd.outerRetLine,
+			cd.innerDefCol, cd.innerBodyEndCol,
+			cd.outerRetArgCol, cd.outerRetArgEnd, cd.outerRetKwCol),
+		ExcTable: []byte{},
+	}
+
+	// Module code object: loads outer code, makes function, stores name.
+	return &bytecode.CodeObject{
+		ArgCount:        0,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       1,
+		Flags:           0,
+		Bytecode:        bytecode.FuncDefModuleBytecode(0),
+		Consts:          []any{outerCode, nil},
+		Names:           []string{cd.outerFuncName},
+		LocalsPlusNames: []string{},
+		LocalsPlusKinds: []byte{},
+		Filename:        filename,
+		Name:            "<module>",
+		QualName:        "<module>",
+		FirstLineNo:     int32(cd.outerDefLine),
+		LineTable: bytecode.FuncDefModuleLineTable(
+			cd.outerDefLine, cd.outerRetLine, cd.outerRetArgEnd),
+		ExcTable: []byte{},
 	}, nil
 }

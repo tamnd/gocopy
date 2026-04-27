@@ -38,6 +38,7 @@ const (
 	CALL_INTRINSIC_1  Opcode = 53
 	COMPARE_OP        Opcode = 56
 	CONTAINS_OP       Opcode = 57
+	COPY_FREE_VARS    Opcode = 60
 	COPY              Opcode = 59
 	FOR_ITER          Opcode = 70
 	IS_OP             Opcode = 74
@@ -45,13 +46,17 @@ const (
 	JUMP_FORWARD      Opcode = 77
 	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
+	LOAD_DEREF        Opcode = 83
 	LOAD_FAST_BORROW  Opcode = 86
 	LOAD_NAME         Opcode = 93
+	MAKE_CELL         Opcode = 97
 	LOAD_SMALL_INT    Opcode = 94
 	POP_JUMP_IF_FALSE Opcode = 100
 	POP_JUMP_IF_TRUE  Opcode = 103
-	STORE_NAME        Opcode = 116
-	STORE_ATTR        Opcode = 110
+	SET_FUNCTION_ATTRIBUTE Opcode = 108
+	STORE_NAME             Opcode = 116
+	STORE_ATTR             Opcode = 110
+	STORE_FAST             Opcode = 112
 	RESUME            Opcode = 128
 )
 

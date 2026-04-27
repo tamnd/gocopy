@@ -28,6 +28,7 @@ const (
 	modWhile          // while cond: var=val  (single-assignment body, no break/continue)
 	modFor            // for loopVar in iter: bodyVar=val  (single-assignment body, no break)
 	modFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
+	modClosureDef     // def f(x): def g(): return x; return g  (simple one-free-var closure)
 )
 
 type classification struct {
@@ -90,6 +91,8 @@ type classification struct {
 	forAsgn forAssign
 	// modFuncDef fields:
 	funcDefAsgn funcDefClassify
+	// modClosureDef fields:
+	closureAsgn closureDef
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -138,6 +141,8 @@ type rawStmt struct {
 	forAsgn forAssign
 	// stmtFuncDef fields:
 	funcDefAsgn funcDefClassify
+	// stmtClosureDef fields:
+	closureAsgn closureDef
 }
 
 type rawStmtKind uint8
@@ -163,6 +168,7 @@ const (
 	stmtWhile          // while cond: var=val  (single-assignment body)
 	stmtFor            // for loopVar in iter: bodyVar=val  (single-assignment body)
 	stmtFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
+	stmtClosureDef     // def f(x): def g(): return x; return g  (simple closure)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -405,6 +411,29 @@ type funcDefClassify struct {
 	argEnd    byte // exclusive end column of arg (= end of return expression)
 }
 
+// closureDef holds the parsed form of `def f(x): def g(): return x; return g`.
+type closureDef struct {
+	outerFuncName string // e.g. "f"
+	argName       string // e.g. "x" — the captured free variable
+	innerFuncName string // e.g. "g"
+
+	outerDefLine int // line of `def f(x):`
+	innerDefLine int // line of `def g():` (= g.firstlineno)
+	innerRetLine int // line of `return x` in g (innerBodyEnd for LONG entry)
+	outerRetLine int // line of `return g` in f
+
+	innerDefCol     byte // column of `def` keyword in `def g():`
+	innerBodyEndCol byte // exclusive end column of last token in g's body
+
+	innerFreeArgCol byte // column of x in `return x`
+	innerFreeArgEnd byte // exclusive end of x in `return x`
+	innerRetKwCol   byte // column of `return` keyword in g's `return x`
+
+	outerRetArgCol byte // column of `g` in `return g`
+	outerRetArgEnd byte // exclusive end of `g` in `return g`
+	outerRetKwCol  byte // column of `return` keyword in f's `return g`
+}
+
 // whileAssign holds the parsed form of `while cond: name = val` where
 // cond is a name and val is a small integer (0-255).
 type whileAssign struct {
@@ -505,6 +534,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:        modFuncDef,
 			funcDefAsgn: first.funcDefAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtClosureDef {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:        modClosureDef,
+			closureAsgn: first.closureAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

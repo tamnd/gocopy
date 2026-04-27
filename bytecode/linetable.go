@@ -139,6 +139,7 @@ const (
 	codeOneLine1 = 11
 	codeOneLine2 = 12
 	codeLong     = 14
+	codeNoInfo   = 15 // synthetic instructions with no source location (MAKE_CELL, COPY_FREE_VARS)
 )
 
 func entryHeader(code, length int) byte {
