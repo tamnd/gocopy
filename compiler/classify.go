@@ -26,6 +26,7 @@ const (
 	modCallAssign     // x = f(args...) (f and all args are names, no kwargs)
 	modIfElse         // if cond: var=val [elif ...] [else: var=val]
 	modWhile          // while cond: var=val  (single-assignment body, no break/continue)
+	modFor            // for loopVar in iter: bodyVar=val  (single-assignment body, no break)
 )
 
 type classification struct {
@@ -84,6 +85,8 @@ type classification struct {
 	ifElseAsgn ifElseClassify
 	// modWhile fields:
 	whileAsgn whileAssign
+	// modFor fields:
+	forAsgn forAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -128,6 +131,8 @@ type rawStmt struct {
 	ifElseAsgn ifElseClassify
 	// stmtWhile fields:
 	whileAsgn whileAssign
+	// stmtFor fields:
+	forAsgn forAssign
 }
 
 type rawStmtKind uint8
@@ -151,6 +156,7 @@ const (
 	stmtCallAssign     // x = f(args...)
 	stmtIfElse         // if cond: var=val [elif ...] [else: var=val]
 	stmtWhile          // while cond: var=val  (single-assignment body)
+	stmtFor            // for loopVar in iter: bodyVar=val  (single-assignment body)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -362,6 +368,25 @@ type ifElseClassify struct {
 	elseValEnd  byte
 }
 
+// forAssign holds the parsed form of `for loopVar in iter: bodyVar = val`
+// where iter and loopVar are names and val is a small integer (0-255).
+type forAssign struct {
+	iterName    string
+	iterCol     byte
+	iterEnd     byte
+	loopVarName string
+	loopVarCol  byte
+	loopVarEnd  byte
+	forLine     int
+	bodyLine    int
+	bodyVal     byte
+	bodyVarName string
+	bodyVarCol  byte
+	bodyVarEnd  byte
+	valCol      byte
+	valEnd      byte
+}
+
 // whileAssign holds the parsed form of `while cond: name = val` where
 // cond is a name and val is a small integer (0-255).
 type whileAssign struct {
@@ -440,6 +465,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:      modWhile,
 			whileAsgn: first.whileAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtFor {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:    modFor,
+			forAsgn: first.forAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

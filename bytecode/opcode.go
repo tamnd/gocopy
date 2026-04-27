@@ -15,8 +15,10 @@ type Opcode uint8
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (run `go generate ./op` in
 // goipy to regenerate from upstream).
 const (
+	END_FOR           Opcode = 9
 	NOP               Opcode = 27
 	NOT_TAKEN         Opcode = 28
+	POP_ITER          Opcode = 30
 	POP_TOP           Opcode = 31
 	PUSH_NULL         Opcode = 33
 	RETURN_VALUE      Opcode = 35
@@ -25,6 +27,7 @@ const (
 	UNARY_INVERT      Opcode = 40
 	UNARY_NEGATIVE    Opcode = 41
 	UNARY_NOT         Opcode = 42
+	GET_ITER          Opcode = 16
 	BINARY_OP         Opcode = 44
 	BUILD_LIST        Opcode = 46
 	BUILD_MAP         Opcode = 47
@@ -35,6 +38,7 @@ const (
 	COMPARE_OP        Opcode = 56
 	CONTAINS_OP       Opcode = 57
 	COPY              Opcode = 59
+	FOR_ITER          Opcode = 70
 	IS_OP             Opcode = 74
 	JUMP_BACKWARD     Opcode = 75
 	JUMP_FORWARD      Opcode = 77
@@ -65,6 +69,7 @@ var CacheSize = [256]uint8{
 	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
 	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
 	80:  9, // LOAD_ATTR: 9 inline-cache words (18 bytes)
+	70:  1, // FOR_ITER: 1 inline-cache word (2 bytes)
 	75:  1, // JUMP_BACKWARD: 1 inline-cache word (2 bytes)
 	100: 1, // POP_JUMP_IF_FALSE: 1 inline-cache word (2 bytes)
 	103: 1, // POP_JUMP_IF_TRUE: 1 inline-cache word (2 bytes)

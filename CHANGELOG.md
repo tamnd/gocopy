@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-04-27
+
+`gocopy compile` accepts simple `for loopVar in iter: bodyVar = val`
+loops where iter and loopVar are names and the body is a single
+`name = small_int` (0–255) assignment. No break, continue, or else.
+
+### Added
+
+- `bytecode/forloop.go`: `ForAssignBytecode`, `ForAssignLineTable`.
+- Opcodes: `GET_ITER` (16), `FOR_ITER` (70, 1 cache word), `END_FOR` (9),
+  `POP_ITER` (30).
+- `compiler/classify.go`: `modFor`, `stmtFor`, `forAssign`.
+- `compiler/classify_ast.go`: handles `*parser2.For` with single-assign body.
+- `compiler/compiler.go`: `compileFor`.
+- 1 new fixture: 135.
+
 ## [0.1.10] - 2026-04-27
 
 `gocopy compile` accepts simple `while cond: name = val` loops where

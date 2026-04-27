@@ -149,6 +149,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileIfElse(opts.Filename, cls)
 	case modWhile:
 		return compileWhile(opts.Filename, cls)
+	case modFor:
+		return compileFor(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -626,6 +628,34 @@ func compileIfElse(filename string, cls classification) (*bytecode.CodeObject, e
 	lt := bytecode.IfElseLineTable(lts, a.hasElse, a.elseLine, a.elseValCol, a.elseValEnd, a.elseVarCol, a.elseVarEnd)
 	co := module(filename, bc, lt, consts, names)
 	co.StackSize = 1
+	return co, nil
+}
+
+// compileFor lowers `for loopVar in iter: bodyVar = val` (single-assignment body, no break).
+func compileFor(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.forAsgn
+	// Build co_names: iterName first, then loopVarName, then bodyVarName (deduped).
+	nameIdx := map[string]byte{}
+	names := []string{}
+	addName := func(s string) byte {
+		if idx, ok := nameIdx[s]; ok {
+			return idx
+		}
+		idx := byte(len(names))
+		nameIdx[s] = idx
+		names = append(names, s)
+		return idx
+	}
+	iterIdx := addName(a.iterName)
+	loopVarIdx := addName(a.loopVarName)
+	bodyVarIdx := addName(a.bodyVarName)
+	firstVal := int64(a.bodyVal)
+	consts := []any{firstVal, nil}
+	noneIdx := byte(1)
+	bc := bytecode.ForAssignBytecode(iterIdx, loopVarIdx, a.bodyVal, bodyVarIdx, noneIdx)
+	lt := bytecode.ForAssignLineTable(a.forLine, a.bodyLine, a.iterCol, a.iterEnd, a.loopVarCol, a.loopVarEnd, a.valCol, a.valEnd, a.bodyVarCol, a.bodyVarEnd)
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 2
 	return co, nil
 }
 
