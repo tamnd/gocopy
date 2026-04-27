@@ -36,6 +36,7 @@ const (
 	CONTAINS_OP       Opcode = 57
 	COPY              Opcode = 59
 	IS_OP             Opcode = 74
+	JUMP_BACKWARD     Opcode = 75
 	JUMP_FORWARD      Opcode = 77
 	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
@@ -64,6 +65,7 @@ var CacheSize = [256]uint8{
 	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
 	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
 	80:  9, // LOAD_ATTR: 9 inline-cache words (18 bytes)
+	75:  1, // JUMP_BACKWARD: 1 inline-cache word (2 bytes)
 	100: 1, // POP_JUMP_IF_FALSE: 1 inline-cache word (2 bytes)
 	103: 1, // POP_JUMP_IF_TRUE: 1 inline-cache word (2 bytes)
 	110: 4, // STORE_ATTR: 4 inline-cache words (8 bytes)

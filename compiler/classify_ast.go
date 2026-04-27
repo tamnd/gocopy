@@ -207,6 +207,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rs)
 
+		case *parser2.While:
+			rs, ok2 := extractWhileAssign(s)
+			if !ok2 {
+				return classification{}, false
+			}
+			stmts = append(stmts, rs)
+
 		default:
 			return classification{}, false
 		}
@@ -909,6 +916,63 @@ func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
 			elseVarEnd:  elseVarEnd,
 			elseValCol:  elseValCol,
 			elseValEnd:  elseValEnd,
+		},
+	}, true
+}
+
+// extractWhileAssign extracts a simple `while cond: name = val` loop where
+// cond is a name and val is a small integer (0-255), with no else/break/continue.
+func extractWhileAssign(s *parser2.While) (rawStmt, bool) {
+	if len(s.Orelse) != 0 {
+		return rawStmt{}, false
+	}
+	cond, condOK := s.Test.(*parser2.Name)
+	if !condOK || cond.P.Col > 255 || len(cond.Id) > 15 {
+		return rawStmt{}, false
+	}
+	if len(s.Body) != 1 {
+		return rawStmt{}, false
+	}
+	bodyAssign, isAssign := s.Body[0].(*parser2.Assign)
+	if !isAssign || len(bodyAssign.Targets) != 1 {
+		return rawStmt{}, false
+	}
+	varName, isName := bodyAssign.Targets[0].(*parser2.Name)
+	if !isName || varName.P.Col > 255 || len(varName.Id) > 15 {
+		return rawStmt{}, false
+	}
+	constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+	if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	iv := constVal.Value.(int64)
+	if iv < 0 || iv > 255 {
+		return rawStmt{}, false
+	}
+	condLine := s.P.Line
+	condCol := byte(cond.P.Col)
+	condEnd := condCol + byte(len(cond.Id))
+	bodyLine := bodyAssign.P.Line
+	vc := byte(constVal.P.Col)
+	ve := vc + byte(len(strconv.Itoa(int(iv))))
+	vrc := byte(varName.P.Col)
+	vre := vrc + byte(len(varName.Id))
+	return rawStmt{
+		line:    condLine,
+		endLine: bodyLine,
+		kind:    stmtWhile,
+		whileAsgn: whileAssign{
+			condName: cond.Id,
+			condLine: condLine,
+			condCol:  condCol,
+			condEnd:  condEnd,
+			bodyLine: bodyLine,
+			bodyVal:  byte(iv),
+			varName:  varName.Id,
+			varCol:   vrc,
+			varEnd:   vre,
+			valCol:   vc,
+			valEnd:   ve,
 		},
 	}, true
 }

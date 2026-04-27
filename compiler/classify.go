@@ -25,6 +25,7 @@ const (
 	modAttrStore      // a.b = x  (object and value are names)
 	modCallAssign     // x = f(args...) (f and all args are names, no kwargs)
 	modIfElse         // if cond: var=val [elif ...] [else: var=val]
+	modWhile          // while cond: var=val  (single-assignment body, no break/continue)
 )
 
 type classification struct {
@@ -81,6 +82,8 @@ type classification struct {
 	callAsgn callAssign
 	// modIfElse fields:
 	ifElseAsgn ifElseClassify
+	// modWhile fields:
+	whileAsgn whileAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -123,6 +126,8 @@ type rawStmt struct {
 	callAsgn callAssign
 	// stmtIfElse fields:
 	ifElseAsgn ifElseClassify
+	// stmtWhile fields:
+	whileAsgn whileAssign
 }
 
 type rawStmtKind uint8
@@ -145,6 +150,7 @@ const (
 	stmtAttrStore      // a.b = x
 	stmtCallAssign     // x = f(args...)
 	stmtIfElse         // if cond: var=val [elif ...] [else: var=val]
+	stmtWhile          // while cond: var=val  (single-assignment body)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -356,6 +362,22 @@ type ifElseClassify struct {
 	elseValEnd  byte
 }
 
+// whileAssign holds the parsed form of `while cond: name = val` where
+// cond is a name and val is a small integer (0-255).
+type whileAssign struct {
+	condName string
+	condLine int
+	condCol  byte
+	condEnd  byte
+	bodyLine int
+	bodyVal  byte
+	varName  string
+	varCol   byte
+	varEnd   byte
+	valCol   byte
+	valEnd   byte
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -407,6 +429,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:       modIfElse,
 			ifElseAsgn: first.ifElseAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtWhile {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:      modWhile,
+			whileAsgn: first.whileAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {
