@@ -200,6 +200,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				augOparg:     oparg,
 			})
 
+		case *parser2.If:
+			rs, ok2 := extractIfElse(s, lines)
+			if !ok2 {
+				return classification{}, false
+			}
+			stmts = append(stmts, rs)
+
 		default:
 			return classification{}, false
 		}
@@ -785,6 +792,125 @@ func binOpargFromOp(op string) (byte, bool) {
 		return bytecode.NbMatrixMultiply, true
 	}
 	return 0, false
+}
+
+// extractIfElse extracts an if/elif/else chain where each branch body is
+// `name = small_int` (0-255). Returns stmtIfElse on success.
+func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
+	_ = lines // reserved for future use
+	var branches []ifElseBranch
+	var hasElse bool
+	var elseLine int
+	var elseVal byte
+	var elseVarName string
+	var elseVarCol, elseVarEnd, elseValCol, elseValEnd byte
+
+	cur := s
+	for cur != nil {
+		cond, condOK := cur.Test.(*parser2.Name)
+		if !condOK || cond.P.Col > 255 || len(cond.Id) > 15 {
+			return rawStmt{}, false
+		}
+		condLine := cur.P.Line
+		condCol := byte(cond.P.Col)
+		condEnd := condCol + byte(len(cond.Id))
+
+		if len(cur.Body) != 1 {
+			return rawStmt{}, false
+		}
+		bodyAssign, isAssign := cur.Body[0].(*parser2.Assign)
+		if !isAssign || len(bodyAssign.Targets) != 1 {
+			return rawStmt{}, false
+		}
+		varName, isName := bodyAssign.Targets[0].(*parser2.Name)
+		if !isName || varName.P.Col > 255 || len(varName.Id) > 15 {
+			return rawStmt{}, false
+		}
+		constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+		if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		iv := constVal.Value.(int64)
+		if iv < 0 || iv > 255 {
+			return rawStmt{}, false
+		}
+		bodyLine := bodyAssign.P.Line
+		vc := byte(constVal.P.Col)
+		ve := vc + byte(len(strconv.Itoa(int(iv))))
+		vrc := byte(varName.P.Col)
+		vre := vrc + byte(len(varName.Id))
+
+		branches = append(branches, ifElseBranch{
+			condName: cond.Id,
+			condLine: condLine,
+			condCol:  condCol,
+			condEnd:  condEnd,
+			bodyLine: bodyLine,
+			bodyVal:  byte(iv),
+			varName:  varName.Id,
+			varCol:   vrc,
+			varEnd:   vre,
+			valCol:   vc,
+			valEnd:   ve,
+		})
+
+		if len(cur.Orelse) == 0 {
+			cur = nil
+		} else if len(cur.Orelse) == 1 {
+			if elif, isIf := cur.Orelse[0].(*parser2.If); isIf {
+				cur = elif
+			} else {
+				// else body: must be one assign
+				elseAssign, isAssign2 := cur.Orelse[0].(*parser2.Assign)
+				if !isAssign2 || len(elseAssign.Targets) != 1 {
+					return rawStmt{}, false
+				}
+				ev, isName2 := elseAssign.Targets[0].(*parser2.Name)
+				if !isName2 || ev.P.Col > 255 || len(ev.Id) > 15 {
+					return rawStmt{}, false
+				}
+				ec, isConst2 := elseAssign.Value.(*parser2.Constant)
+				if !isConst2 || ec.Kind != "int" || ec.P.Col > 255 {
+					return rawStmt{}, false
+				}
+				eiv := ec.Value.(int64)
+				if eiv < 0 || eiv > 255 {
+					return rawStmt{}, false
+				}
+				hasElse = true
+				elseLine = elseAssign.P.Line
+				elseVal = byte(eiv)
+				elseVarName = ev.Id
+				elseVarCol = byte(ev.P.Col)
+				elseVarEnd = elseVarCol + byte(len(ev.Id))
+				elseValCol = byte(ec.P.Col)
+				elseValEnd = elseValCol + byte(len(strconv.Itoa(int(eiv))))
+				cur = nil
+			}
+		} else {
+			return rawStmt{}, false
+		}
+	}
+
+	if len(branches) == 0 {
+		return rawStmt{}, false
+	}
+	return rawStmt{
+		line:    branches[0].condLine,
+		endLine: branches[len(branches)-1].bodyLine,
+		kind:    stmtIfElse,
+		ifElseAsgn: ifElseClassify{
+			branches:    branches,
+			hasElse:     hasElse,
+			elseLine:    elseLine,
+			elseVal:     elseVal,
+			elseVarName: elseVarName,
+			elseVarCol:  elseVarCol,
+			elseVarEnd:  elseVarEnd,
+			elseValCol:  elseValCol,
+			elseValEnd:  elseValEnd,
+		},
+	}, true
 }
 
 func augOpargFromOp(op string) (byte, bool) {

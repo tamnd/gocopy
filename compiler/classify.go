@@ -24,6 +24,7 @@ const (
 	modAttrLoad       // x = a.b  (object is a name)
 	modAttrStore      // a.b = x  (object and value are names)
 	modCallAssign     // x = f(args...) (f and all args are names, no kwargs)
+	modIfElse         // if cond: var=val [elif ...] [else: var=val]
 )
 
 type classification struct {
@@ -78,6 +79,8 @@ type classification struct {
 	attrAsgn attrAssign
 	// modCallAssign fields:
 	callAsgn callAssign
+	// modIfElse fields:
+	ifElseAsgn ifElseClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -118,6 +121,8 @@ type rawStmt struct {
 	attrAsgn attrAssign
 	// stmtCallAssign fields:
 	callAsgn callAssign
+	// stmtIfElse fields:
+	ifElseAsgn ifElseClassify
 }
 
 type rawStmtKind uint8
@@ -139,6 +144,7 @@ const (
 	stmtAttrLoad       // x = a.b
 	stmtAttrStore      // a.b = x
 	stmtCallAssign     // x = f(args...)
+	stmtIfElse         // if cond: var=val [elif ...] [else: var=val]
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -321,6 +327,35 @@ type callAssign struct {
 	closeEnd   byte // col after `)` (= lineEndCol)
 }
 
+// ifElseBranch holds one condition+body pair in an if/elif chain.
+type ifElseBranch struct {
+	condName string
+	condLine int
+	condCol  byte
+	condEnd  byte
+	bodyLine int
+	bodyVal  byte
+	varName  string
+	varCol   byte
+	varEnd   byte
+	valCol   byte
+	valEnd   byte
+}
+
+// ifElseClassify holds the parsed form of an if/elif/else chain where
+// each branch body is a single `name = small_int` assignment.
+type ifElseClassify struct {
+	branches    []ifElseBranch
+	hasElse     bool
+	elseLine    int
+	elseVal     byte
+	elseVarName string
+	elseVarCol  byte
+	elseVarEnd  byte
+	elseValCol  byte
+	elseValEnd  byte
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -360,6 +395,18 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			subAsgn:  first.subAsgn,
 			attrAsgn: first.attrAsgn,
 			callAsgn: first.callAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtIfElse {
+		// if/elif/else: no tail statements allowed (the if block IS the module body)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:       modIfElse,
+			ifElseAsgn: first.ifElseAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {
