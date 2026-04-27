@@ -9,6 +9,26 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-04-27
+
+`gocopy compile` accepts boolean-operator assignments (`x = a and b`,
+`x = a or b`) and conditional expressions (`x = a if c else b`) where
+all operands are names.
+
+### Added
+
+- `bytecode/bool.go`: `BoolAndBytecode`, `BoolOrBytecode`,
+  `BoolAndOrLineTable`, `TernaryBytecode`, `TernaryLineTable`,
+  `appendFirstLineEntry`.
+- Opcodes: `NOT_TAKEN` (28), `POP_TOP` (31), `JUMP_FORWARD` (77),
+  `POP_JUMP_IF_FALSE` (100, 1 cache word), `POP_JUMP_IF_TRUE` (103, 1 cache word).
+- `compiler/classify.go`: `modBoolOp`, `modTernary`, `stmtBoolOp`,
+  `stmtTernary`, `boolAssign`, `ternaryAssign` types.
+- `compiler/classify_ast.go`: handles `*parser2.BoolOp` (2 name values)
+  and `*parser2.IfExp` (name test/body/orelse).
+- `compiler/compiler.go`: `compileBoolOp`, `compileTernary`.
+- 3 new fixtures: 114–116.
+
 ## [0.1.4] - 2026-04-27
 
 `gocopy compile` accepts assignments where the RHS is a comparison

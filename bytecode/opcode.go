@@ -15,23 +15,28 @@ type Opcode uint8
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (run `go generate ./op` in
 // goipy to regenerate from upstream).
 const (
-	NOP              Opcode = 27
-	RETURN_VALUE     Opcode = 35
-	TO_BOOL          Opcode = 39
-	UNARY_INVERT     Opcode = 40
-	UNARY_NEGATIVE   Opcode = 41
-	UNARY_NOT        Opcode = 42
-	BINARY_OP        Opcode = 44
-	CALL_INTRINSIC_1 Opcode = 53
-	CONTAINS_OP      Opcode = 57
-	COPY             Opcode = 59
-	IS_OP            Opcode = 74
-	LOAD_CONST       Opcode = 82
-	LOAD_NAME        Opcode = 93
-	LOAD_SMALL_INT   Opcode = 94
-	STORE_NAME       Opcode = 116
-	COMPARE_OP       Opcode = 56
-	RESUME           Opcode = 128
+	NOP               Opcode = 27
+	NOT_TAKEN         Opcode = 28
+	POP_TOP           Opcode = 31
+	RETURN_VALUE      Opcode = 35
+	TO_BOOL           Opcode = 39
+	UNARY_INVERT      Opcode = 40
+	UNARY_NEGATIVE    Opcode = 41
+	UNARY_NOT         Opcode = 42
+	BINARY_OP         Opcode = 44
+	COMPARE_OP        Opcode = 56
+	CONTAINS_OP       Opcode = 57
+	COPY              Opcode = 59
+	CALL_INTRINSIC_1  Opcode = 53
+	JUMP_FORWARD      Opcode = 77
+	IS_OP             Opcode = 74
+	LOAD_CONST        Opcode = 82
+	LOAD_NAME         Opcode = 93
+	LOAD_SMALL_INT    Opcode = 94
+	POP_JUMP_IF_FALSE Opcode = 100
+	POP_JUMP_IF_TRUE  Opcode = 103
+	STORE_NAME        Opcode = 116
+	RESUME            Opcode = 128
 )
 
 // CacheSize maps each opcode to the number of inline cache entries that
@@ -43,10 +48,12 @@ const (
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
 var CacheSize = [256]uint8{
-	39: 3, // TO_BOOL: 3 inline-cache words (6 bytes)
-	44: 5, // BINARY_OP: 5 inline-cache words (10 bytes)
-	56: 1, // COMPARE_OP: 1 inline-cache word (2 bytes)
-	57: 1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
+	39:  3, // TO_BOOL: 3 inline-cache words (6 bytes)
+	44:  5, // BINARY_OP: 5 inline-cache words (10 bytes)
+	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
+	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
+	100: 1, // POP_JUMP_IF_FALSE: 1 inline-cache word (2 bytes)
+	103: 1, // POP_JUMP_IF_TRUE: 1 inline-cache word (2 bytes)
 }
 
 // COMPARE_OP oparg values for non-conditional (value) context.

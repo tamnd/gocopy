@@ -16,6 +16,8 @@ const (
 	modBinOpAssign   // x = a op b  (both operands are names, arithmetic/bitwise)
 	modUnaryAssign   // x = -a / ~a / not a  (operand is a name)
 	modCmpAssign     // x = a cmpop b  (both operands are names, comparison)
+	modBoolOp        // x = a and b  /  x = a or b  (both operands are names)
+	modTernary       // x = a if c else b  (all operands are names)
 )
 
 type classification struct {
@@ -58,6 +60,10 @@ type classification struct {
 	unaryAsgn unaryAssign
 	// modCmpAssign fields:
 	cmpAsgn cmpAssign
+	// modBoolOp fields:
+	boolAsgn boolAssign
+	// modTernary fields:
+	ternaryAsgn ternaryAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -86,6 +92,10 @@ type rawStmt struct {
 	unaryAsgn unaryAssign
 	// stmtCmpAssign fields:
 	cmpAsgn cmpAssign
+	// stmtBoolOp fields:
+	boolAsgn boolAssign
+	// stmtTernary fields:
+	ternaryAsgn ternaryAssign
 }
 
 type rawStmtKind uint8
@@ -99,6 +109,8 @@ const (
 	stmtBinOpAssign  // x = a op b  (both operands are names, arithmetic/bitwise)
 	stmtUnaryAssign  // x = -a / ~a / not a  (operand is a name)
 	stmtCmpAssign    // x = a cmpop b  (both operands are names, comparison)
+	stmtBoolOp       // x = a and/or b  (both operands are names)
+	stmtTernary      // x = a if c else b  (all operands are names)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -179,6 +191,38 @@ type unaryAssign struct {
 	kind        unaryKind
 }
 
+// boolAssign holds the parsed form of `target = left and/or right`
+// where both operands are names.
+type boolAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	leftName  string
+	leftCol   byte
+	leftLen   byte
+	rightName string
+	rightCol  byte
+	rightLen  byte
+	isOr      bool // true = or, false = and
+}
+
+// ternaryAssign holds the parsed form of `target = trueVal if cond else falseVal`
+// where all three operands are names.
+type ternaryAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	condName  string
+	condCol   byte
+	condLen   byte
+	trueName  string
+	trueCol   byte
+	trueLen   byte
+	falseName string
+	falseCol  byte
+	falseLen  byte
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -186,6 +230,34 @@ type unaryAssign struct {
 func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
+	}
+	if first := stmts[0]; first.kind == stmtBoolOp {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:     modBoolOp,
+			stmts:    tail,
+			boolAsgn: first.boolAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtTernary {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:        modTernary,
+			stmts:       tail,
+			ternaryAsgn: first.ternaryAsgn,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtCmpAssign {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
