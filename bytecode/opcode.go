@@ -34,8 +34,22 @@ const (
 //
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
-// NbInplaceAdd is the BINARY_OP oparg for the `+=` operator (NB_INPLACE_ADD).
-const NbInplaceAdd = 13
+// BINARY_OP opargs for augmented assignment operators (NB_INPLACE_* enum).
+// SOURCE: github.com/tamnd/goipy/op/opcodes.go (NB_INPLACE_* constants).
+const (
+	NbInplaceAdd         = 13
+	NbInplaceAnd         = 14
+	NbInplaceFloorDivide = 15
+	NbInplaceLshift      = 16
+	NbInplaceMultiply    = 18
+	NbInplaceRemainder   = 19
+	NbInplaceOr          = 20
+	NbInplacePower       = 21
+	NbInplaceRshift      = 22
+	NbInplaceSubtract    = 23
+	NbInplaceTrueDivide  = 24
+	NbInplaceXor         = 25
+)
 
 var CacheSize = [256]uint8{
 	44: 5, // BINARY_OP: 5 inline-cache words (10 bytes)

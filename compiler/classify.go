@@ -74,6 +74,7 @@ type classification struct {
 	augValStart byte
 	augValEnd   byte
 	augValue    any
+	augOparg    byte // BINARY_OP NB_INPLACE_* oparg
 }
 
 // rawStmt is the parser's intermediate form: a no-op token, a string
@@ -94,6 +95,8 @@ type rawStmt struct {
 	asgnValue    any
 	// stmtChainedAssign fields:
 	chainTargets []chainedTarget
+	// stmtAugAssign fields:
+	augOparg byte // BINARY_OP NB_INPLACE_* oparg
 }
 
 type rawStmtKind uint8
@@ -150,9 +153,9 @@ func classify(src []byte) (classification, bool) {
 				continue
 			}
 		}
-		// Augmented assignment (x += literal) is only allowed after exactly one regular assign.
+		// Augmented assignment (x op= literal) is only allowed after exactly one regular assign.
 		if len(stmts) == 1 && stmts[0].kind == stmtAssign {
-			if a, ok := tryParseAugAssign(bare); ok {
+			if a, oparg, ok := tryParseAugAssign(bare); ok {
 				stmts = append(stmts, rawStmt{
 					line:         i + 1,
 					endLine:      i + 1,
@@ -163,6 +166,7 @@ func classify(src []byte) (classification, bool) {
 					asgnValStart: a.valStart,
 					asgnValEnd:   a.valEnd,
 					asgnValue:    a.value,
+					augOparg:     oparg,
 				})
 				i++
 				continue
@@ -261,6 +265,7 @@ func classify(src []byte) (classification, bool) {
 				augValStart:  aug.asgnValStart,
 				augValEnd:    aug.asgnValEnd,
 				augValue:     aug.asgnValue,
+				augOparg:     aug.augOparg,
 			}, true
 		}
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-numAsgn)
@@ -598,44 +603,79 @@ func tryParseChainedAssign(s []byte) (targets []chainedTarget, valStart, valEnd 
 	return targets, vStart, byte(len(s)), v, true
 }
 
-// tryParseAugAssign recognises `<identifier> += <integer>` at column 0.
-// Only the `+=` operator is supported in v0.0.15. The RHS must be a
-// non-negative integer literal. Returns ok=false on any mismatch.
-func tryParseAugAssign(s []byte) (asgn, bool) {
+// tryParseAugAssign recognises `<identifier> op= <integer>` at column 0
+// for any of the twelve inplace binary operators. The RHS must be a
+// non-negative integer literal. Returns (asgn, oparg, true) on success.
+func tryParseAugAssign(s []byte) (asgn, byte, bool) {
 	if len(s) == 0 || !isIdentStart(s[0]) {
-		return asgn{}, false
+		return asgn{}, 0, false
 	}
 	nameEnd := 1
 	for nameEnd < len(s) && isIdentCont(s[nameEnd]) {
 		nameEnd++
 	}
 	if nameEnd > 15 {
-		return asgn{}, false
+		return asgn{}, 0, false
 	}
 	name := string(s[:nameEnd])
 	if isReservedName(name) {
-		return asgn{}, false
+		return asgn{}, 0, false
 	}
 	i := nameEnd
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
-	// Only `+=` is in scope for v0.0.15.
-	if i+1 >= len(s) || s[i] != '+' || s[i+1] != '=' {
-		return asgn{}, false
+	// Detect operator. Try 3-char operators before 2-char to avoid
+	// mistaking `//=` for `/=` etc.
+	var oparg byte
+	var opLen int
+	if i+3 <= len(s) {
+		switch string(s[i : i+3]) {
+		case "//=":
+			oparg, opLen = bytecode.NbInplaceFloorDivide, 3
+		case "**=":
+			oparg, opLen = bytecode.NbInplacePower, 3
+		case ">>=":
+			oparg, opLen = bytecode.NbInplaceRshift, 3
+		case "<<=":
+			oparg, opLen = bytecode.NbInplaceLshift, 3
+		}
 	}
-	i += 2
+	if opLen == 0 && i+2 <= len(s) {
+		switch string(s[i : i+2]) {
+		case "+=":
+			oparg, opLen = bytecode.NbInplaceAdd, 2
+		case "-=":
+			oparg, opLen = bytecode.NbInplaceSubtract, 2
+		case "*=":
+			oparg, opLen = bytecode.NbInplaceMultiply, 2
+		case "%=":
+			oparg, opLen = bytecode.NbInplaceRemainder, 2
+		case "&=":
+			oparg, opLen = bytecode.NbInplaceAnd, 2
+		case "|=":
+			oparg, opLen = bytecode.NbInplaceOr, 2
+		case "^=":
+			oparg, opLen = bytecode.NbInplaceXor, 2
+		case "/=":
+			oparg, opLen = bytecode.NbInplaceTrueDivide, 2
+		}
+	}
+	if opLen == 0 {
+		return asgn{}, 0, false
+	}
+	i += opLen
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
 	if i >= len(s) {
-		return asgn{}, false
+		return asgn{}, 0, false
 	}
 	valStart := i
 	rhs := s[valStart:]
 	iv, ok := parseIntLiteral(rhs)
 	if !ok {
-		return asgn{}, false
+		return asgn{}, 0, false
 	}
 	return asgn{
 		name:     name,
@@ -643,7 +683,7 @@ func tryParseAugAssign(s []byte) (asgn, bool) {
 		valStart: byte(valStart),
 		valEnd:   byte(len(s)),
 		value:    iv,
-	}, true
+	}, oparg, true
 }
 
 // parseIntLiteral attempts to parse a non-negative Python integer literal

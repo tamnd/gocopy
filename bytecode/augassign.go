@@ -1,8 +1,9 @@
 package bytecode
 
 // AugAssignBytecode returns the instruction stream for a module-level
-// augmented assignment of the form `name = initVal\nname += augVal\n`,
-// where both values are non-negative integers.
+// augmented assignment of the form `name = initVal\nname op= augVal\n`,
+// where both values are non-negative integers and oparg is the
+// NB_INPLACE_* enum value for the operator (e.g. NbInplaceAdd for +=).
 //
 // Bytecode pattern:
 //
@@ -11,7 +12,7 @@ package bytecode
 //	STORE_NAME 0
 //	LOAD_NAME 0
 //	LOAD augVal                  (LOAD_SMALL_INT if 0..255, else LOAD_CONST augConstIdx)
-//	BINARY_OP NbInplaceAdd (+=)
+//	BINARY_OP oparg
 //	<5 cache words>
 //	STORE_NAME 0
 //	<nops>
@@ -22,7 +23,7 @@ package bytecode
 //   - consts[0] = initVal (phantom slot when small int, real slot when large)
 //   - consts[1] = augVal  (only present when augVal > 255)
 //   - consts[?] = None    (last slot)
-func AugAssignBytecode(initVal, augVal int64, tailStmts int) []byte {
+func AugAssignBytecode(initVal, augVal int64, oparg byte, tailStmts int) []byte {
 	if tailStmts < 0 {
 		panic("bytecode.AugAssignBytecode: tailStmts must be >= 0")
 	}
@@ -53,7 +54,7 @@ func AugAssignBytecode(initVal, augVal int64, tailStmts int) []byte {
 	} else {
 		out = append(out, byte(LOAD_CONST), augConstIdx)
 	}
-	out = append(out, byte(BINARY_OP), NbInplaceAdd)
+	out = append(out, byte(BINARY_OP), oparg)
 	out = append(out, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) // 5 cache words
 	out = append(out, byte(STORE_NAME), 0)
 	for range nops {
