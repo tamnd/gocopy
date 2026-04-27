@@ -38,6 +38,7 @@ const (
 	modAssign
 	modMultiAssign
 	modChainedAssign
+	modAugAssign
 )
 
 type classification struct {
@@ -66,6 +67,13 @@ type classification struct {
 	chainValStart byte
 	chainValEnd   byte
 	chainValue    any
+	// modAugAssign fields:
+	augLine     int
+	augName     string
+	augNameLen  byte
+	augValStart byte
+	augValEnd   byte
+	augValue    any
 }
 
 // rawStmt is the parser's intermediate form: a no-op token, a string
@@ -95,6 +103,7 @@ const (
 	stmtString
 	stmtAssign
 	stmtChainedAssign
+	stmtAugAssign
 )
 
 func classify(src []byte) (classification, bool) {
@@ -136,6 +145,24 @@ func classify(src []byte) (classification, bool) {
 					asgnValEnd:   vEnd,
 					asgnValue:    val,
 					chainTargets: targets,
+				})
+				i++
+				continue
+			}
+		}
+		// Augmented assignment (x += literal) is only allowed after exactly one regular assign.
+		if len(stmts) == 1 && stmts[0].kind == stmtAssign {
+			if a, ok := tryParseAugAssign(bare); ok {
+				stmts = append(stmts, rawStmt{
+					line:         i + 1,
+					endLine:      i + 1,
+					endCol:       byte(len(bare)),
+					kind:         stmtAugAssign,
+					text:         a.name,
+					asgnNameLen:  a.nameLen,
+					asgnValStart: a.valStart,
+					asgnValEnd:   a.valEnd,
+					asgnValue:    a.value,
 				})
 				i++
 				continue
@@ -211,6 +238,30 @@ func classify(src []byte) (classification, bool) {
 				break
 			}
 			numAsgn++
+		}
+		// One assign followed by one augmented assign → modAugAssign.
+		if numAsgn == 1 && len(stmts) >= 2 && stmts[1].kind == stmtAugAssign {
+			aug := stmts[1]
+			tail := make([]bytecode.NoOpStmt, 0, len(stmts)-2)
+			for _, s := range stmts[2:] {
+				tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+			}
+			return classification{
+				kind:         modAugAssign,
+				stmts:        tail,
+				asgnLine:     first.line,
+				asgnName:     first.text,
+				asgnNameLen:  first.asgnNameLen,
+				asgnValStart: first.asgnValStart,
+				asgnValEnd:   first.asgnValEnd,
+				asgnValue:    first.asgnValue,
+				augLine:      aug.line,
+				augName:      aug.text,
+				augNameLen:   aug.asgnNameLen,
+				augValStart:  aug.asgnValStart,
+				augValEnd:    aug.asgnValEnd,
+				augValue:     aug.asgnValue,
+			}, true
 		}
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-numAsgn)
 		for _, s := range stmts[numAsgn:] {
@@ -545,6 +596,54 @@ func tryParseChainedAssign(s []byte) (targets []chainedTarget, valStart, valEnd 
 		return nil, 0, 0, nil, false
 	}
 	return targets, vStart, byte(len(s)), v, true
+}
+
+// tryParseAugAssign recognises `<identifier> += <integer>` at column 0.
+// Only the `+=` operator is supported in v0.0.15. The RHS must be a
+// non-negative integer literal. Returns ok=false on any mismatch.
+func tryParseAugAssign(s []byte) (asgn, bool) {
+	if len(s) == 0 || !isIdentStart(s[0]) {
+		return asgn{}, false
+	}
+	nameEnd := 1
+	for nameEnd < len(s) && isIdentCont(s[nameEnd]) {
+		nameEnd++
+	}
+	if nameEnd > 15 {
+		return asgn{}, false
+	}
+	name := string(s[:nameEnd])
+	if isReservedName(name) {
+		return asgn{}, false
+	}
+	i := nameEnd
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	// Only `+=` is in scope for v0.0.15.
+	if i+1 >= len(s) || s[i] != '+' || s[i+1] != '=' {
+		return asgn{}, false
+	}
+	i += 2
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) {
+		return asgn{}, false
+	}
+	valStart := i
+	rhs := s[valStart:]
+	iv, ok := parseIntLiteral(rhs)
+	if !ok {
+		return asgn{}, false
+	}
+	return asgn{
+		name:     name,
+		nameLen:  byte(nameEnd),
+		valStart: byte(valStart),
+		valEnd:   byte(len(s)),
+		value:    iv,
+	}, true
 }
 
 // parseIntLiteral attempts to parse a non-negative Python integer literal

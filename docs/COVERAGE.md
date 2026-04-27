@@ -22,6 +22,7 @@ for at least one fixture exercising that node and the
 | Module-level assignment (`name = <complex>`, pure-imaginary) | done | v0.0.12 | tests/fixtures/058_assign_complex_one.py |
 | N >= 2 sequential module-level assignments (any literal type) | done | v0.0.13 | tests/fixtures/061_multi_assign_two_ints.py |
 | Chained assignment (`x = y = literal`, N >= 2 targets) | done | v0.0.14 | tests/fixtures/068_chain_two_small_int.py |
+| Augmented assignment (`name = initVal; name += augVal`, integer) | done | v0.0.15 | tests/fixtures/074_aug_add_small_small.py |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |

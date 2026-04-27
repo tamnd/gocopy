@@ -499,6 +499,95 @@ func TestChainedAssign(t *testing.T) {
 	}
 }
 
+func TestAugAssign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		src         []byte
+		consts      []any
+		names       []string
+		bc          []byte
+		initLine    int
+		nameLen     byte
+		initVStart  byte
+		initVEnd    byte
+		augLine     int
+		augVStart   byte
+		augVEnd     byte
+		tail        []bytecode.NoOpStmt
+	}{
+		{
+			name:       "x = 0 then x += 1",
+			src:        []byte("x = 0\nx += 1\n"),
+			consts:     []any{int64(0), nil},
+			names:      []string{"x"},
+			bc:         []byte{0x80, 0, 0x5e, 0, 0x74, 0, 0x5d, 0, 0x5e, 1, 0x2c, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x74, 0, 0x52, 1, 0x23, 0},
+			initLine: 1, nameLen: 1, initVStart: 4, initVEnd: 5,
+			augLine: 2, augVStart: 5, augVEnd: 6,
+		},
+		{
+			name:       "x = 5 then x += 10",
+			src:        []byte("x = 5\nx += 10\n"),
+			consts:     []any{int64(5), nil},
+			names:      []string{"x"},
+			bc:         []byte{0x80, 0, 0x5e, 5, 0x74, 0, 0x5d, 0, 0x5e, 10, 0x2c, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x74, 0, 0x52, 1, 0x23, 0},
+			initLine: 1, nameLen: 1, initVStart: 4, initVEnd: 5,
+			augLine: 2, augVStart: 5, augVEnd: 7,
+		},
+		{
+			name:       "x = 0 then x += 300",
+			src:        []byte("x = 0\nx += 300\n"),
+			consts:     []any{int64(0), int64(300), nil},
+			names:      []string{"x"},
+			bc:         []byte{0x80, 0, 0x5e, 0, 0x74, 0, 0x5d, 0, 0x52, 1, 0x2c, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x74, 0, 0x52, 2, 0x23, 0},
+			initLine: 1, nameLen: 1, initVStart: 4, initVEnd: 5,
+			augLine: 2, augVStart: 5, augVEnd: 8,
+		},
+		{
+			name:       "x = 300 then x += 1",
+			src:        []byte("x = 300\nx += 1\n"),
+			consts:     []any{int64(300), nil},
+			names:      []string{"x"},
+			bc:         []byte{0x80, 0, 0x52, 0, 0x74, 0, 0x5d, 0, 0x5e, 1, 0x2c, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x74, 0, 0x52, 1, 0x23, 0},
+			initLine: 1, nameLen: 1, initVStart: 4, initVEnd: 7,
+			augLine: 2, augVStart: 5, augVEnd: 6,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if !bytes.Equal(c.Bytecode, tc.bc) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, tc.bc)
+			}
+			if len(c.Consts) != len(tc.consts) {
+				t.Fatalf("consts len = %d; want %d (%v)", len(c.Consts), len(tc.consts), tc.consts)
+			}
+			for i := range tc.consts {
+				if !reflect.DeepEqual(c.Consts[i], tc.consts[i]) {
+					t.Errorf("consts[%d] = %v (%T); want %v (%T)", i, c.Consts[i], c.Consts[i], tc.consts[i], tc.consts[i])
+				}
+			}
+			if !reflect.DeepEqual(c.Names, tc.names) {
+				t.Errorf("names = %v; want %v", c.Names, tc.names)
+			}
+			if c.StackSize != 2 {
+				t.Errorf("stacksize = %d; want 2", c.StackSize)
+			}
+			wantLT := bytecode.AugAssignLineTable(
+				tc.initLine, tc.nameLen, tc.initVStart, tc.initVEnd,
+				tc.augLine, tc.augVStart, tc.augVEnd,
+				tc.tail,
+			)
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

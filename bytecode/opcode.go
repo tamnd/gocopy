@@ -17,8 +17,10 @@ type Opcode uint8
 const (
 	NOP            Opcode = 27
 	RETURN_VALUE   Opcode = 35
+	BINARY_OP      Opcode = 44
 	COPY           Opcode = 59
 	LOAD_CONST     Opcode = 82
+	LOAD_NAME      Opcode = 93
 	LOAD_SMALL_INT Opcode = 94
 	STORE_NAME     Opcode = 116
 	RESUME         Opcode = 128
@@ -32,8 +34,9 @@ const (
 //
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
+// NbInplaceAdd is the BINARY_OP oparg for the `+=` operator (NB_INPLACE_ADD).
+const NbInplaceAdd = 13
+
 var CacheSize = [256]uint8{
-	// Filled per opcode as features land. Empty through v0.0.5 because
-	// none of NOP / RETURN_VALUE / LOAD_CONST / STORE_NAME / RESUME
-	// carries a cache.
+	44: 5, // BINARY_OP: 5 inline-cache words (10 bytes)
 }

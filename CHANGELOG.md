@@ -9,6 +9,35 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-04-27
+
+`gocopy compile` accepts a two-statement augmented assignment at module
+level: `name = initVal` followed by `name += augVal`, where both values
+are non-negative integers.
+
+CPython's bytecode pattern: LOAD_SMALL_INT or LOAD_CONST for `initVal`,
+STORE_NAME, LOAD_NAME, LOAD_SMALL_INT or LOAD_CONST for `augVal`,
+BINARY_OP 13 (NB_INPLACE_ADD) plus its 5 inline-cache words (10 zero
+bytes), STORE_NAME, LOAD_CONST None, RETURN_VALUE. `co_stacksize` is 2.
+
+### Added
+
+- `bytecode.AugAssignBytecode` and `bytecode.AugAssignLineTable` in
+  `bytecode/augassign.go`.
+- `bytecode.BINARY_OP` (44), `bytecode.LOAD_NAME` (93), `bytecode.NbInplaceAdd`
+  (13), and `CacheSize[44] = 5` in `bytecode/opcode.go`.
+- `modAugAssign` classifier kind; `tryParseAugAssign` in
+  `compiler/classify.go`.
+- `compileAugAssign` in `compiler/compiler.go`.
+- Four new fixtures: `074`-`077`.
+- `TestAugAssign` in `compiler/compiler_test.go`.
+
+### Deferred
+
+- Augmented assignment with other operators (`-=`, `*=`, etc.).
+- Annotated assignment (`x: int = 1`).
+- Wiring gopapy as the parser.
+
 ## [0.0.14] - 2026-04-26
 
 `gocopy compile` accepts a chained assignment at module level, e.g.
@@ -549,7 +578,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/tamnd/gocopy/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/tamnd/gocopy/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/tamnd/gocopy/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/tamnd/gocopy/compare/v0.0.11...v0.0.12
