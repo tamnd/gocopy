@@ -678,7 +678,6 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"import", []byte("import sys\n")},
 		{"docstring with backslash escape", []byte("\"hi\\nthere\"\n")},
 		{"non-ascii docstring", []byte("\"héllo\"\n")},
-		{"raw string", []byte("r\"hi\"\n")},
 		{"f-string", []byte("f\"hi\"\n")},
 		{"indented pass", []byte("  pass\n")},
 		{"indented pass after blank", []byte("\n  pass\n")},

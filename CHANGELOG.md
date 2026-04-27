@@ -9,6 +9,42 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-04-27
+
+The hand-rolled source scanner in `compiler/classify.go` is replaced by
+`github.com/tamnd/gopapy/v2` (`parser2.ParseFile`). All 88 oracle fixtures
+stay byte-identical. The `classifyAST` function walks the gopapy Module AST
+and produces the same `classification` struct the bytecode lowering layer
+already consumes; the lowering code in `compiler.go` is unchanged.
+
+One intentional behaviour change: raw-string literals (`r"hi"`) used as
+module docstrings are now accepted. gopapy parses them identically to plain
+strings; the produced bytecode is correct and byte-for-byte identical to
+CPython.
+
+### Added
+
+- `compiler/classify_ast.go`: `classifyAST`, `extractValue`,
+  `constantToValue`, `augOpargFromOp`.
+- `require github.com/tamnd/gopapy/v2 v2.0.0` in `go.mod`.
+
+### Changed
+
+- `compiler.Compile` calls `parser2.ParseFile` then `classifyAST`
+  instead of the hand-scanner `classify`.
+- `compiler/classify.go` trimmed to types, utility functions, and
+  the new `stmtsToClassification` helper; all hand-scanner functions
+  removed (`tryParseAssign`, `tryParseAugAssign`, `tryParseChainedAssign`,
+  `tryConsumeMultilineString`, `parseLiteralValue`, `parseIntLiteral`,
+  `parseFloatLiteral`, `parseComplexLiteral`, and their helpers).
+- `TestUnsupportedSourceRejected` drops the `raw_string` case since
+  `r"hi"` now compiles correctly.
+
+### Deferred
+
+- Augmented assignment with non-integer RHS.
+- Annotated assignment (`x: int = 1`) — deferred to v0.1.2.
+
 ## [0.0.16] - 2026-04-27
 
 `gocopy compile` accepts all twelve inplace augmented assignment operators.
@@ -602,7 +638,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/tamnd/gocopy/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/tamnd/gocopy/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/tamnd/gocopy/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/tamnd/gocopy/compare/v0.0.13...v0.0.14

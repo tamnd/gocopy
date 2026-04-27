@@ -1,54 +1,30 @@
 // Package compiler lowers a Python source file to a bytecode.CodeObject.
-//
-// v0.0.13 supports five body shapes:
+// The parser is github.com/tamnd/gopapy/v2 (wired in v0.0.17). The
+// supported body shapes are:
 //
 //  1. Empty module (file is empty or contains only whitespace, blank
 //     lines, and comments).
-//  2. N >= 1 no-op statements, each at column 0, with arbitrary blank
-//     or comment-only lines anywhere (leading, trailing, or between
-//     statements). The no-op set is: `pass`, `None`, `True`, `False`,
-//     `...`, a numeric literal, a non-leading string or bytes
-//     literal, or a leading bytes literal.
-//  3. A leading ASCII string literal (the docstring), single-line or
-//     triple-quoted across multiple lines, optionally followed by
-//     N >= 0 no-op statements. Compiles to `LOAD_CONST docstring;
-//     STORE_NAME __doc__` after the synthetic RESUME, then the no-op
-//     tail. Multi-line docstrings emit a LONG line-table entry whose
-//     end_line_delta covers the closing triple quote's source line.
-//  4. A leading `name = literal` assignment where literal is one of
-//     None, True, False, the `...` literal, a plain-ASCII string
-//     literal, a plain-ASCII bytes literal, a non-negative integer
-//     literal (decimal/hex/oct/bin with optional underscores, value in
-//     [0, 2^31-1]), a float literal, a pure-imaginary complex literal
-//     (`1j`, `0.5j`), or a negative integer or float (leading `-`,
-//     excluding -0), optionally followed by
-//     N >= 0 no-op statements. Compiles to `LOAD_CONST <value>;
-//     STORE_NAME <name>` after the synthetic RESUME, then the no-op
-//     tail. Names tuple is `(name,)`.
-//  5. N >= 2 consecutive `name = literal` assignments of the same
-//     literal types as shape 4, optionally followed by no-op
-//     statements. Each assignment compiles to a LOAD / STORE_NAME
-//     pair. The consts tuple is built incrementally: the first
-//     assignment's value is always present (as a phantom slot for
-//     LOAD_SMALL_INT values), subsequent small ints are not added,
-//     other values are added in encounter order (deduplicated), None
-//     is appended after all non-negative values, and the negated
-//     results of negative literals are appended last.
+//  2. N >= 1 no-op statements (pass, None/True/False/..., numeric and
+//     bytes literals, non-leading string literals), each at column 0,
+//     with arbitrary blank or comment-only lines anywhere.
+//  3. A leading plain-ASCII string literal (the docstring), single-line
+//     or triple-quoted across multiple lines, optionally followed by
+//     N >= 0 no-op statements.
+//  4. A leading `name = literal` assignment, optionally followed by
+//     N >= 0 no-op statements.
+//  5. N >= 2 consecutive `name = literal` assignments.
+//  6. A chained assignment `t0 = t1 = ... = literal` (N >= 2 targets).
+//  7. A `name = initVal` assignment followed by `name op= augVal`
+//     (augmented assignment; integer initVal and augVal only).
 //
-// The first two shapes share the consts tuple `(None,)` and an empty
-// names tuple. The docstring shape uses `(docstring, None)` and
-// `('__doc__',)`. The assign shape uses `(value, None)` (or `(None,)`
-// when value is None itself) and `(name,)`.
-//
-// Anything else returns ErrUnsupportedSource. Wiring github.com/tamnd/
-// gopapy as the parser, which would replace this hand-rolled scanner,
-// is deferred until gopapy cuts a v1.0.0 (its current latest tag is
-// v0.1.x and the /v1 module path is not yet consumable).
+// Anything else returns ErrUnsupportedSource.
 package compiler
 
 import (
 	"bytes"
 	"errors"
+
+	parser2 "github.com/tamnd/gopapy/v2/parser2"
 
 	"github.com/tamnd/gocopy/v1/bytecode"
 )
@@ -65,7 +41,11 @@ type Options struct {
 
 // Compile returns the CodeObject for the given Python source bytes.
 func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
-	cls, ok := classify(source)
+	mod, parseErr := parser2.ParseFile(opts.Filename, string(source))
+	if parseErr != nil {
+		return nil, ErrUnsupportedSource
+	}
+	cls, ok := classifyAST(source, mod)
 	if !ok {
 		return nil, ErrUnsupportedSource
 	}

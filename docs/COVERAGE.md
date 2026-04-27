@@ -24,6 +24,7 @@ for at least one fixture exercising that node and the
 | Chained assignment (`x = y = literal`, N >= 2 targets) | done | v0.0.14 | tests/fixtures/068_chain_two_small_int.py |
 | Augmented assignment (`name = initVal; name += augVal`, integer) | done | v0.0.15 | tests/fixtures/074_aug_add_small_small.py |
 | Augmented assignment: all 12 inplace operators (`-=`, `*=`, `//=` …) | done | v0.0.16 | tests/fixtures/078_aug_sub_small.py |
+| gopapy/v2 AST parser (replaces hand-rolled scanner) | done | v0.0.17 | — |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |
