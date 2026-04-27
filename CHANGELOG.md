@@ -9,6 +9,25 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-04-27
+
+`gocopy compile` accepts `if / elif / else` chains where each branch
+body is a single `name = small_int` (0–255) assignment and each
+condition is a name.
+
+### Added
+
+- `bytecode/ifelse.go`: `IfBranch`, `IfBranchLT`, `IfElseBytecode`,
+  `IfElseLineTable`.
+- Opcodes used: `TO_BOOL` (39, 3 cache words), `POP_JUMP_IF_FALSE`
+  (100, 1 cache word), `NOT_TAKEN` (28), `LOAD_SMALL_INT` (94).
+- `compiler/classify.go`: `modIfElse`, `stmtIfElse`, `ifElseBranch`,
+  `ifElseClassify`.
+- `compiler/classify_ast.go`: handles `*parser2.If` recursively
+  (elif = nested If in Orelse).
+- `compiler/compiler.go`: `compileIfElse`.
+- 3 new fixtures: 131–133.
+
 ## [0.1.8] - 2026-04-27
 
 `gocopy compile` accepts function-call assignments (`x = f()`,

@@ -145,6 +145,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileAttrStore(opts.Filename, cls)
 	case modCallAssign:
 		return compileCallAssign(opts.Filename, cls)
+	case modIfElse:
+		return compileIfElse(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -570,6 +572,58 @@ func compileAttrStore(filename string, cls classification) (*bytecode.CodeObject
 	names := []string{a.valName, a.objName, a.attrName}
 	co := module(filename, bc, lt, []any{nil}, names)
 	co.StackSize = 2
+	return co, nil
+}
+
+// compileIfElse lowers an if/elif/else chain where each branch body is `name = small_int`.
+func compileIfElse(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.ifElseAsgn
+
+	// Build co_names: for each branch, add cond name then var name (deduped in order).
+	// Then add else var name (if hasElse).
+	nameIdx := map[string]byte{}
+	names := []string{}
+	addName := func(s string) byte {
+		if idx, ok := nameIdx[s]; ok {
+			return idx
+		}
+		idx := byte(len(names))
+		nameIdx[s] = idx
+		names = append(names, s)
+		return idx
+	}
+
+	bcs := make([]bytecode.IfBranch, len(a.branches))
+	lts := make([]bytecode.IfBranchLT, len(a.branches))
+	for i, br := range a.branches {
+		condIdx := addName(br.condName)
+		varIdx := addName(br.varName)
+		bcs[i] = bytecode.IfBranch{CondIdx: condIdx, BodyVal: br.bodyVal, VarIdx: varIdx}
+		lts[i] = bytecode.IfBranchLT{
+			CondLine: br.condLine,
+			CondCol:  br.condCol,
+			CondEnd:  br.condEnd,
+			BodyLine: br.bodyLine,
+			ValCol:   br.valCol,
+			ValEnd:   br.valEnd,
+			VarCol:   br.varCol,
+			VarEnd:   br.varEnd,
+		}
+	}
+	elseVarIdx := byte(0)
+	if a.hasElse {
+		elseVarIdx = addName(a.elseVarName)
+	}
+
+	// co_consts: first branch value (phantom) + None.
+	firstVal := int64(a.branches[0].bodyVal)
+	consts := []any{firstVal, nil}
+	noneIdx := byte(1)
+
+	bc := bytecode.IfElseBytecode(bcs, a.hasElse, a.elseVal, elseVarIdx, noneIdx)
+	lt := bytecode.IfElseLineTable(lts, a.hasElse, a.elseLine, a.elseValCol, a.elseValEnd, a.elseVarCol, a.elseVarEnd)
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 1
 	return co, nil
 }
 
