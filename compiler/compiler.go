@@ -135,6 +135,14 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileTernary(opts.Filename, cls)
 	case modCollection:
 		return compileCollection(opts.Filename, cls)
+	case modSubscriptLoad:
+		return compileSubscriptLoad(opts.Filename, cls)
+	case modSubscriptStore:
+		return compileSubscriptStore(opts.Filename, cls)
+	case modAttrLoad:
+		return compileAttrLoad(opts.Filename, cls)
+	case modAttrStore:
+		return compileAttrStore(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -500,6 +508,50 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 	lt := bytecode.MultiAssignLineTable(ltAsgns, tail)
 
 	return module(filename, bc, lt, consts, names), nil
+}
+
+// compileSubscriptLoad lowers `x = a[b]` where a and b are names.
+func compileSubscriptLoad(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.subAsgn
+	bc := bytecode.SubscriptLoadBytecode()
+	lt := bytecode.SubscriptLoadLineTable(a.line, a.objCol, a.objEnd, a.keyCol, a.keyEnd, a.closeEnd, a.targetLen)
+	names := []string{a.objName, a.keyName, a.targetName}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 2
+	return co, nil
+}
+
+// compileSubscriptStore lowers `a[b] = x` where a, b and x are names.
+func compileSubscriptStore(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.subAsgn
+	bc := bytecode.SubscriptStoreBytecode()
+	lt := bytecode.SubscriptStoreLineTable(a.line, a.valCol, a.valEnd, a.objCol, a.objEnd, a.keyCol, a.keyEnd, a.closeEnd)
+	names := []string{a.valName, a.objName, a.keyName}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 3
+	return co, nil
+}
+
+// compileAttrLoad lowers `x = a.b` where a is a name.
+func compileAttrLoad(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.attrAsgn
+	bc := bytecode.AttrLoadBytecode()
+	lt := bytecode.AttrLoadLineTable(a.line, a.objCol, a.objEnd, a.attrEnd, a.targetLen)
+	names := []string{a.objName, a.attrName, a.targetName}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 1
+	return co, nil
+}
+
+// compileAttrStore lowers `a.b = x` where a and x are names.
+func compileAttrStore(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.attrAsgn
+	bc := bytecode.AttrStoreBytecode()
+	lt := bytecode.AttrStoreLineTable(a.line, a.valCol, a.valEnd, a.objCol, a.objEnd, a.attrEnd)
+	names := []string{a.valName, a.objName, a.attrName}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 2
+	return co, nil
 }
 
 // module returns the canonical Code object for the given body. Only

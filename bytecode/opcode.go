@@ -19,6 +19,7 @@ const (
 	NOT_TAKEN         Opcode = 28
 	POP_TOP           Opcode = 31
 	RETURN_VALUE      Opcode = 35
+	STORE_SUBSCR      Opcode = 38
 	TO_BOOL           Opcode = 39
 	UNARY_INVERT      Opcode = 40
 	UNARY_NEGATIVE    Opcode = 41
@@ -32,14 +33,16 @@ const (
 	COMPARE_OP        Opcode = 56
 	CONTAINS_OP       Opcode = 57
 	COPY              Opcode = 59
-	JUMP_FORWARD      Opcode = 77
 	IS_OP             Opcode = 74
+	JUMP_FORWARD      Opcode = 77
+	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
 	LOAD_NAME         Opcode = 93
 	LOAD_SMALL_INT    Opcode = 94
 	POP_JUMP_IF_FALSE Opcode = 100
 	POP_JUMP_IF_TRUE  Opcode = 103
 	STORE_NAME        Opcode = 116
+	STORE_ATTR        Opcode = 110
 	RESUME            Opcode = 128
 )
 
@@ -52,12 +55,15 @@ const (
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go::Cache (CPython 3.14
 // _PyOpcode_Caches).
 var CacheSize = [256]uint8{
+	38:  1, // STORE_SUBSCR: 1 inline-cache word (2 bytes)
 	39:  3, // TO_BOOL: 3 inline-cache words (6 bytes)
 	44:  5, // BINARY_OP: 5 inline-cache words (10 bytes)
 	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
 	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
+	80:  9, // LOAD_ATTR: 9 inline-cache words (18 bytes)
 	100: 1, // POP_JUMP_IF_FALSE: 1 inline-cache word (2 bytes)
 	103: 1, // POP_JUMP_IF_TRUE: 1 inline-cache word (2 bytes)
+	110: 4, // STORE_ATTR: 4 inline-cache words (8 bytes)
 }
 
 // COMPARE_OP oparg values for non-conditional (value) context.
@@ -71,6 +77,10 @@ const (
 	CmpGt   = 132 // >
 	CmpGtE  = 172 // >=
 )
+
+// NbGetItem is the BINARY_OP oparg for subscript reads `a[b]`.
+// It is the NB_GET_ITEM slot in CPython's binary-operation dispatch table.
+const NbGetItem = 26
 
 // BINARY_OP opargs for non-inplace binary operators (NB_* enum).
 // SOURCE: github.com/tamnd/goipy/op/opcodes.go (NB_* constants).

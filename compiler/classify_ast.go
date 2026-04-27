@@ -83,6 +83,25 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			if !ok {
 				return classification{}, false
 			}
+			// Check for subscript/attr store targets: a[b] = x, a.b = x.
+			if len(s.Targets) == 1 {
+				switch tgt := s.Targets[0].(type) {
+				case *parser2.Subscript:
+					rs, ok2 := extractSubscriptStore(line, tgt, s.Value)
+					if !ok2 {
+						return classification{}, false
+					}
+					stmts = append(stmts, rs)
+					continue
+				case *parser2.Attribute:
+					rs, ok2 := extractAttrStore(line, tgt, s.Value)
+					if !ok2 {
+						return classification{}, false
+					}
+					stmts = append(stmts, rs)
+					continue
+				}
+			}
 			// Try literal-value assignment first.
 			val, vStart, ok2 := extractValue(s.Value)
 			if !ok2 {
@@ -349,6 +368,12 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
+	case *parser2.Subscript:
+		return extractSubscriptLoad(line, target, e)
+
+	case *parser2.Attribute:
+		return extractAttrLoad(line, target, e)
+
 	case *parser2.Compare:
 		if len(e.Ops) != 1 {
 			return rawStmt{}, false // chained comparisons deferred
@@ -507,6 +532,146 @@ func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, o
 			closeEnd:  closeEnd,
 			kind:      kind,
 			elts:      elts,
+		},
+	}, true
+}
+
+// extractSubscriptLoad handles `x = a[b]` where a and b are names.
+func extractSubscriptLoad(line int, target *parser2.Name, e *parser2.Subscript) (rawStmt, bool) {
+	obj, objOK := e.Value.(*parser2.Name)
+	key, keyOK := e.Slice.(*parser2.Name)
+	if !objOK || !keyOK {
+		return rawStmt{}, false
+	}
+	if obj.P.Col > 255 || key.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(obj.Id) > 15 || len(key.Id) > 15 || len(target.Id) > 15 {
+		return rawStmt{}, false
+	}
+	objEnd := byte(obj.P.Col) + byte(len(obj.Id))
+	keyEnd := byte(key.P.Col) + byte(len(key.Id))
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtSubscriptLoad,
+		subAsgn: subscriptAssign{
+			line:       line,
+			isLoad:     true,
+			targetName: target.Id,
+			targetLen:  byte(len(target.Id)),
+			objName:    obj.Id,
+			objCol:     byte(obj.P.Col),
+			objEnd:     objEnd,
+			keyName:    key.Id,
+			keyCol:     byte(key.P.Col),
+			keyEnd:     keyEnd,
+			closeEnd:   keyEnd + 1, // col after ']'
+		},
+	}, true
+}
+
+// extractSubscriptStore handles `a[b] = x` where a, b and x are names.
+func extractSubscriptStore(line int, tgt *parser2.Subscript, value parser2.Expr) (rawStmt, bool) {
+	obj, objOK := tgt.Value.(*parser2.Name)
+	key, keyOK := tgt.Slice.(*parser2.Name)
+	val, valOK := value.(*parser2.Name)
+	if !objOK || !keyOK || !valOK {
+		return rawStmt{}, false
+	}
+	if obj.P.Col > 255 || key.P.Col > 255 || val.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(obj.Id) > 15 || len(key.Id) > 15 || len(val.Id) > 15 {
+		return rawStmt{}, false
+	}
+	objEnd := byte(obj.P.Col) + byte(len(obj.Id))
+	keyEnd := byte(key.P.Col) + byte(len(key.Id))
+	valEnd := byte(val.P.Col) + byte(len(val.Id))
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtSubscriptStore,
+		subAsgn: subscriptAssign{
+			line:     line,
+			isLoad:   false,
+			valName:  val.Id,
+			valCol:   byte(val.P.Col),
+			valEnd:   valEnd,
+			objName:  obj.Id,
+			objCol:   byte(obj.P.Col),
+			objEnd:   objEnd,
+			keyName:  key.Id,
+			keyCol:   byte(key.P.Col),
+			keyEnd:   keyEnd,
+			closeEnd: keyEnd + 1,
+		},
+	}, true
+}
+
+// extractAttrLoad handles `x = a.b` where a is a name.
+func extractAttrLoad(line int, target *parser2.Name, e *parser2.Attribute) (rawStmt, bool) {
+	obj, objOK := e.Value.(*parser2.Name)
+	if !objOK {
+		return rawStmt{}, false
+	}
+	if obj.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(obj.Id) > 15 || len(e.Attr) > 15 || len(target.Id) > 15 {
+		return rawStmt{}, false
+	}
+	objEnd := byte(obj.P.Col) + byte(len(obj.Id))
+	attrEnd := objEnd + 1 + byte(len(e.Attr)) // +1 for the '.'
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtAttrLoad,
+		attrAsgn: attrAssign{
+			line:       line,
+			isLoad:     true,
+			targetName: target.Id,
+			targetLen:  byte(len(target.Id)),
+			objName:    obj.Id,
+			objCol:     byte(obj.P.Col),
+			objEnd:     objEnd,
+			attrName:   e.Attr,
+			attrEnd:    attrEnd,
+		},
+	}, true
+}
+
+// extractAttrStore handles `a.b = x` where a and x are names.
+func extractAttrStore(line int, tgt *parser2.Attribute, value parser2.Expr) (rawStmt, bool) {
+	obj, objOK := tgt.Value.(*parser2.Name)
+	val, valOK := value.(*parser2.Name)
+	if !objOK || !valOK {
+		return rawStmt{}, false
+	}
+	if obj.P.Col > 255 || val.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(obj.Id) > 15 || len(tgt.Attr) > 15 || len(val.Id) > 15 {
+		return rawStmt{}, false
+	}
+	objEnd := byte(obj.P.Col) + byte(len(obj.Id))
+	attrEnd := objEnd + 1 + byte(len(tgt.Attr))
+	valEnd := byte(val.P.Col) + byte(len(val.Id))
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtAttrStore,
+		attrAsgn: attrAssign{
+			line:     line,
+			isLoad:   false,
+			valName:  val.Id,
+			valCol:   byte(val.P.Col),
+			valEnd:   valEnd,
+			objName:  obj.Id,
+			objCol:   byte(obj.P.Col),
+			objEnd:   objEnd,
+			attrName: tgt.Attr,
+			attrEnd:  attrEnd,
 		},
 	}, true
 }
