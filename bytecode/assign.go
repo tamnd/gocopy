@@ -168,10 +168,10 @@ const codeShort0 = 0
 // AssignInfo describes one `name = value` assignment for multi-assign
 // line-table generation.
 type AssignInfo struct {
-	Line     int    // 1-indexed source line
-	NameLen  byte   // number of bytes in the name (1..15)
-	ValStart byte   // 0-indexed start column of the value text
-	ValEnd   byte   // 0-indexed exclusive end column of the value text
+	Line     int  // 1-indexed source line
+	NameLen  byte // number of bytes in the name (1..15)
+	ValStart byte // 0-indexed start column of the value text
+	ValEnd   byte // 0-indexed exclusive end column of the value text
 }
 
 // MultiAssignLineTable returns the PEP 626 line table for a sequence of
@@ -190,6 +190,69 @@ func MultiAssignLineTable(asgns []AssignInfo, tail []NoOpStmt) []byte {
 		}
 		out = appendShort0Entry(out, storeLen, 0, a.NameLen)
 	}
+	for i, s := range tail {
+		length := 1
+		if i == len(tail)-1 {
+			length = 2
+		}
+		out = appendNoOpEntry(out, s.Line-prevLine, length, s.EndCol)
+		prevLine = s.Line
+	}
+	return out
+}
+
+// appendSameLine emits one PEP 626 entry for an instruction on the same
+// source line as the previous entry (line_delta=0), covering `length` code
+// units at columns [startCol, endCol).
+//
+// Encoding choice (most compact first):
+//   - SHORTn (2 bytes) if startCol < 80 and endCol-startCol <= 15
+//   - ONE_LINE0 (3 bytes) otherwise
+func appendSameLine(out []byte, length int, startCol, endCol byte) []byte {
+	offset := int(endCol) - int(startCol)
+	code := int(startCol) / 8
+	localStart := int(startCol) % 8
+	if code <= 9 && offset >= 0 && offset <= 15 {
+		out = append(out, entryHeader(code, length))
+		payload := byte(localStart<<4) | byte(offset)
+		return append(out, payload)
+	}
+	return append(out, entryHeader(codeOneLine0, length), startCol, endCol)
+}
+
+// ChainedTarget describes one assignment target in a chained assignment
+// for line-table generation.
+type ChainedTarget struct {
+	NameStart byte // 0-indexed column of the name's first byte
+	NameLen   byte // number of bytes in the name
+}
+
+// ChainedAssignLineTable returns the PEP 626 line table for a chained
+// assignment `t0 = t1 = ... = tN-1 = value` on `line`, where the value
+// occupies [valStart, valEnd) and each target occupies
+// [t[i].NameStart, t[i].NameStart+t[i].NameLen), optionally followed by
+// tail no-ops.
+//
+// CPython emits LOAD value, then for each target except the last a
+// COPY (covering 0..valEnd) + STORE pair, and a final STORE.
+func ChainedAssignLineTable(line int, targets []ChainedTarget, valStart, valEnd byte, tail []NoOpStmt) []byte {
+	n := len(targets)
+	out := make([]byte, 0, 5+3+2*(2*n-1)+4*len(tail))
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // prologue
+	out = appendValueEntry(out, line, valStart, valEnd)
+	for i, t := range targets {
+		if i < n-1 {
+			out = appendSameLine(out, 1, 0, valEnd)
+			out = appendSameLine(out, 1, t.NameStart, t.NameStart+t.NameLen)
+		} else {
+			storeLen := 1
+			if len(tail) == 0 {
+				storeLen = 3
+			}
+			out = appendSameLine(out, storeLen, t.NameStart, t.NameStart+t.NameLen)
+		}
+	}
+	prevLine := line
 	for i, s := range tail {
 		length := 1
 		if i == len(tail)-1 {

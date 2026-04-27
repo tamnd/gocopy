@@ -9,6 +9,34 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-04-26
+
+`gocopy compile` accepts a chained assignment at module level, e.g.
+`x = y = 1` or `a = b = c = d = 5`. Any literal type from v0.0.7-v0.0.13
+is accepted as the assigned value.
+
+CPython's bytecode pattern: LOAD value, then [COPY 1, STORE_NAME t[i]]
+for each of the first N-1 targets, then STORE_NAME t[N-1]. COPY pushes a
+second item onto the stack, so `co_stacksize` is 2 for chained assigns.
+
+### Added
+
+- `modChainedAssign` classifier kind; `chainedTarget` struct;
+  `tryParseChainedAssign` in `compiler/classify.go`.
+- `parseLiteralValue` helper extracted from `tryParseAssign`.
+- `compileChainedAssign` in `compiler/compiler.go`.
+- `bytecode.ChainedTarget`, `appendSameLine`, `ChainedAssignLineTable`
+  in `bytecode/assign.go`.
+- `bytecode.COPY` opcode constant in `bytecode/opcode.go`.
+- Six new fixtures: `068`-`073`.
+- `TestChainedAssign` in `compiler/compiler_test.go`.
+
+### Deferred
+
+- Augmented assignment (`x += 1`).
+- Annotated assignment (`x: int = 1`).
+- Wiring gopapy as the parser.
+
 ## [0.0.13] - 2026-04-26
 
 `gocopy compile` accepts N >= 2 sequential `name = literal` assignments
@@ -521,7 +549,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.13...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.14...HEAD
+[0.0.14]: https://github.com/tamnd/gocopy/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/tamnd/gocopy/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/tamnd/gocopy/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/tamnd/gocopy/compare/v0.0.10...v0.0.11

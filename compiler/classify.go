@@ -37,6 +37,7 @@ const (
 	modDocstring
 	modAssign
 	modMultiAssign
+	modChainedAssign
 )
 
 type classification struct {
@@ -59,6 +60,12 @@ type classification struct {
 	asgnValue    any
 	// modMultiAssign fields:
 	asgns []asgn
+	// modChainedAssign fields:
+	chainLine     int
+	chainTargets  []chainedTarget
+	chainValStart byte
+	chainValEnd   byte
+	chainValue    any
 }
 
 // rawStmt is the parser's intermediate form: a no-op token, a string
@@ -77,6 +84,8 @@ type rawStmt struct {
 	asgnValStart byte
 	asgnValEnd   byte
 	asgnValue    any
+	// stmtChainedAssign fields:
+	chainTargets []chainedTarget
 }
 
 type rawStmtKind uint8
@@ -85,6 +94,7 @@ const (
 	stmtNoOp rawStmtKind = iota
 	stmtString
 	stmtAssign
+	stmtChainedAssign
 )
 
 func classify(src []byte) (classification, bool) {
@@ -114,8 +124,24 @@ func classify(src []byte) (classification, bool) {
 		if len(bare) > 255 {
 			return classification{}, false
 		}
-		// Assignments are allowed at the top of the module and can repeat
-		// consecutively; a no-op after the last assignment ends the run.
+		// Chained assignment (x = y = literal) is only allowed as the first statement.
+		if len(stmts) == 0 {
+			if targets, vStart, vEnd, val, ok := tryParseChainedAssign(bare); ok {
+				stmts = append(stmts, rawStmt{
+					line:         i + 1,
+					endLine:      i + 1,
+					endCol:       byte(len(bare)),
+					kind:         stmtChainedAssign,
+					asgnValStart: vStart,
+					asgnValEnd:   vEnd,
+					asgnValue:    val,
+					chainTargets: targets,
+				})
+				i++
+				continue
+			}
+		}
+		// Sequential assignments are allowed at the top of the module and can repeat.
 		if len(stmts) == 0 || stmts[len(stmts)-1].kind == stmtAssign {
 			if a, ok := tryParseAssign(bare); ok {
 				stmts = append(stmts, rawStmt{
@@ -148,6 +174,21 @@ func classify(src []byte) (classification, bool) {
 	}
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
+	}
+	if first := stmts[0]; first.kind == stmtChainedAssign {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:          modChainedAssign,
+			stmts:         tail,
+			chainLine:     first.line,
+			chainTargets:  first.chainTargets,
+			chainValStart: first.asgnValStart,
+			chainValEnd:   first.asgnValEnd,
+			chainValue:    first.asgnValue,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtString {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
@@ -337,6 +378,13 @@ type asgn struct {
 	line     int
 }
 
+// chainedTarget is one assignment target in `t0 = t1 = ... = literal`.
+type chainedTarget struct {
+	name      string
+	nameStart byte // 0-indexed column of the name's first byte
+	nameLen   byte // number of bytes in the name (1..15)
+}
+
 // negLiteral is the value type for `name = -literal` assignments.
 // CPython's constant folder keeps both the un-negated literal and the
 // negated result in the consts tuple: consts = (pos, None, neg), with
@@ -346,15 +394,58 @@ type negLiteral struct {
 	neg any // the negated int64 or float64
 }
 
-// tryParseAssign recognises the v0.0.7..0.0.8 assignment grammar:
-// `<identifier> = <literal>` at column 0, where literal is one of
-// None, True, False, the `...` literal, a single- or triple-quoted
-// plain-ASCII string literal, or a plain-ASCII bytes literal. The
-// identifier must be a Python name (letter/underscore followed by
-// name chars) of length 1..15 (the SHORT0 entry's end_col-start_col
-// field caps at 15). Any whitespace around `=` is allowed; trailing
-// comments have already been stripped by the caller. Returns ok=false
-// when the line does not match this grammar.
+// parseLiteralValue parses the right-hand side of an assignment: one of
+// the keyword constants (None/True/False/...), a numeric literal, a
+// negative numeric literal, or a plain-ASCII string/bytes literal.
+// Returns (value, true) on success, (nil, false) otherwise.
+func parseLiteralValue(rhs []byte) (any, bool) {
+	switch string(rhs) {
+	case "None":
+		return nil, true
+	case "True":
+		return true, true
+	case "False":
+		return false, true
+	case "...":
+		return bytecode.Ellipsis, true
+	}
+	// Negative literal: `-int` or `-float`. CPython's constant folder keeps
+	// both the un-negated literal and the negated result in consts.
+	// We skip -0 (integer) since -int64(0) == 0 and would duplicate.
+	if len(rhs) > 1 && rhs[0] == '-' {
+		rest := rhs[1:]
+		if iv, ok := parseIntLiteral(rest); ok && iv != 0 {
+			return negLiteral{pos: iv, neg: -iv}, true
+		}
+		if fv, ok := parseFloatLiteral(rest); ok {
+			return negLiteral{pos: fv, neg: -fv}, true
+		}
+		return nil, false
+	}
+	if iv, ok := parseIntLiteral(rhs); ok {
+		return iv, true
+	}
+	if fv, ok := parseFloatLiteral(rhs); ok {
+		return fv, true
+	}
+	if cv, ok := parseComplexLiteral(rhs); ok {
+		return cv, true
+	}
+	text, isString, ok := parseStringOrBytes(rhs)
+	if !ok {
+		return nil, false
+	}
+	if isString {
+		return text, true
+	}
+	return []byte(text), true
+}
+
+// tryParseAssign recognises `<identifier> = <literal>` at column 0. The
+// identifier must be a Python name (letter/underscore followed by name
+// chars) of length 1..15. Any whitespace around `=` is allowed; trailing
+// comments have already been stripped by the caller. Returns ok=false when
+// the line does not match this grammar or has more than one `=` target.
 func tryParseAssign(s []byte) (asgn, bool) {
 	if len(s) == 0 || !isIdentStart(s[0]) {
 		return asgn{}, false
@@ -378,7 +469,6 @@ func tryParseAssign(s []byte) (asgn, bool) {
 		return asgn{}, false
 	}
 	if i+1 < len(s) && s[i+1] == '=' {
-		// `==` is a comparison, not an assignment.
 		return asgn{}, false
 	}
 	i++
@@ -390,58 +480,9 @@ func tryParseAssign(s []byte) (asgn, bool) {
 	}
 	valStart := i
 	rhs := s[valStart:]
-	var value any
-	switch string(rhs) {
-	case "None":
-		value = nil
-	case "True":
-		value = true
-	case "False":
-		value = false
-	case "...":
-		value = bytecode.Ellipsis
-	default:
-		// Negative literal: `-int` or `-float`. Must be checked before the
-		// positive parsers because parseFloatLiteral accepts a leading `-`.
-		// CPython's constant folder keeps both the un-negated literal and
-		// the negated result: consts = (pos, None, neg), LOAD_CONST 2.
-		// We skip -0 (integer) since -int64(0) == 0 and would duplicate.
-		if len(rhs) > 1 && rhs[0] == '-' {
-			rest := rhs[1:]
-			if iv, ok := parseIntLiteral(rest); ok && iv != 0 {
-				value = negLiteral{pos: iv, neg: -iv}
-				break
-			}
-			if fv, ok := parseFloatLiteral(rest); ok {
-				value = negLiteral{pos: fv, neg: -fv}
-				break
-			}
-			return asgn{}, false
-		}
-		// Integer first (no decimal point, no e/E as exponent marker).
-		if iv, ok := parseIntLiteral(rhs); ok {
-			value = iv
-			break
-		}
-		// Float next (has '.', 'e', or 'E'; not complex).
-		if fv, ok := parseFloatLiteral(rhs); ok {
-			value = fv
-			break
-		}
-		// Complex literal (`1j`, `0.5j`, `1e2j`). The real part is always 0.
-		if cv, ok := parseComplexLiteral(rhs); ok {
-			value = cv
-			break
-		}
-		text, isString, ok := parseStringOrBytes(rhs)
-		if !ok {
-			return asgn{}, false
-		}
-		if isString {
-			value = text
-		} else {
-			value = []byte(text)
-		}
+	value, ok := parseLiteralValue(rhs)
+	if !ok {
+		return asgn{}, false
 	}
 	return asgn{
 		name:     name,
@@ -450,6 +491,60 @@ func tryParseAssign(s []byte) (asgn, bool) {
 		valEnd:   byte(len(s)),
 		value:    value,
 	}, true
+}
+
+// tryParseChainedAssign recognises `name0 = name1 = ... = literal` on a
+// single line with N >= 2 targets. Returns (targets, valStart, valEnd,
+// value, true) on success, or (nil, 0, 0, nil, false) for a single-target
+// line or any form that doesn't match.
+func tryParseChainedAssign(s []byte) (targets []chainedTarget, valStart, valEnd byte, value any, ok bool) {
+	rest := s
+	for {
+		if len(rest) == 0 || !isIdentStart(rest[0]) {
+			break
+		}
+		nameEnd := 1
+		for nameEnd < len(rest) && isIdentCont(rest[nameEnd]) {
+			nameEnd++
+		}
+		if nameEnd > 15 {
+			return nil, 0, 0, nil, false
+		}
+		name := string(rest[:nameEnd])
+		if isReservedName(name) {
+			break // keyword constant; stop consuming targets
+		}
+		i := nameEnd
+		for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t') {
+			i++
+		}
+		if i >= len(rest) || rest[i] != '=' {
+			break // no `=` found; identifier is part of the RHS
+		}
+		if i+1 < len(rest) && rest[i+1] == '=' {
+			break // `==` comparison
+		}
+		i++ // skip '='
+		for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t') {
+			i++
+		}
+		nameStart := byte(len(s) - len(rest))
+		targets = append(targets, chainedTarget{
+			name:      name,
+			nameStart: nameStart,
+			nameLen:   byte(nameEnd),
+		})
+		rest = rest[i:]
+	}
+	if len(targets) < 2 || len(rest) == 0 {
+		return nil, 0, 0, nil, false
+	}
+	vStart := byte(len(s) - len(rest))
+	v, litOk := parseLiteralValue(rest)
+	if !litOk {
+		return nil, 0, 0, nil, false
+	}
+	return targets, vStart, byte(len(s)), v, true
 }
 
 // parseIntLiteral attempts to parse a non-negative Python integer literal

@@ -402,6 +402,103 @@ func TestMultiAssign(t *testing.T) {
 	}
 }
 
+func TestChainedAssign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		src     []byte
+		consts  []any
+		names   []string
+		bc      []byte
+		targets []bytecode.ChainedTarget
+		line    int
+		vStart  byte
+		vEnd    byte
+		tail    []bytecode.NoOpStmt
+	}{
+		{
+			name:    "x = y = 1",
+			src:     []byte("x = y = 1\n"),
+			consts:  []any{int64(1), nil},
+			names:   []string{"x", "y"},
+			bc:      []byte{0x80, 0, 0x5e, 1, 0x3b, 1, 0x74, 0, 0x74, 1, 0x52, 1, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}},
+			line:    1, vStart: 8, vEnd: 9,
+		},
+		{
+			name:    "x = y = z = 1",
+			src:     []byte("x = y = z = 1\n"),
+			consts:  []any{int64(1), nil},
+			names:   []string{"x", "y", "z"},
+			bc:      []byte{0x80, 0, 0x5e, 1, 0x3b, 1, 0x74, 0, 0x3b, 1, 0x74, 1, 0x74, 2, 0x52, 1, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}, {NameStart: 8, NameLen: 1}},
+			line:    1, vStart: 12, vEnd: 13,
+		},
+		{
+			name:    "x = y = 300",
+			src:     []byte("x = y = 300\n"),
+			consts:  []any{int64(300), nil},
+			names:   []string{"x", "y"},
+			bc:      []byte{0x80, 0, 0x52, 0, 0x3b, 1, 0x74, 0, 0x74, 1, 0x52, 1, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}},
+			line:    1, vStart: 8, vEnd: 11,
+		},
+		{
+			name:    "x = y = None",
+			src:     []byte("x = y = None\n"),
+			consts:  []any{nil},
+			names:   []string{"x", "y"},
+			bc:      []byte{0x80, 0, 0x52, 0, 0x3b, 1, 0x74, 0, 0x74, 1, 0x52, 0, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}},
+			line:    1, vStart: 8, vEnd: 12,
+		},
+		{
+			name:    "x = y = -1",
+			src:     []byte("x = y = -1\n"),
+			consts:  []any{int64(1), nil, int64(-1)},
+			names:   []string{"x", "y"},
+			bc:      []byte{0x80, 0, 0x52, 2, 0x3b, 1, 0x74, 0, 0x74, 1, 0x52, 1, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}},
+			line:    1, vStart: 8, vEnd: 10,
+		},
+		{
+			name:    "a = b = c = d = 5",
+			src:     []byte("a = b = c = d = 5\n"),
+			consts:  []any{int64(5), nil},
+			names:   []string{"a", "b", "c", "d"},
+			bc:      []byte{0x80, 0, 0x5e, 5, 0x3b, 1, 0x74, 0, 0x3b, 1, 0x74, 1, 0x3b, 1, 0x74, 2, 0x74, 3, 0x52, 1, 0x23, 0},
+			targets: []bytecode.ChainedTarget{{NameStart: 0, NameLen: 1}, {NameStart: 4, NameLen: 1}, {NameStart: 8, NameLen: 1}, {NameStart: 12, NameLen: 1}},
+			line:    1, vStart: 16, vEnd: 17,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Compile(tc.src, Options{Filename: "x.py"})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if !bytes.Equal(c.Bytecode, tc.bc) {
+				t.Errorf("bytecode = %x; want %x", c.Bytecode, tc.bc)
+			}
+			if len(c.Consts) != len(tc.consts) {
+				t.Fatalf("consts len = %d; want %d (%v)", len(c.Consts), len(tc.consts), tc.consts)
+			}
+			for i := range tc.consts {
+				if !reflect.DeepEqual(c.Consts[i], tc.consts[i]) {
+					t.Errorf("consts[%d] = %v (%T); want %v (%T)", i, c.Consts[i], c.Consts[i], tc.consts[i], tc.consts[i])
+				}
+			}
+			if !reflect.DeepEqual(c.Names, tc.names) {
+				t.Errorf("names = %v; want %v", c.Names, tc.names)
+			}
+			wantLT := bytecode.ChainedAssignLineTable(tc.line, tc.targets, tc.vStart, tc.vEnd, tc.tail)
+			if !bytes.Equal(c.LineTable, wantLT) {
+				t.Errorf("linetable = %x; want %x", c.LineTable, wantLT)
+			}
+		})
+	}
+}
+
 func TestUnsupportedSourceRejected(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -409,7 +506,6 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		src  []byte
 	}{
 		{"assignment to reserved name", []byte("None = 1\n")},
-		{"chained assignment", []byte("x = y = None\n")},
 		{"augmented assignment", []byte("x += 1\n")},
 		{"call", []byte("print('hi')\n")},
 		{"import", []byte("import sys\n")},
