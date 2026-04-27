@@ -1,5 +1,13 @@
 package bytecode
 
+// ConstTuple represents a Python tuple constant stored inside a code
+// object's co_consts. Distinct from []any (which the marshal package
+// uses for the co_consts slice itself) so the marshal writer can tell
+// the two apart and emit a nested TYPE_SMALL_TUPLE correctly.
+//
+// Example: `x = ()` puts ConstTuple{} at consts[1] and None at consts[0].
+type ConstTuple []any
+
 // Ellipsis is the gocopy sentinel for Python's `Ellipsis` singleton
 // (the value of the `...` literal). Go has no built-in equivalent and
 // `nil` is already taken by `None`, so we use a private named type with

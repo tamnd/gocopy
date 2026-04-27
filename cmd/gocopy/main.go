@@ -13,7 +13,7 @@ import (
 	"github.com/tamnd/gocopy/v1/pyc"
 )
 
-const version = "0.1.5"
+const version = "0.1.6"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

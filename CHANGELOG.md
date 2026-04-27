@@ -9,6 +9,26 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-04-27
+
+`gocopy compile` accepts collection-literal assignments (`x = []`,
+`x = ()`, `x = {}`, `x = {k: v}`, `x = [a, b]`, `x = (a, b)`,
+`x = {a, b}`, `x = {a: b}`) where all elements are names.
+
+### Added
+
+- `bytecode/collection.go`: `CollKind`, `CollElt`, `CollectionEmptyBytecode`,
+  `CollectionEmptyLineTable`, `CollectionNamesBytecode`, `CollectionNamesLineTable`.
+- `bytecode/ellipsis.go`: `ConstTuple` type for Python tuple constants inside co_consts.
+- Opcodes: `BUILD_LIST` (46), `BUILD_MAP` (47), `BUILD_SET` (48), `BUILD_TUPLE` (51).
+- `marshal/writer.go`: `emptyTupleKey` to share the empty-tuple marshal ref between
+  `()` in co_consts and the empty `localsplusnames` string tuple.
+- `compiler/classify.go`: `modCollection`, `stmtCollection`, `collectionAssign` types.
+- `compiler/classify_ast.go`: handles `*parser2.List`, `*parser2.Tuple`, `*parser2.Set`,
+  `*parser2.Dict` (all-name elements, single line).
+- `compiler/compiler.go`: `compileCollection`.
+- 7 new fixtures: 117–123.
+
 ## [0.1.5] - 2026-04-27
 
 `gocopy compile` accepts boolean-operator assignments (`x = a and b`,

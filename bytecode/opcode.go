@@ -24,10 +24,14 @@ const (
 	UNARY_NEGATIVE    Opcode = 41
 	UNARY_NOT         Opcode = 42
 	BINARY_OP         Opcode = 44
+	BUILD_LIST        Opcode = 46
+	BUILD_MAP         Opcode = 47
+	BUILD_SET         Opcode = 48
+	BUILD_TUPLE       Opcode = 51
+	CALL_INTRINSIC_1  Opcode = 53
 	COMPARE_OP        Opcode = 56
 	CONTAINS_OP       Opcode = 57
 	COPY              Opcode = 59
-	CALL_INTRINSIC_1  Opcode = 53
 	JUMP_FORWARD      Opcode = 77
 	IS_OP             Opcode = 74
 	LOAD_CONST        Opcode = 82

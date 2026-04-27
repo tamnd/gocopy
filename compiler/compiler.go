@@ -133,6 +133,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileBoolOp(opts.Filename, cls)
 	case modTernary:
 		return compileTernary(opts.Filename, cls)
+	case modCollection:
+		return compileCollection(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -166,6 +168,41 @@ func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject
 	)
 	co := module(filename, bc, lt, consts, []string{cls.asgnName})
 	co.StackSize = 2 // LOAD_NAME + LOAD augVal both on stack at BINARY_OP
+	return co, nil
+}
+
+// compileCollection lowers a collection-literal assignment.
+// For empty tuples CPython emits LOAD_CONST (); for all other empty collections
+// it emits BUILD_LIST/MAP 0. For non-empty name-only collections it loads each
+// name then emits BUILD_LIST/TUPLE/SET/MAP N.
+func compileCollection(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.collAsgn
+	if len(a.elts) == 0 {
+		// Empty collection.
+		bc := bytecode.CollectionEmptyBytecode(a.kind)
+		lt := bytecode.CollectionEmptyLineTable(a.line, a.openCol, a.closeEnd, a.targetLen)
+		var consts []any
+		if a.kind == bytecode.CollTuple {
+			consts = []any{nil, bytecode.ConstTuple{}} // [None, ()]
+		} else {
+			consts = []any{nil}
+		}
+		names := []string{a.target}
+		return module(filename, bc, lt, consts, names), nil
+	}
+	// Non-empty: load each element by name, then BUILD_*.
+	n := len(a.elts)
+	bc := bytecode.CollectionNamesBytecode(a.kind, n)
+	lt := bytecode.CollectionNamesLineTable(a.line, a.elts, a.openCol, a.closeEnd, a.targetLen)
+	names := make([]string, 0, n+1)
+	for _, e := range a.elts {
+		names = append(names, e.Name)
+	}
+	names = append(names, a.target)
+	co := module(filename, bc, lt, []any{nil}, names)
+	if n > 1 {
+		co.StackSize = int32(n)
+	}
 	return co, nil
 }
 

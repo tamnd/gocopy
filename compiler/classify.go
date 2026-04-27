@@ -18,6 +18,7 @@ const (
 	modCmpAssign     // x = a cmpop b  (both operands are names, comparison)
 	modBoolOp        // x = a and b  /  x = a or b  (both operands are names)
 	modTernary       // x = a if c else b  (all operands are names)
+	modCollection    // x = [...] / (...) / {...} collection literal with name elements
 )
 
 type classification struct {
@@ -64,6 +65,8 @@ type classification struct {
 	boolAsgn boolAssign
 	// modTernary fields:
 	ternaryAsgn ternaryAssign
+	// modCollection fields:
+	collAsgn collectionAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -96,6 +99,8 @@ type rawStmt struct {
 	boolAsgn boolAssign
 	// stmtTernary fields:
 	ternaryAsgn ternaryAssign
+	// stmtCollection fields:
+	collAsgn collectionAssign
 }
 
 type rawStmtKind uint8
@@ -111,6 +116,7 @@ const (
 	stmtCmpAssign    // x = a cmpop b  (both operands are names, comparison)
 	stmtBoolOp       // x = a and/or b  (both operands are names)
 	stmtTernary      // x = a if c else b  (all operands are names)
+	stmtCollection   // x = [...] / (...) / {...} collection literal
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -191,6 +197,23 @@ type unaryAssign struct {
 	kind        unaryKind
 }
 
+// collectionAssign holds the parsed form of a collection literal assignment:
+//   x = [e0, e1, ...]  (list)
+//   x = (e0, e1, ...)  (tuple)
+//   x = {e0, e1, ...}  (set)
+//   x = {k0: v0, ...}  (dict — elts alternates key/value)
+//
+// An empty elts slice means an empty collection ([], (), {}).
+type collectionAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	openCol   byte // column of the opening bracket
+	closeEnd  byte // exclusive end col of the closing bracket (= lineEndCol)
+	kind      bytecode.CollKind
+	elts      []bytecode.CollElt
+}
+
 // boolAssign holds the parsed form of `target = left and/or right`
 // where both operands are names.
 type boolAssign struct {
@@ -257,6 +280,20 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			kind:        modTernary,
 			stmts:       tail,
 			ternaryAsgn: first.ternaryAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtCollection {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:     modCollection,
+			stmts:    tail,
+			collAsgn: first.collAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtCmpAssign {

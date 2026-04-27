@@ -302,6 +302,8 @@ func (w *writer) emitObject(v any) {
 		w.buf = append(w.buf, b[:]...)
 		binary.LittleEndian.PutUint64(b[:], math.Float64bits(imag(x)))
 		w.buf = append(w.buf, b[:]...)
+	case bytecode.ConstTuple:
+		w.tuple([]any(x))
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
@@ -355,6 +357,11 @@ type intKeyType struct{ v int64 }
 type float64KeyType struct{ v uint64 }
 type complexKeyType struct{ r, i uint64 }
 
+// emptyTupleKey is the ref-map key for the empty-tuple singleton ().
+// CPython interns () across co_consts, co_names, co_localsplusnames, etc.
+// All three callers (tuple / stringTuple / ConstTuple) must share this key.
+type emptyTupleKey struct{}
+
 func bsKey(b []byte) any       { return bsKeyType{s: string(b)} }
 func intKey(v int64) any       { return intKeyType{v: v} }
 func float64Key(v float64) any { return float64KeyType{v: math.Float64bits(v)} }
@@ -363,6 +370,9 @@ func complexKey(v complex128) any {
 }
 
 func tupleKey(items []any) any {
+	if len(items) == 0 {
+		return emptyTupleKey{}
+	}
 	buf := make([]byte, 0, len(items)*2)
 	for _, e := range items {
 		switch x := e.(type) {
@@ -404,6 +414,9 @@ func tupleKey(items []any) any {
 }
 
 func strTupleKey(items []string) any {
+	if len(items) == 0 {
+		return emptyTupleKey{}
+	}
 	total := 0
 	for _, s := range items {
 		total += len(s) + 1
@@ -472,6 +485,8 @@ func (rc *refCounter) tuple(items []any) {
 			rc.bump(float64Key(x))
 		case complex128:
 			rc.bump(complexKey(x))
+		case bytecode.ConstTuple:
+			rc.tuple([]any(x))
 		}
 	}
 }
