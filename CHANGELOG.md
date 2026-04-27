@@ -9,6 +9,30 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-04-27
+
+`gocopy compile` accepts all twelve inplace augmented assignment operators.
+v0.0.15 introduced the shape (`x = initVal; x += augVal`); this rung adds
+the remaining eleven: `-=`, `*=`, `//=`, `%=`, `**=`, `&=`, `|=`, `^=`,
+`>>=`, `<<=`, `/=`. The BINARY_OP oparg (NB_INPLACE_* enum) is the only
+thing that differs between operators; the bytecode shape and line-table
+structure are unchanged.
+
+### Added
+
+- `NbInplaceAnd` through `NbInplaceXor` constants in `bytecode/opcode.go`.
+- `oparg byte` parameter on `bytecode.AugAssignBytecode`.
+- `tryParseAugAssign` extended to all twelve inplace operators; 3-char
+  operators checked before 2-char to avoid `/=` vs `//=` ambiguity.
+- Eleven new fixtures: `078`-`088`.
+- Eleven new `TestAugAssign` sub-cases.
+
+### Deferred
+
+- Augmented assignment with non-integer RHS.
+- Annotated assignment (`x: int = 1`) — deferred to v0.1.2.
+- Wiring gopapy/v2 as the parser.
+
 ## [0.0.15] - 2026-04-27
 
 `gocopy compile` accepts a two-statement augmented assignment at module
@@ -578,7 +602,8 @@ lifts after this is a localised change rather than a re-bootstrap.
 Anything that isn't an empty module. v0.0.2 wires in the gopapy
 AST and starts adding real top-level statements.
 
-[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.15...HEAD
+[Unreleased]: https://github.com/tamnd/gocopy/compare/v0.0.16...HEAD
+[0.0.16]: https://github.com/tamnd/gocopy/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/tamnd/gocopy/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/tamnd/gocopy/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/tamnd/gocopy/compare/v0.0.12...v0.0.13

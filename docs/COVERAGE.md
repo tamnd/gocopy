@@ -23,6 +23,7 @@ for at least one fixture exercising that node and the
 | N >= 2 sequential module-level assignments (any literal type) | done | v0.0.13 | tests/fixtures/061_multi_assign_two_ints.py |
 | Chained assignment (`x = y = literal`, N >= 2 targets) | done | v0.0.14 | tests/fixtures/068_chain_two_small_int.py |
 | Augmented assignment (`name = initVal; name += augVal`, integer) | done | v0.0.15 | tests/fixtures/074_aug_add_small_small.py |
+| Augmented assignment: all 12 inplace operators (`-=`, `*=`, `//=` …) | done | v0.0.16 | tests/fixtures/078_aug_sub_small.py |
 | Arithmetic and unary | planned | - | - |
 | Comparisons and chains | planned | - | - |
 | Boolean ops and ternary | planned | - | - |

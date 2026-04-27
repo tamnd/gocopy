@@ -164,7 +164,7 @@ func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject
 		consts = []any{initVal, augVal, nil}
 	}
 
-	bc := bytecode.AugAssignBytecode(initVal, augVal, len(cls.stmts))
+	bc := bytecode.AugAssignBytecode(initVal, augVal, cls.augOparg, len(cls.stmts))
 	lt := bytecode.AugAssignLineTable(
 		cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd,
 		cls.augLine, cls.augValStart, cls.augValEnd,
