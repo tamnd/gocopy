@@ -135,8 +135,98 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		), nil
 	case modMultiAssign:
 		return compileMultiAssign(opts.Filename, cls.asgns, cls.stmts)
+	case modChainedAssign:
+		return compileChainedAssign(opts.Filename, cls.chainLine, cls.chainTargets, cls.chainValStart, cls.chainValEnd, cls.chainValue, cls.stmts)
 	}
 	return nil, ErrUnsupportedSource
+}
+
+// compileChainedAssign lowers `t0 = t1 = ... = literal` (single line, N >= 2 targets).
+func compileChainedAssign(filename string, line int, targets []chainedTarget, valStart, valEnd byte, value any, tail []bytecode.NoOpStmt) (*bytecode.CodeObject, error) {
+	n := len(targets)
+
+	// Build deduplicated names list preserving assignment order.
+	namesIdx := map[string]byte{}
+	names := []string{}
+	nameIdxs := make([]byte, n)
+	for i, t := range targets {
+		if idx, ok := namesIdx[t.name]; ok {
+			nameIdxs[i] = idx
+		} else {
+			idx = byte(len(names))
+			namesIdx[t.name] = idx
+			names = append(names, t.name)
+			nameIdxs[i] = idx
+		}
+	}
+
+	// Build consts and choose load instruction — same rules as single-assign.
+	var consts []any
+	var noneIdx byte
+	var loadOp bytecode.Opcode
+	var loadArg byte
+
+	switch tv := value.(type) {
+	case int64:
+		if tv >= 0 && tv <= 255 {
+			consts = []any{tv, nil}
+			noneIdx = 1
+			loadOp = bytecode.LOAD_SMALL_INT
+			loadArg = byte(tv)
+		} else {
+			consts = []any{tv, nil}
+			noneIdx = 1
+			loadOp = bytecode.LOAD_CONST
+			loadArg = 0
+		}
+	case negLiteral:
+		consts = []any{tv.pos, nil, tv.neg}
+		noneIdx = 1
+		loadOp = bytecode.LOAD_CONST
+		loadArg = 2
+	case nil:
+		consts = []any{nil}
+		noneIdx = 0
+		loadOp = bytecode.LOAD_CONST
+		loadArg = 0
+	default:
+		consts = []any{value, nil}
+		noneIdx = 1
+		loadOp = bytecode.LOAD_CONST
+		loadArg = 0
+	}
+
+	// Build bytecode: RESUME + LOAD + [COPY 1, STORE_NAME]×(n-1) + STORE_NAME + NOPs + LOAD_CONST None + RV.
+	nops := 0
+	if len(tail) > 1 {
+		nops = len(tail) - 1
+	}
+	bc := make([]byte, 0, 2+2+4*(n-1)+2+2*nops+4)
+	bc = append(bc, byte(bytecode.RESUME), 0)
+	bc = append(bc, byte(loadOp), loadArg)
+	for i := 0; i < n-1; i++ {
+		bc = append(bc, byte(bytecode.COPY), 1)
+		bc = append(bc, byte(bytecode.STORE_NAME), nameIdxs[i])
+	}
+	bc = append(bc, byte(bytecode.STORE_NAME), nameIdxs[n-1])
+	for range nops {
+		bc = append(bc, byte(bytecode.NOP), 0)
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), noneIdx, byte(bytecode.RETURN_VALUE), 0)
+
+	// Build line table.
+	bTargets := make([]bytecode.ChainedTarget, n)
+	for i, t := range targets {
+		bTargets[i] = bytecode.ChainedTarget{
+			NameStart: t.nameStart,
+			NameLen:   t.nameLen,
+		}
+	}
+	lt := bytecode.ChainedAssignLineTable(line, bTargets, valStart, valEnd, tail)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 2 // COPY pushes a second item; peak depth is 2
+	return co, nil
 }
 
 // compileMultiAssign lowers N >= 2 consecutive `name = literal` assignments.

@@ -17,6 +17,7 @@ type Opcode uint8
 const (
 	NOP            Opcode = 27
 	RETURN_VALUE   Opcode = 35
+	COPY           Opcode = 59
 	LOAD_CONST     Opcode = 82
 	LOAD_SMALL_INT Opcode = 94
 	STORE_NAME     Opcode = 116
