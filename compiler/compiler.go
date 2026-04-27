@@ -147,6 +147,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileCallAssign(opts.Filename, cls)
 	case modIfElse:
 		return compileIfElse(opts.Filename, cls)
+	case modWhile:
+		return compileWhile(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -622,6 +624,26 @@ func compileIfElse(filename string, cls classification) (*bytecode.CodeObject, e
 
 	bc := bytecode.IfElseBytecode(bcs, a.hasElse, a.elseVal, elseVarIdx, noneIdx)
 	lt := bytecode.IfElseLineTable(lts, a.hasElse, a.elseLine, a.elseValCol, a.elseValEnd, a.elseVarCol, a.elseVarEnd)
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 1
+	return co, nil
+}
+
+// compileWhile lowers `while cond: name = val` (single-assignment body, no break/continue).
+func compileWhile(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.whileAsgn
+	condIdx := byte(0)
+	varIdx := byte(1)
+	names := []string{a.condName, a.varName}
+	if a.condName == a.varName {
+		varIdx = 0
+		names = []string{a.condName}
+	}
+	firstVal := int64(a.bodyVal)
+	consts := []any{firstVal, nil}
+	noneIdx := byte(1)
+	bc := bytecode.WhileAssignBytecode(condIdx, a.bodyVal, varIdx, noneIdx)
+	lt := bytecode.WhileAssignLineTable(a.condLine, a.bodyLine, a.condCol, a.condEnd, a.valCol, a.valEnd, a.varCol, a.varEnd)
 	co := module(filename, bc, lt, consts, names)
 	co.StackSize = 1
 	return co, nil

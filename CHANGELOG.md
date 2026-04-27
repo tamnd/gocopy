@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-04-27
+
+`gocopy compile` accepts simple `while cond: name = val` loops where
+the condition is a name and the body is a single `name = small_int`
+(0–255) assignment. No break, continue, or else supported yet.
+
+### Added
+
+- `bytecode/while.go`: `WhileAssignBytecode`, `WhileAssignLineTable`.
+- Opcodes: `JUMP_BACKWARD` (75, 1 cache word).
+- `compiler/classify.go`: `modWhile`, `stmtWhile`, `whileAssign`.
+- `compiler/classify_ast.go`: handles `*parser2.While` with single-assign body.
+- `compiler/compiler.go`: `compileWhile`.
+- 1 new fixture: 134.
+
 ## [0.1.9] - 2026-04-27
 
 `gocopy compile` accepts `if / elif / else` chains where each branch
