@@ -214,6 +214,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rs)
 
+		case *parser2.For:
+			rs, ok2 := extractForAssign(s)
+			if !ok2 {
+				return classification{}, false
+			}
+			stmts = append(stmts, rs)
+
 		default:
 			return classification{}, false
 		}
@@ -973,6 +980,72 @@ func extractWhileAssign(s *parser2.While) (rawStmt, bool) {
 			varEnd:   vre,
 			valCol:   vc,
 			valEnd:   ve,
+		},
+	}, true
+}
+
+// extractForAssign extracts a simple `for loopVar in iter: bodyVar = val` loop
+// where iter and loopVar are names and val is a small integer (0-255), with no else/break.
+func extractForAssign(s *parser2.For) (rawStmt, bool) {
+	if len(s.Orelse) != 0 {
+		return rawStmt{}, false
+	}
+	iter, iterOK := s.Iter.(*parser2.Name)
+	if !iterOK || iter.P.Col > 255 || len(iter.Id) > 15 {
+		return rawStmt{}, false
+	}
+	loopVar, loopVarOK := s.Target.(*parser2.Name)
+	if !loopVarOK || loopVar.P.Col > 255 || len(loopVar.Id) > 15 {
+		return rawStmt{}, false
+	}
+	if len(s.Body) != 1 {
+		return rawStmt{}, false
+	}
+	bodyAssign, isAssign := s.Body[0].(*parser2.Assign)
+	if !isAssign || len(bodyAssign.Targets) != 1 {
+		return rawStmt{}, false
+	}
+	bodyVar, isName := bodyAssign.Targets[0].(*parser2.Name)
+	if !isName || bodyVar.P.Col > 255 || len(bodyVar.Id) > 15 {
+		return rawStmt{}, false
+	}
+	constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+	if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	iv := constVal.Value.(int64)
+	if iv < 0 || iv > 255 {
+		return rawStmt{}, false
+	}
+	forLine := s.P.Line
+	iterCol := byte(iter.P.Col)
+	iterEnd := iterCol + byte(len(iter.Id))
+	loopVarCol := byte(loopVar.P.Col)
+	loopVarEnd := loopVarCol + byte(len(loopVar.Id))
+	bodyLine := bodyAssign.P.Line
+	vc := byte(constVal.P.Col)
+	ve := vc + byte(len(strconv.Itoa(int(iv))))
+	bvc := byte(bodyVar.P.Col)
+	bve := bvc + byte(len(bodyVar.Id))
+	return rawStmt{
+		line:    forLine,
+		endLine: bodyLine,
+		kind:    stmtFor,
+		forAsgn: forAssign{
+			iterName:    iter.Id,
+			iterCol:     iterCol,
+			iterEnd:     iterEnd,
+			loopVarName: loopVar.Id,
+			loopVarCol:  loopVarCol,
+			loopVarEnd:  loopVarEnd,
+			forLine:     forLine,
+			bodyLine:    bodyLine,
+			bodyVal:     byte(iv),
+			bodyVarName: bodyVar.Id,
+			bodyVarCol:  bvc,
+			bodyVarEnd:  bve,
+			valCol:      vc,
+			valEnd:      ve,
 		},
 	}, true
 }
