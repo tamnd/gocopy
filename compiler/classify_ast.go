@@ -94,7 +94,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				if !isName || len(target.Id) > 15 {
 					return classification{}, false
 				}
-				rs, ok3 := extractExprAssign(line, target, s.Value)
+				rs, ok3 := extractExprAssign(line, target, s.Value, lines)
 				if !ok3 {
 					return classification{}, false
 				}
@@ -252,12 +252,37 @@ func constantToValue(c *parser2.Constant) (any, bool) {
 	return nil, false
 }
 
-// extractExprAssign tries to parse s.Value as a BinOp(Name, Name) or
-// UnaryOp(Name) assignment. target is the already-validated single LHS name.
-func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawStmt, bool) {
+// extractExprAssign tries to parse s.Value as a BinOp(Name, Name),
+// UnaryOp(Name), BoolOp, IfExp, or collection literal assignment.
+// target is the already-validated single LHS name.
+// lines is the split source passed through for collection closing-col lookup.
+func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines [][]byte) (rawStmt, bool) {
 	targetLen := byte(len(target.Id))
 
 	switch e := value.(type) {
+	case *parser2.List:
+		return extractCollection(line, target, bytecode.CollList, e.P.Col, e.Elts, lines)
+
+	case *parser2.Tuple:
+		return extractCollection(line, target, bytecode.CollTuple, e.P.Col, e.Elts, lines)
+
+	case *parser2.Set:
+		return extractCollection(line, target, bytecode.CollSet, e.P.Col, e.Elts, lines)
+
+	case *parser2.Dict:
+		if len(e.Keys) != len(e.Values) {
+			return rawStmt{}, false
+		}
+		// Flatten keys and values into alternating elts.
+		flatElts := make([]parser2.Expr, 0, 2*len(e.Keys))
+		for i, k := range e.Keys {
+			if k == nil {
+				return rawStmt{}, false // **other unpacking not yet supported
+			}
+			flatElts = append(flatElts, k, e.Values[i])
+		}
+		return extractCollection(line, target, bytecode.CollDict, e.P.Col, flatElts, lines)
+
 	case *parser2.BoolOp:
 		if len(e.Values) != 2 {
 			return rawStmt{}, false // chained bool ops deferred
@@ -434,6 +459,56 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawS
 		}, true
 	}
 	return rawStmt{}, false
+}
+
+// extractCollection builds a stmtCollection rawStmt from a collection literal
+// whose elements are name-only and all on the same source line.
+// lines is the split source (from classifyAST) needed to compute the
+// closing-bracket column from the trimmed line end.
+func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, openCol int, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+	if openCol > 255 {
+		return rawStmt{}, false
+	}
+	targetLen := byte(len(target.Id))
+	// Validate all elements are names on the same line.
+	elts := make([]bytecode.CollElt, 0, len(eltsExprs))
+	for _, expr := range eltsExprs {
+		n, isName := expr.(*parser2.Name)
+		if !isName {
+			return rawStmt{}, false
+		}
+		if n.P.Line != line || n.P.Col > 255 || len(n.Id) > 15 {
+			return rawStmt{}, false
+		}
+		elts = append(elts, bytecode.CollElt{
+			Name:    n.Id,
+			Col:     byte(n.P.Col),
+			NameLen: byte(len(n.Id)),
+		})
+	}
+	// closeEnd = lineEndCol for the single-line collection.
+	if line < 1 || line > len(lines) {
+		return rawStmt{}, false
+	}
+	ln := trimRight(stripLineComment(lines[line-1]))
+	if len(ln) > 255 {
+		return rawStmt{}, false
+	}
+	closeEnd := byte(len(ln))
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtCollection,
+		collAsgn: collectionAssign{
+			line:      line,
+			target:    target.Id,
+			targetLen: targetLen,
+			openCol:   byte(openCol),
+			closeEnd:  closeEnd,
+			kind:      kind,
+			elts:      elts,
+		},
+	}, true
 }
 
 // cmpOpFromOp maps a gopapy Compare.Ops string to (opcode, oparg, ok).
