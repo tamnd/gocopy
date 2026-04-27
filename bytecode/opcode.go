@@ -18,6 +18,7 @@ const (
 	NOP               Opcode = 27
 	NOT_TAKEN         Opcode = 28
 	POP_TOP           Opcode = 31
+	PUSH_NULL         Opcode = 33
 	RETURN_VALUE      Opcode = 35
 	STORE_SUBSCR      Opcode = 38
 	TO_BOOL           Opcode = 39
@@ -29,6 +30,7 @@ const (
 	BUILD_MAP         Opcode = 47
 	BUILD_SET         Opcode = 48
 	BUILD_TUPLE       Opcode = 51
+	CALL              Opcode = 52
 	CALL_INTRINSIC_1  Opcode = 53
 	COMPARE_OP        Opcode = 56
 	CONTAINS_OP       Opcode = 57
@@ -57,6 +59,7 @@ const (
 var CacheSize = [256]uint8{
 	38:  1, // STORE_SUBSCR: 1 inline-cache word (2 bytes)
 	39:  3, // TO_BOOL: 3 inline-cache words (6 bytes)
+	52:  3, // CALL: 3 inline-cache words (6 bytes)
 	44:  5, // BINARY_OP: 5 inline-cache words (10 bytes)
 	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
 	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)

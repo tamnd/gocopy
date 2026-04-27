@@ -19,10 +19,11 @@ const (
 	modBoolOp        // x = a and b  /  x = a or b  (both operands are names)
 	modTernary       // x = a if c else b  (all operands are names)
 	modCollection    // x = [...] / (...) / {...} collection literal with name elements
-	modSubscriptLoad // x = a[b]  (object and key are names)
+	modSubscriptLoad  // x = a[b]  (object and key are names)
 	modSubscriptStore // a[b] = x  (object, key and value are names)
-	modAttrLoad      // x = a.b  (object is a name)
-	modAttrStore     // a.b = x  (object and value are names)
+	modAttrLoad       // x = a.b  (object is a name)
+	modAttrStore      // a.b = x  (object and value are names)
+	modCallAssign     // x = f(args...) (f and all args are names, no kwargs)
 )
 
 type classification struct {
@@ -75,6 +76,8 @@ type classification struct {
 	subAsgn subscriptAssign
 	// modAttrLoad / modAttrStore fields:
 	attrAsgn attrAssign
+	// modCallAssign fields:
+	callAsgn callAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -113,6 +116,8 @@ type rawStmt struct {
 	subAsgn subscriptAssign
 	// stmtAttrLoad / stmtAttrStore fields:
 	attrAsgn attrAssign
+	// stmtCallAssign fields:
+	callAsgn callAssign
 }
 
 type rawStmtKind uint8
@@ -131,8 +136,9 @@ const (
 	stmtCollection   // x = [...] / (...) / {...} collection literal
 	stmtSubscriptLoad  // x = a[b]
 	stmtSubscriptStore // a[b] = x
-	stmtAttrLoad     // x = a.b
-	stmtAttrStore    // a.b = x
+	stmtAttrLoad       // x = a.b
+	stmtAttrStore      // a.b = x
+	stmtCallAssign     // x = f(args...)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -302,6 +308,19 @@ type attrAssign struct {
 	attrEnd    byte // col after attr = objCol + objLen + 1 + len(attrName)
 }
 
+// callAssign holds the parsed form of `x = f(args...)` where f and all
+// positional arguments are names and there are no keyword arguments.
+type callAssign struct {
+	line       int
+	funcName   string
+	funcCol    byte
+	funcEnd    byte // = funcCol + len(funcName)
+	args       []bytecode.CallArg
+	targetName string
+	targetLen  byte
+	closeEnd   byte // col after `)` (= lineEndCol)
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -310,7 +329,7 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
 	}
-	for _, kind := range []rawStmtKind{stmtSubscriptLoad, stmtSubscriptStore, stmtAttrLoad, stmtAttrStore} {
+	for _, kind := range []rawStmtKind{stmtSubscriptLoad, stmtSubscriptStore, stmtAttrLoad, stmtAttrStore, stmtCallAssign} {
 		if stmts[0].kind != kind {
 			continue
 		}
@@ -330,14 +349,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			mod = modSubscriptStore
 		case stmtAttrLoad:
 			mod = modAttrLoad
-		default:
+		case stmtAttrStore:
 			mod = modAttrStore
+		default:
+			mod = modCallAssign
 		}
 		return classification{
 			kind:     mod,
 			stmts:    tail,
 			subAsgn:  first.subAsgn,
 			attrAsgn: first.attrAsgn,
+			callAsgn: first.callAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

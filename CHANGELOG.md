@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-04-27
+
+`gocopy compile` accepts function-call assignments (`x = f()`,
+`x = f(a)`, `x = f(a, b)`) where the function and all positional
+arguments are names and there are no keyword arguments.
+
+### Added
+
+- `bytecode/call.go`: `CallArg`, `CallAssignBytecode`, `CallAssignLineTable`.
+- Opcodes: `PUSH_NULL` (33), `CALL` (52, 3 cache words).
+- `compiler/classify.go`: `modCallAssign`, `stmtCallAssign`, `callAssign`.
+- `compiler/classify_ast.go`: handles `*parser2.Call` with Name function
+  and Name-only positional arguments (no keywords).
+- `compiler/compiler.go`: `compileCallAssign`.
+- 3 new fixtures: 128–130.
+
 ## [0.1.7] - 2026-04-27
 
 `gocopy compile` accepts subscript-read (`x = a[b]`), subscript-store
