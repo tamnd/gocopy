@@ -19,6 +19,10 @@ const (
 	modBoolOp        // x = a and b  /  x = a or b  (both operands are names)
 	modTernary       // x = a if c else b  (all operands are names)
 	modCollection    // x = [...] / (...) / {...} collection literal with name elements
+	modSubscriptLoad // x = a[b]  (object and key are names)
+	modSubscriptStore // a[b] = x  (object, key and value are names)
+	modAttrLoad      // x = a.b  (object is a name)
+	modAttrStore     // a.b = x  (object and value are names)
 )
 
 type classification struct {
@@ -67,6 +71,10 @@ type classification struct {
 	ternaryAsgn ternaryAssign
 	// modCollection fields:
 	collAsgn collectionAssign
+	// modSubscriptLoad / modSubscriptStore fields:
+	subAsgn subscriptAssign
+	// modAttrLoad / modAttrStore fields:
+	attrAsgn attrAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -101,6 +109,10 @@ type rawStmt struct {
 	ternaryAsgn ternaryAssign
 	// stmtCollection fields:
 	collAsgn collectionAssign
+	// stmtSubscriptLoad / stmtSubscriptStore fields:
+	subAsgn subscriptAssign
+	// stmtAttrLoad / stmtAttrStore fields:
+	attrAsgn attrAssign
 }
 
 type rawStmtKind uint8
@@ -117,6 +129,10 @@ const (
 	stmtBoolOp       // x = a and/or b  (both operands are names)
 	stmtTernary      // x = a if c else b  (all operands are names)
 	stmtCollection   // x = [...] / (...) / {...} collection literal
+	stmtSubscriptLoad  // x = a[b]
+	stmtSubscriptStore // a[b] = x
+	stmtAttrLoad     // x = a.b
+	stmtAttrStore    // a.b = x
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -246,6 +262,46 @@ type ternaryAssign struct {
 	falseLen  byte
 }
 
+// subscriptAssign holds the parsed form of `x = a[b]` (isLoad=true) or
+// `a[b] = x` (isLoad=false), where object, key and value are all names.
+type subscriptAssign struct {
+	line     int
+	isLoad   bool
+	// For load (x = a[b]): targetName/targetLen is the LHS.
+	// For store (a[b] = x): valName/valCol/valEnd is the RHS.
+	targetName string
+	targetLen  byte
+	valName    string
+	valCol     byte
+	valEnd     byte
+	objName    string
+	objCol     byte
+	objEnd     byte // = objCol + len(objName)
+	keyName    string
+	keyCol     byte
+	keyEnd     byte  // = keyCol + len(keyName)
+	closeEnd   byte  // col after ']' = keyEnd + 1
+}
+
+// attrAssign holds the parsed form of `x = a.b` (isLoad=true) or
+// `a.b = x` (isLoad=false), where object and value are names.
+type attrAssign struct {
+	line     int
+	isLoad   bool
+	// For load (x = a.b): targetName/targetLen is the LHS.
+	// For store (a.b = x): valName/valCol/valEnd is the RHS.
+	targetName string
+	targetLen  byte
+	valName    string
+	valCol     byte
+	valEnd     byte
+	objName    string
+	objCol     byte
+	objEnd     byte // = objCol + len(objName)
+	attrName   string
+	attrEnd    byte // col after attr = objCol + objLen + 1 + len(attrName)
+}
+
 // stmtsToClassification converts the intermediate rawStmt list produced
 // by classifyAST into a classification. It validates that the list
 // matches one of the supported body shapes and that tail statements
@@ -253,6 +309,36 @@ type ternaryAssign struct {
 func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
+	}
+	for _, kind := range []rawStmtKind{stmtSubscriptLoad, stmtSubscriptStore, stmtAttrLoad, stmtAttrStore} {
+		if stmts[0].kind != kind {
+			continue
+		}
+		first := stmts[0]
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		var mod modKind
+		switch kind {
+		case stmtSubscriptLoad:
+			mod = modSubscriptLoad
+		case stmtSubscriptStore:
+			mod = modSubscriptStore
+		case stmtAttrLoad:
+			mod = modAttrLoad
+		default:
+			mod = modAttrStore
+		}
+		return classification{
+			kind:     mod,
+			stmts:    tail,
+			subAsgn:  first.subAsgn,
+			attrAsgn: first.attrAsgn,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)

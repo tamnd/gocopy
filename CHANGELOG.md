@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-04-27
+
+`gocopy compile` accepts subscript-read (`x = a[b]`), subscript-store
+(`a[b] = x`), attribute-read (`x = a.b`), and attribute-store (`a.b = x`)
+assignments where the object, key, and value are all names.
+
+### Added
+
+- `bytecode/subscript_attr.go`: `SubscriptLoadBytecode`, `SubscriptLoadLineTable`,
+  `SubscriptStoreBytecode`, `SubscriptStoreLineTable`, `AttrLoadBytecode`,
+  `AttrLoadLineTable`, `AttrStoreBytecode`, `AttrStoreLineTable`.
+- Opcodes: `STORE_SUBSCR` (38, 1 cache word), `LOAD_ATTR` (80, 9 cache words),
+  `STORE_ATTR` (110, 4 cache words).
+- `NbGetItem` (26): BINARY_OP oparg for `a[b]` subscript reads.
+- `compiler/classify.go`: `modSubscriptLoad`, `modSubscriptStore`, `modAttrLoad`,
+  `modAttrStore`, `subscriptAssign`, `attrAssign`.
+- `compiler/classify_ast.go`: handles `*parser2.Subscript` (load and store) and
+  `*parser2.Attribute` (load and store) with Name object/value operands.
+- `compiler/compiler.go`: `compileSubscriptLoad`, `compileSubscriptStore`,
+  `compileAttrLoad`, `compileAttrStore`.
+- 4 new fixtures: 124–127.
+
 ## [0.1.6] - 2026-04-27
 
 `gocopy compile` accepts collection-literal assignments (`x = []`,
