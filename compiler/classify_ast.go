@@ -368,6 +368,9 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
+	case *parser2.Call:
+		return extractCallAssign(line, target, e, lines)
+
 	case *parser2.Subscript:
 		return extractSubscriptLoad(line, target, e)
 
@@ -532,6 +535,53 @@ func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, o
 			closeEnd:  closeEnd,
 			kind:      kind,
 			elts:      elts,
+		},
+	}, true
+}
+
+// extractCallAssign handles `x = f(args...)` where f and all positional
+// args are names and there are no keyword arguments.
+func extractCallAssign(line int, target *parser2.Name, e *parser2.Call, lines [][]byte) (rawStmt, bool) {
+	funcName, funcOK := e.Func.(*parser2.Name)
+	if !funcOK || len(e.Keywords) > 0 {
+		return rawStmt{}, false
+	}
+	if funcName.P.Col > 255 || len(funcName.Id) > 15 || len(target.Id) > 15 {
+		return rawStmt{}, false
+	}
+	args := make([]bytecode.CallArg, 0, len(e.Args))
+	for _, a := range e.Args {
+		n, isName := a.(*parser2.Name)
+		if !isName || n.P.Col > 255 || len(n.Id) > 15 {
+			return rawStmt{}, false
+		}
+		args = append(args, bytecode.CallArg{
+			Name:    n.Id,
+			Col:     byte(n.P.Col),
+			NameLen: byte(len(n.Id)),
+		})
+	}
+	if line < 1 || line > len(lines) {
+		return rawStmt{}, false
+	}
+	ln := trimRight(stripLineComment(lines[line-1]))
+	if len(ln) > 255 {
+		return rawStmt{}, false
+	}
+	funcEnd := byte(funcName.P.Col) + byte(len(funcName.Id))
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtCallAssign,
+		callAsgn: callAssign{
+			line:       line,
+			funcName:   funcName.Id,
+			funcCol:    byte(funcName.P.Col),
+			funcEnd:    funcEnd,
+			args:       args,
+			targetName: target.Id,
+			targetLen:  byte(len(target.Id)),
+			closeEnd:   byte(len(ln)),
 		},
 	}, true
 }

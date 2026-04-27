@@ -143,6 +143,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileAttrLoad(opts.Filename, cls)
 	case modAttrStore:
 		return compileAttrStore(opts.Filename, cls)
+	case modCallAssign:
+		return compileCallAssign(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -508,6 +510,23 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 	lt := bytecode.MultiAssignLineTable(ltAsgns, tail)
 
 	return module(filename, bc, lt, consts, names), nil
+}
+
+// compileCallAssign lowers `x = f(args...)` where f and all positional args are names.
+func compileCallAssign(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.callAsgn
+	n := len(a.args)
+	bc := bytecode.CallAssignBytecode(n)
+	lt := bytecode.CallAssignLineTable(a.line, a.funcCol, a.funcEnd, a.args, a.closeEnd, a.targetLen)
+	names := make([]string, 0, n+2)
+	names = append(names, a.funcName)
+	for _, arg := range a.args {
+		names = append(names, arg.Name)
+	}
+	names = append(names, a.targetName)
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = int32(2 + n)
+	return co, nil
 }
 
 // compileSubscriptLoad lowers `x = a[b]` where a and b are names.
