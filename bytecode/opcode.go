@@ -16,6 +16,7 @@ type Opcode uint8
 // goipy to regenerate from upstream).
 const (
 	END_FOR           Opcode = 9
+	MAKE_FUNCTION     Opcode = 23
 	NOP               Opcode = 27
 	NOT_TAKEN         Opcode = 28
 	POP_ITER          Opcode = 30
@@ -44,6 +45,7 @@ const (
 	JUMP_FORWARD      Opcode = 77
 	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
+	LOAD_FAST_BORROW  Opcode = 86
 	LOAD_NAME         Opcode = 93
 	LOAD_SMALL_INT    Opcode = 94
 	POP_JUMP_IF_FALSE Opcode = 100

@@ -221,6 +221,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rs)
 
+		case *parser2.FunctionDef:
+			rs, ok2 := extractFuncDef(s)
+			if !ok2 {
+				return classification{}, false
+			}
+			stmts = append(stmts, rs)
+
 		default:
 			return classification{}, false
 		}
@@ -1046,6 +1053,63 @@ func extractForAssign(s *parser2.For) (rawStmt, bool) {
 			bodyVarEnd:  bve,
 			valCol:      vc,
 			valEnd:      ve,
+		},
+	}, true
+}
+
+// extractFuncDef extracts a simple `def f(arg): return arg` function
+// definition where f and arg are single identifiers with no decorators,
+// annotations, defaults, *args, or **kwargs.
+func extractFuncDef(s *parser2.FunctionDef) (rawStmt, bool) {
+	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
+		return rawStmt{}, false
+	}
+	args := s.Args
+	if args == nil || len(args.PosOnly) != 0 || len(args.KwOnly) != 0 ||
+		args.Vararg != nil || args.Kwarg != nil || len(args.Defaults) != 0 {
+		return rawStmt{}, false
+	}
+	if len(args.Args) != 1 {
+		return rawStmt{}, false
+	}
+	arg := args.Args[0]
+	if arg.Annotation != nil || arg.P.Col > 255 || len(arg.Name) > 15 {
+		return rawStmt{}, false
+	}
+	if len(s.Name) > 15 || s.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(s.Body) != 1 {
+		return rawStmt{}, false
+	}
+	ret, isReturn := s.Body[0].(*parser2.Return)
+	if !isReturn || ret.Value == nil {
+		return rawStmt{}, false
+	}
+	retName, isName := ret.Value.(*parser2.Name)
+	if !isName || retName.Id != arg.Name {
+		return rawStmt{}, false
+	}
+	if ret.P.Col > 255 || retName.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	defLine := s.P.Line
+	bodyLine := ret.P.Line
+	retKwCol := byte(ret.P.Col)
+	argCol := byte(retName.P.Col)
+	argEnd := argCol + byte(len(retName.Id))
+	return rawStmt{
+		line:    defLine,
+		endLine: bodyLine,
+		kind:    stmtFuncDef,
+		funcDefAsgn: funcDefClassify{
+			funcName: s.Name,
+			argName:  arg.Name,
+			defLine:  defLine,
+			bodyLine: bodyLine,
+			retKwCol: retKwCol,
+			argCol:   argCol,
+			argEnd:   argEnd,
 		},
 	}, true
 }

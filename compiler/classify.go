@@ -27,6 +27,7 @@ const (
 	modIfElse         // if cond: var=val [elif ...] [else: var=val]
 	modWhile          // while cond: var=val  (single-assignment body, no break/continue)
 	modFor            // for loopVar in iter: bodyVar=val  (single-assignment body, no break)
+	modFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 )
 
 type classification struct {
@@ -87,6 +88,8 @@ type classification struct {
 	whileAsgn whileAssign
 	// modFor fields:
 	forAsgn forAssign
+	// modFuncDef fields:
+	funcDefAsgn funcDefClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -133,6 +136,8 @@ type rawStmt struct {
 	whileAsgn whileAssign
 	// stmtFor fields:
 	forAsgn forAssign
+	// stmtFuncDef fields:
+	funcDefAsgn funcDefClassify
 }
 
 type rawStmtKind uint8
@@ -157,6 +162,7 @@ const (
 	stmtIfElse         // if cond: var=val [elif ...] [else: var=val]
 	stmtWhile          // while cond: var=val  (single-assignment body)
 	stmtFor            // for loopVar in iter: bodyVar=val  (single-assignment body)
+	stmtFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -387,6 +393,18 @@ type forAssign struct {
 	valEnd      byte
 }
 
+// funcDefClassify holds the parsed form of `def f(arg): return arg` where
+// f and arg are single identifiers.
+type funcDefClassify struct {
+	funcName  string
+	argName   string
+	defLine   int
+	bodyLine  int
+	retKwCol  byte // column of `return` keyword
+	argCol    byte // column of arg in return expression
+	argEnd    byte // exclusive end column of arg (= end of return expression)
+}
+
 // whileAssign holds the parsed form of `while cond: name = val` where
 // cond is a name and val is a small integer (0-255).
 type whileAssign struct {
@@ -476,6 +494,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:    modFor,
 			forAsgn: first.forAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtFuncDef {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:        modFuncDef,
+			funcDefAsgn: first.funcDefAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

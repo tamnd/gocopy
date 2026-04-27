@@ -91,14 +91,15 @@ func (w *writer) writeU32(v uint32) {
 	w.buf = append(w.buf, b[:]...)
 }
 
-// code emits a code object. topLevel is true when emitting the .pyc's root
-// code; CPython's marshal walks every PyCode_Type with FLAG_REF regardless,
-// so we don't actually need the parameter today, but it's plumbed for the
-// nested-code-object case in v0.1.x+.
+// code emits a code object. topLevel=true for the .pyc root (FLAG_REF);
+// topLevel=false for nested code objects in co_consts (no FLAG_REF).
 func (w *writer) code(c *bytecode.CodeObject, topLevel bool) {
-	_ = topLevel
-	w.reserveKey(c) // code objects always FLAG_REF, indexed by pointer identity
-	w.buf = append(w.buf, TYPE_CODE|FlagRef)
+	if topLevel {
+		w.reserveKey(c)
+		w.buf = append(w.buf, TYPE_CODE|FlagRef)
+	} else {
+		w.buf = append(w.buf, TYPE_CODE)
+	}
 
 	w.writeI32(c.ArgCount)
 	w.writeI32(c.PosOnlyArgCount)
@@ -304,6 +305,8 @@ func (w *writer) emitObject(v any) {
 		w.buf = append(w.buf, b[:]...)
 	case bytecode.ConstTuple:
 		w.tuple([]any(x))
+	case *bytecode.CodeObject:
+		w.code(x, false)
 	default:
 		w.err = fmt.Errorf("marshal: unsupported const type %T", v)
 	}
