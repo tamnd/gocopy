@@ -127,6 +127,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileBinOpAssign(opts.Filename, cls)
 	case modUnaryAssign:
 		return compileUnaryAssign(opts.Filename, cls)
+	case modCmpAssign:
+		return compileCmpAssign(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -160,6 +162,17 @@ func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject
 	)
 	co := module(filename, bc, lt, consts, []string{cls.asgnName})
 	co.StackSize = 2 // LOAD_NAME + LOAD augVal both on stack at BINARY_OP
+	return co, nil
+}
+
+// compileCmpAssign lowers `target = left cmpop right` where both operands are names.
+func compileCmpAssign(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.cmpAsgn
+	bc := bytecode.CmpAssignBytecode(a.op, a.oparg)
+	lt := bytecode.CmpAssignLineTable(a.op, a.line, a.leftCol, a.leftLen, a.rightCol, a.rightLen, a.targetLen)
+	names := []string{a.leftName, a.rightName, a.target}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 2
 	return co, nil
 }
 

@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-27
+
+`gocopy compile` accepts assignments where the RHS is a comparison
+between two names using any of the ten comparison operators: `<`, `<=`,
+`==`, `!=`, `>`, `>=`, `is`, `is not`, `in`, `not in`.
+
+### Added
+
+- `bytecode/cmp.go`: `CmpAssignBytecode`, `CmpAssignLineTable`.
+- Opcodes: `COMPARE_OP` (56, 1 cache word), `IS_OP` (74), `CONTAINS_OP` (57, 1 cache word).
+- `CmpLt`/`CmpLtE`/`CmpEq`/`CmpNotEq`/`CmpGt`/`CmpGtE` constants.
+- `compiler/classify.go`: `modCmpAssign`, `stmtCmpAssign`, `cmpAssign` type.
+- `compiler/classify_ast.go`: `cmpOpFromOp`; handles `*parser2.Compare` (single, name operands).
+- `compiler/compiler.go`: `compileCmpAssign`.
+- 10 new fixtures: 104–113.
+
 ## [0.1.3] - 2026-04-27
 
 `gocopy compile` accepts module-level assignments whose right-hand side

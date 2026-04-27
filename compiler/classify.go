@@ -13,8 +13,9 @@ const (
 	modMultiAssign
 	modChainedAssign
 	modAugAssign
-	modBinOpAssign   // x = a op b  (both operands are names)
+	modBinOpAssign   // x = a op b  (both operands are names, arithmetic/bitwise)
 	modUnaryAssign   // x = -a / ~a / not a  (operand is a name)
+	modCmpAssign     // x = a cmpop b  (both operands are names, comparison)
 )
 
 type classification struct {
@@ -55,6 +56,8 @@ type classification struct {
 	binAsgn binOpAssign
 	// modUnaryAssign fields:
 	unaryAsgn unaryAssign
+	// modCmpAssign fields:
+	cmpAsgn cmpAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -81,6 +84,8 @@ type rawStmt struct {
 	binAsgn binOpAssign
 	// stmtUnaryAssign fields:
 	unaryAsgn unaryAssign
+	// stmtCmpAssign fields:
+	cmpAsgn cmpAssign
 }
 
 type rawStmtKind uint8
@@ -91,8 +96,9 @@ const (
 	stmtAssign
 	stmtChainedAssign
 	stmtAugAssign
-	stmtBinOpAssign  // x = a op b  (both operands are names)
+	stmtBinOpAssign  // x = a op b  (both operands are names, arithmetic/bitwise)
 	stmtUnaryAssign  // x = -a / ~a / not a  (operand is a name)
+	stmtCmpAssign    // x = a cmpop b  (both operands are names, comparison)
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -110,6 +116,22 @@ type chainedTarget struct {
 	name      string
 	nameStart byte
 	nameLen   byte
+}
+
+// cmpAssign holds the parsed form of `target = left cmpop right`
+// where both operands are names and cmpop is a comparison operator.
+type cmpAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	leftName  string
+	leftCol   byte
+	leftLen   byte
+	rightName string
+	rightCol  byte
+	rightLen  byte
+	op        bytecode.Opcode // COMPARE_OP, IS_OP, or CONTAINS_OP
+	oparg     byte
 }
 
 // negLiteral is the value type for `name = -literal` assignments.
@@ -164,6 +186,20 @@ type unaryAssign struct {
 func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
 		return classification{kind: modEmpty}, true
+	}
+	if first := stmts[0]; first.kind == stmtCmpAssign {
+		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
+		}
+		return classification{
+			kind:    modCmpAssign,
+			stmts:   tail,
+			cmpAsgn: first.cmpAsgn,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBinOpAssign {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)

@@ -258,6 +258,44 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawS
 	targetLen := byte(len(target.Id))
 
 	switch e := value.(type) {
+	case *parser2.Compare:
+		if len(e.Ops) != 1 {
+			return rawStmt{}, false // chained comparisons deferred
+		}
+		leftName, leftOK := e.Left.(*parser2.Name)
+		rightName, rightOK := e.Comparators[0].(*parser2.Name)
+		if !leftOK || !rightOK {
+			return rawStmt{}, false
+		}
+		if len(leftName.Id) > 15 || len(rightName.Id) > 15 {
+			return rawStmt{}, false
+		}
+		if leftName.P.Col > 255 || rightName.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		op, oparg, cmpOK := cmpOpFromOp(e.Ops[0])
+		if !cmpOK {
+			return rawStmt{}, false
+		}
+		return rawStmt{
+			line:    line,
+			endLine: line,
+			kind:    stmtCmpAssign,
+			cmpAsgn: cmpAssign{
+				line:      line,
+				target:    target.Id,
+				targetLen: targetLen,
+				leftName:  leftName.Id,
+				leftCol:   byte(leftName.P.Col),
+				leftLen:   byte(len(leftName.Id)),
+				rightName: rightName.Id,
+				rightCol:  byte(rightName.P.Col),
+				rightLen:  byte(len(rightName.Id)),
+				op:        op,
+				oparg:     oparg,
+			},
+		}, true
+
 	case *parser2.BinOp:
 		leftName, leftOK := e.Left.(*parser2.Name)
 		rightName, rightOK := e.Right.(*parser2.Name)
@@ -330,6 +368,34 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawS
 		}, true
 	}
 	return rawStmt{}, false
+}
+
+// cmpOpFromOp maps a gopapy Compare.Ops string to (opcode, oparg, ok).
+// Returns COMPARE_OP/IS_OP/CONTAINS_OP and the appropriate oparg.
+func cmpOpFromOp(op string) (bytecode.Opcode, byte, bool) {
+	switch op {
+	case "Lt":
+		return bytecode.COMPARE_OP, bytecode.CmpLt, true
+	case "LtE":
+		return bytecode.COMPARE_OP, bytecode.CmpLtE, true
+	case "Eq":
+		return bytecode.COMPARE_OP, bytecode.CmpEq, true
+	case "NotEq":
+		return bytecode.COMPARE_OP, bytecode.CmpNotEq, true
+	case "Gt":
+		return bytecode.COMPARE_OP, bytecode.CmpGt, true
+	case "GtE":
+		return bytecode.COMPARE_OP, bytecode.CmpGtE, true
+	case "Is":
+		return bytecode.IS_OP, 0, true
+	case "IsNot":
+		return bytecode.IS_OP, 1, true
+	case "In":
+		return bytecode.CONTAINS_OP, 0, true
+	case "NotIn":
+		return bytecode.CONTAINS_OP, 1, true
+	}
+	return 0, 0, false
 }
 
 // binOpargFromOp maps a gopapy BinOp.Op string to the NB_* oparg for BINARY_OP.
