@@ -83,9 +83,23 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			if !ok {
 				return classification{}, false
 			}
+			// Try literal-value assignment first.
 			val, vStart, ok2 := extractValue(s.Value)
 			if !ok2 {
-				return classification{}, false
+				// Try arithmetic expression forms (name binop name, unary name).
+				if len(s.Targets) != 1 {
+					return classification{}, false
+				}
+				target, isName := s.Targets[0].(*parser2.Name)
+				if !isName || len(target.Id) > 15 {
+					return classification{}, false
+				}
+				rs, ok3 := extractExprAssign(line, target, s.Value)
+				if !ok3 {
+					return classification{}, false
+				}
+				stmts = append(stmts, rs)
+				continue
 			}
 			if sv, isStr := val.(string); isStr && strings.Contains(sv, "\n") {
 				return classification{}, false
@@ -236,6 +250,119 @@ func constantToValue(c *parser2.Constant) (any, bool) {
 		return []byte(c.Value.(string)), true
 	}
 	return nil, false
+}
+
+// extractExprAssign tries to parse s.Value as a BinOp(Name, Name) or
+// UnaryOp(Name) assignment. target is the already-validated single LHS name.
+func extractExprAssign(line int, target *parser2.Name, value parser2.Expr) (rawStmt, bool) {
+	targetLen := byte(len(target.Id))
+
+	switch e := value.(type) {
+	case *parser2.BinOp:
+		leftName, leftOK := e.Left.(*parser2.Name)
+		rightName, rightOK := e.Right.(*parser2.Name)
+		if !leftOK || !rightOK {
+			return rawStmt{}, false
+		}
+		if len(leftName.Id) > 15 || len(rightName.Id) > 15 {
+			return rawStmt{}, false
+		}
+		if leftName.P.Col > 255 || rightName.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		oparg, opOK := binOpargFromOp(e.Op)
+		if !opOK {
+			return rawStmt{}, false
+		}
+		leftLen := byte(len(leftName.Id))
+		rightLen := byte(len(rightName.Id))
+		return rawStmt{
+			line:    line,
+			endLine: line,
+			kind:    stmtBinOpAssign,
+			binAsgn: binOpAssign{
+				line:      line,
+				target:    target.Id,
+				targetLen: targetLen,
+				leftName:  leftName.Id,
+				leftCol:   byte(leftName.P.Col),
+				leftLen:   leftLen,
+				rightName: rightName.Id,
+				rightCol:  byte(rightName.P.Col),
+				rightLen:  rightLen,
+				oparg:     oparg,
+			},
+		}, true
+
+	case *parser2.UnaryOp:
+		operandName, operandOK := e.Operand.(*parser2.Name)
+		if !operandOK {
+			return rawStmt{}, false
+		}
+		if len(operandName.Id) > 15 || operandName.P.Col > 255 || e.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		var kind unaryKind
+		switch e.Op {
+		case "USub":
+			kind = unaryNeg
+		case "Invert":
+			kind = unaryInvert
+		case "Not":
+			kind = unaryNot
+		default:
+			return rawStmt{}, false
+		}
+		return rawStmt{
+			line:    line,
+			endLine: line,
+			kind:    stmtUnaryAssign,
+			unaryAsgn: unaryAssign{
+				line:       line,
+				target:     target.Id,
+				targetLen:  targetLen,
+				operand:    operandName.Id,
+				operandCol: byte(operandName.P.Col),
+				operandLen: byte(len(operandName.Id)),
+				opCol:      byte(e.P.Col),
+				kind:       kind,
+			},
+		}, true
+	}
+	return rawStmt{}, false
+}
+
+// binOpargFromOp maps a gopapy BinOp.Op string to the NB_* oparg for BINARY_OP.
+func binOpargFromOp(op string) (byte, bool) {
+	switch op {
+	case "Add":
+		return bytecode.NbAdd, true
+	case "Sub":
+		return bytecode.NbSubtract, true
+	case "Mult":
+		return bytecode.NbMultiply, true
+	case "Div":
+		return bytecode.NbTrueDivide, true
+	case "FloorDiv":
+		return bytecode.NbFloorDivide, true
+	case "Mod":
+		return bytecode.NbRemainder, true
+	case "Pow":
+		return bytecode.NbPower, true
+	case "BitAnd":
+		return bytecode.NbAnd, true
+	case "BitOr":
+		return bytecode.NbOr, true
+	case "BitXor":
+		return bytecode.NbXor, true
+	case "LShift":
+		return bytecode.NbLshift, true
+	case "RShift":
+		return bytecode.NbRshift, true
+	case "MatMult":
+		return bytecode.NbMatrixMultiply, true
+	}
+	return 0, false
 }
 
 func augOpargFromOp(op string) (byte, bool) {

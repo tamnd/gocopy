@@ -16,6 +16,10 @@
 //  6. A chained assignment `t0 = t1 = ... = literal` (N >= 2 targets).
 //  7. A `name = initVal` assignment followed by `name op= augVal`
 //     (augmented assignment; integer initVal and augVal only).
+//  8. A `target = left op right` assignment where both operands are
+//     names and op is a binary arithmetic or bitwise operator.
+//  9. A `target = -operand`, `target = ~operand`, or
+//     `target = not operand` assignment where the operand is a name.
 //
 // Anything else returns ErrUnsupportedSource.
 package compiler
@@ -119,6 +123,10 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileChainedAssign(opts.Filename, cls.chainLine, cls.chainTargets, cls.chainValStart, cls.chainValEnd, cls.chainValue, cls.stmts)
 	case modAugAssign:
 		return compileAugAssign(opts.Filename, cls)
+	case modBinOpAssign:
+		return compileBinOpAssign(opts.Filename, cls)
+	case modUnaryAssign:
+		return compileUnaryAssign(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -153,6 +161,40 @@ func compileAugAssign(filename string, cls classification) (*bytecode.CodeObject
 	co := module(filename, bc, lt, consts, []string{cls.asgnName})
 	co.StackSize = 2 // LOAD_NAME + LOAD augVal both on stack at BINARY_OP
 	return co, nil
+}
+
+// compileBinOpAssign lowers `target = left op right` where both operands are names.
+func compileBinOpAssign(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.binAsgn
+	bc := bytecode.BinOpAssignBytecode(a.oparg)
+	lt := bytecode.BinOpAssignLineTable(a.line, a.leftCol, a.leftLen, a.rightCol, a.rightLen, a.targetLen)
+	// names: [left, right, target] — insertion order as encountered during compilation
+	names := []string{a.leftName, a.rightName, a.target}
+	co := module(filename, bc, lt, []any{nil}, names)
+	co.StackSize = 2
+	return co, nil
+}
+
+// compileUnaryAssign lowers `target = -operand`, `target = ~operand`, or
+// `target = not operand` where the operand is a name.
+func compileUnaryAssign(filename string, cls classification) (*bytecode.CodeObject, error) {
+	a := cls.unaryAsgn
+	names := []string{a.operand, a.target}
+	var bc, lt []byte
+	switch a.kind {
+	case unaryNeg:
+		bc = bytecode.UnaryNegInvertBytecode(bytecode.UNARY_NEGATIVE)
+		lt = bytecode.UnaryNegInvertLineTable(a.line, a.opCol, a.operandCol, a.operandLen, a.targetLen)
+	case unaryInvert:
+		bc = bytecode.UnaryNegInvertBytecode(bytecode.UNARY_INVERT)
+		lt = bytecode.UnaryNegInvertLineTable(a.line, a.opCol, a.operandCol, a.operandLen, a.targetLen)
+	case unaryNot:
+		bc = bytecode.UnaryNotBytecode()
+		lt = bytecode.UnaryNotLineTable(a.line, a.opCol, a.operandCol, a.operandLen, a.targetLen)
+	default:
+		return nil, ErrUnsupportedSource
+	}
+	return module(filename, bc, lt, []any{nil}, names), nil
 }
 
 // compileChainedAssign lowers `t0 = t1 = ... = literal` (single line, N >= 2 targets).

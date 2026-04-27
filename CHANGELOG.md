@@ -9,6 +9,32 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-27
+
+`gocopy compile` accepts module-level assignments whose right-hand side
+is a binary arithmetic or bitwise operation between two names, or a unary
+negation, inversion, or boolean-not of a name.
+
+### Added
+
+- `bytecode/arith.go`: `BinOpAssignBytecode`, `BinOpAssignLineTable`,
+  `UnaryNegInvertBytecode`, `UnaryNegInvertLineTable`, `UnaryNotBytecode`,
+  `UnaryNotLineTable`.
+- Opcodes: `TO_BOOL` (39), `UNARY_INVERT` (40), `UNARY_NEGATIVE` (41),
+  `UNARY_NOT` (42), `CALL_INTRINSIC_1` (53).
+- Opcode cache sizes: `TO_BOOL` = 3.
+- Binary `NB_*` oparg constants: `NbAdd` (0), `NbAnd` (1), `NbFloorDivide` (2),
+  `NbLshift` (3), `NbMatrixMultiply` (4), `NbMultiply` (5), `NbRemainder` (6),
+  `NbOr` (7), `NbPower` (8), `NbRshift` (9), `NbSubtract` (10),
+  `NbTrueDivide` (11), `NbXor` (12).
+- `compiler/classify.go`: `modBinOpAssign`, `modUnaryAssign`, `binOpAssign`,
+  `unaryAssign`, `unaryKind` types; `stmtBinOpAssign`, `stmtUnaryAssign` rawStmt
+  kinds.
+- `compiler/classify_ast.go`: `extractExprAssign`, `binOpargFromOp`.
+- `compiler/compiler.go`: `compileBinOpAssign`, `compileUnaryAssign`.
+- 15 new fixtures: 089-103 (all 12 binary operators + `-`, `~`, `not`).
+- `TestBinOpAssign`, `TestUnaryAssign` in `compiler/compiler_test.go`.
+
 ## [0.0.17] - 2026-04-27
 
 The hand-rolled source scanner in `compiler/classify.go` is replaced by
