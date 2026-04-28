@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.5.11](changelog/v0.5.11.md) - call statements and function docstrings in modMixed (2026-04-28)
 - [v0.5.10](changelog/v0.5.10.md) - from-star-import in modMixed (2026-04-28)
 - [v0.5.9](changelog/v0.5.9.md) - small-int literal assigns in modMixed (2026-04-28)
 - [v0.5.8](changelog/v0.5.8.md) - Name-default parameters in modMixed functions (2026-04-28)

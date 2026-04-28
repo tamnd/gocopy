@@ -227,12 +227,20 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 	lt := bytecode.MixedModuleLineTable(info)
 
-	// Stack size: loading K defaults before BUILD_TUPLE pushes K values, so
-	// the peak is max(2, maxDefaults) where 2 covers all non-default paths.
-	stackSize := int32(2)
+	// Stack size: LOAD_CONST+MAKE_FUNCTION paths peak at 1; star import and
+	// CLC (BUILD_LIST + LOAD_CONST) peak at 2; K Name-defaults push K values
+	// before BUILD_TUPLE then LOAD_CONST code adds 1 more (peak = max(2, K)).
+	stackSize := int32(1)
+	if m.hasStarImport || m.hasCLC {
+		stackSize = 2
+	}
 	for _, f := range m.funcs {
-		if k := int32(len(mixedFuncDefaults(f))); k > stackSize {
-			stackSize = k
+		k := int32(len(mixedFuncDefaults(f)))
+		if k > 0 {
+			need := max(int32(2), k)
+			if need > stackSize {
+				stackSize = need
+			}
 		}
 	}
 

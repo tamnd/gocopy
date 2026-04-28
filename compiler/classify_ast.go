@@ -1817,6 +1817,22 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	// We'll verify during body extraction.
 
 	stmtNodes := s.Body
+
+	// Strip leading docstring (ExprStmt with a string Constant).
+	hasDocstring := false
+	docstringText := ""
+	if len(stmtNodes) > 0 {
+		if exprStmt, ok := stmtNodes[0].(*parser2.ExprStmt); ok {
+			if cst, ok2 := exprStmt.Value.(*parser2.Constant); ok2 && cst.Kind == "str" {
+				if sv, ok3 := cst.Value.(string); ok3 {
+					hasDocstring = true
+					docstringText = sv
+					stmtNodes = stmtNodes[1:]
+				}
+			}
+		}
+	}
+
 	fbStmts := make([]fbStmt, 0, len(stmtNodes))
 	prevLine := s.P.Line // def line; each body stmt must be on a later line
 	implicitNoneReturn := false
@@ -1825,6 +1841,27 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 		isLast := i == len(stmtNodes)-1
 
 		switch st := node.(type) {
+		case *parser2.ExprStmt:
+			// Bare call statement: func(args)
+			if isLast {
+				return rawStmt{}, false // last stmt must be return
+			}
+			if _, isCall := st.Value.(*parser2.Call); !isCall {
+				return rawStmt{}, false // only bare calls supported
+			}
+			if !isFuncBodyExpr(st.Value, knownNames) {
+				return rawStmt{}, false
+			}
+			if st.P.Line <= prevLine {
+				return rawStmt{}, false
+			}
+			fbStmts = append(fbStmts, fbStmt{
+				isBareCall: true,
+				line:       st.P.Line,
+				expr:       st.Value,
+			})
+			prevLine = st.P.Line
+
 		case *parser2.Assign:
 			if isLast {
 				return rawStmt{}, false // last stmt must be return
@@ -2104,6 +2141,8 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			stmts:                 fbStmts,
 			srcLines:              srcLines,
 			hasImplicitNoneReturn: implicitNoneReturn,
+			hasDocstring:          hasDocstring,
+			docstring:             docstringText,
 		},
 	}, true
 }

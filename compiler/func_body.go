@@ -27,7 +27,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 	// Assign slots to body locals in declaration order.
 	nextSlot := byte(len(g.params))
 	for _, st := range g.stmts {
-		if st.isReturn || st.isIfReturn || st.isIfAssign {
+		if st.isReturn || st.isIfReturn || st.isIfAssign || st.isBareCall {
 			continue
 		}
 		// isIfElseAssign may introduce a new local (all paths guarantee assignment).
@@ -40,6 +40,11 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 	}
 
 	fs := newFuncState(g.defLine, slots, g.srcLines)
+
+	// If the function has a docstring, it occupies co_consts[0].
+	if g.hasDocstring {
+		fs.consts = []any{g.docstring}
+	}
 
 	// RESUME at def line: SHORT0(1)[0,0)
 	fs.bc = append(fs.bc, byte(bytecode.RESUME), 0)
@@ -465,6 +470,11 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				fs.bc[js.pos] = byte(endCU - (js.cu + 1 + jfCacheWords))
 			}
 
+		} else if st.isBareCall {
+			fs.walkExpr(st.expr)
+			fs.bc = append(fs.bc, byte(bytecode.POP_TOP), 0)
+			fs.extendLastEntry(1)
+
 		} else if st.isAugAssign {
 			slot := slots[st.targetName]
 			tsc := st.targetCol
@@ -540,12 +550,16 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 	}
 	bodyEndCol := fs.lastExprEnd
 
+	flags := uint32(0x3)
+	if g.hasDocstring {
+		flags |= 0x4000000 // CO_HAS_DOCSTRING
+	}
 	innerCode := &bytecode.CodeObject{
 		ArgCount:        int32(len(g.params)),
 		PosOnlyArgCount: 0,
 		KwOnlyArgCount:  0,
 		StackSize:       int32(maxDepth),
-		Flags:           0x3,
+		Flags:           flags,
 		Bytecode:        fs.bc,
 		Consts:          fs.buildConsts(),
 		Names:           fs.buildNames(),
@@ -680,6 +694,18 @@ func (fs *funcState) emit(cuCount int, sc, ec byte) {
 // emitSame appends one same-line linetable entry (always uses appendSameLine).
 func (fs *funcState) emitSame(cuCount int, sc, ec byte) {
 	fs.lt = bytecode.GenExprSameLine(fs.lt, cuCount, sc, ec)
+}
+
+// extendLastEntry increments the CU count of the most-recently emitted
+// linetable entry by extra. Used when a follow-on instruction (e.g. POP_TOP
+// after a bare call) should be merged into the preceding entry.
+func (fs *funcState) extendLastEntry(extra int) {
+	for i := len(fs.lt) - 1; i >= 0; i-- {
+		if fs.lt[i]&0x80 != 0 {
+			fs.lt[i] += byte(extra)
+			return
+		}
+	}
 }
 
 // walkExpr compiles expr recursively, returning (startCol, endCol, depth).

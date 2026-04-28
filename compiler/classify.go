@@ -624,11 +624,13 @@ type funcBodyInfo struct {
 	funcName              string
 	funcNameLen           byte
 	defLine               int
-	params                []fbParam  // positional parameters in declaration order
+	params                []fbParam   // positional parameters in declaration order
 	defaults              []fbDefault // default values for the last len(defaults) params
-	stmts                 []fbStmt  // body statements: all assignments then one return
+	stmts                 []fbStmt    // body statements: all assignments then one return
 	srcLines              [][]byte
-	hasImplicitNoneReturn bool // function body ends without an explicit return
+	hasImplicitNoneReturn bool   // function body ends without an explicit return
+	hasDocstring          bool   // first statement was a string literal (function docstring)
+	docstring             string // docstring text when hasDocstring is true
 }
 
 // fbParam is one positional parameter in a funcBodyInfo.
@@ -648,6 +650,7 @@ type fbDefault struct {
 type fbStmt struct {
 	isReturn        bool   // true for the return statement, false for assignments
 	isAugAssign     bool   // true for augmented assignments (target op= rhs)
+	isBareCall      bool   // true for bare expression call (no assignment target)
 	isIfReturn      bool   // true for `if cond: return expr` (early-return if)
 	isIfAssign      bool   // true for `if cond: target = expr` (conditional assignment, no else)
 	isIfElseAssign  bool   // true for `if cond: t=e [elif cond: t=e ...] else: t=e`
