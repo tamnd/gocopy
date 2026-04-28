@@ -4,7 +4,7 @@ import (
 	"strconv"
 
 	"github.com/tamnd/gocopy/bytecode"
-	parser2 "github.com/tamnd/gopapy/parser"
+	"github.com/tamnd/gocopy/compiler/ast"
 )
 
 // compileFuncBodyExpr lowers a function definition whose body is composed
@@ -54,21 +54,21 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 	for _, st := range g.stmts {
 		fs.newStmt(st.line)
 		if st.isReturn {
-			if constExpr, isConst := st.expr.(*parser2.Constant); isConst {
+			if constExpr, isConst := st.expr.(*ast.Constant); isConst {
 				// Single constant: emit load (no lt entry) + RETURN_VALUE
 				// as one combined 2-CU linetable entry.
 				sc, ec := fs.loadConst(constExpr)
 				fs.trackDepth(1)
 				fs.bc = append(fs.bc, byte(bytecode.RETURN_VALUE), 0)
 				fs.emit(2, sc, ec)
-			} else if ifexpr, isIfExpr := st.expr.(*parser2.IfExp); isIfExpr {
+			} else if ifexpr, isIfExpr := st.expr.(*ast.IfExp); isIfExpr {
 				// Ternary return: `return Body if Test else OrElse`
 				// Pre-compute ternEnd (= end of OrElse) from the AST so we can
 				// emit the true-branch RETURN_VALUE linetable entry before walking
 				// OrElse (linetable entries must be in CU order).
 				ternEnd := fs.exprEndCol(ifexpr.OrElse)
 
-				cmpNode := ifexpr.Test.(*parser2.Compare)
+				cmpNode := ifexpr.Test.(*ast.Compare)
 				_, cmpBase, _ := cmpOpFromOp(cmpNode.Ops[0])
 				cmpOparg := bytecode.CompareCondArg(cmpBase)
 				cmpCacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
@@ -79,8 +79,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 				lflblflb := false
 				var condStart, condEnd byte
-				if ln, lok := leftExpr.(*parser2.Name); lok {
-					if rn, rok := rightExpr.(*parser2.Name); rok {
+				if ln, lok := leftExpr.(*ast.Name); lok {
+					if rn, rok := rightExpr.(*ast.Name); rok {
 						ls, lOK := fs.slots[ln.Id]
 						rs, rOK := fs.slots[rn.Id]
 						if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -126,7 +126,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				// False branch: local Name uses LOAD_FAST; global Name and other
 				// exprs use walkExpr.
 				var falseEnd byte
-				if falseName, isFN := ifexpr.OrElse.(*parser2.Name); isFN {
+				if falseName, isFN := ifexpr.OrElse.(*ast.Name); isFN {
 					slot, isLocal := fs.slots[falseName.Id]
 					falseStart := byte(falseName.P.Col)
 					falseEnd = falseStart + byte(len(falseName.Id))
@@ -153,7 +153,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		} else if st.isIfReturn {
 			// `if <cond>: return <expr>` early-return pattern.
 			// Save lastCondStart/End for potential implicit None return after this stmt.
-			cmpNode := st.condExpr.(*parser2.Compare)
+			cmpNode := st.condExpr.(*ast.Compare)
 			op, cmpBase, _ := cmpOpFromOp(cmpNode.Ops[0])
 
 			var pjifPos int
@@ -163,8 +163,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				// `if x is None:` / `if x is not None:` — single operand load +
 				// POP_JUMP_IF_NOT_NONE / POP_JUMP_IF_NONE + 1 cache + NOT_TAKEN.
 				fs.noneCheckFunc = true // integers not stored in co_consts for None-check functions
-				varName := cmpNode.Left.(*parser2.Name)
-				noneConst := cmpNode.Comparators[0].(*parser2.Constant)
+				varName := cmpNode.Left.(*ast.Name)
+				noneConst := cmpNode.Comparators[0].(*ast.Constant)
 				varSlot := fs.slots[varName.Id]
 				varStart := byte(varName.P.Col)
 				varEnd := varStart + byte(len(varName.Id))
@@ -201,8 +201,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 				lflblflbCond := false
 				var condStart, condEnd byte
-				if ln, lok := leftExpr.(*parser2.Name); lok {
-					if rn, rok := rightExpr.(*parser2.Name); rok {
+				if ln, lok := leftExpr.(*ast.Name); lok {
+					if rn, rok := rightExpr.(*ast.Name); rok {
 						ls, lOK := fs.slots[ln.Id]
 						rs, rOK := fs.slots[rn.Id]
 						if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -239,7 +239,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 			// Then-branch: load return value + RETURN_VALUE.
 			fs.newStmt(st.thenLine)
-			if constExpr, isConst := st.expr.(*parser2.Constant); isConst {
+			if constExpr, isConst := st.expr.(*ast.Constant); isConst {
 				sc, ec := fs.loadConst(constExpr)
 				fs.trackDepth(1)
 				fs.bc = append(fs.bc, byte(bytecode.RETURN_VALUE), 0)
@@ -257,7 +257,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 		} else if st.isIfAssign {
 			// `if <cond>: target = expr` conditional assignment (no else).
-			cmpNode := st.condExpr.(*parser2.Compare)
+			cmpNode := st.condExpr.(*ast.Compare)
 			op, cmpBase, _ := cmpOpFromOp(cmpNode.Ops[0])
 
 			var pjifPos int
@@ -266,8 +266,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 			if op == bytecode.IS_OP {
 				// `if x is None:` / `if x is not None:` path.
 				fs.noneCheckFunc = true
-				varName := cmpNode.Left.(*parser2.Name)
-				noneConst := cmpNode.Comparators[0].(*parser2.Constant)
+				varName := cmpNode.Left.(*ast.Name)
+				noneConst := cmpNode.Comparators[0].(*ast.Constant)
 				varSlot := fs.slots[varName.Id]
 				varStart := byte(varName.P.Col)
 				varEnd := varStart + byte(len(varName.Id))
@@ -303,8 +303,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 				lflblflb := false
 				var condStart, condEnd byte
-				if ln, lok := leftExpr.(*parser2.Name); lok {
-					if rn, rok := rightExpr.(*parser2.Name); rok {
+				if ln, lok := leftExpr.(*ast.Name); lok {
+					if rn, rok := rightExpr.(*ast.Name); rok {
 						ls := fs.slots[ln.Id]
 						rs := fs.slots[rn.Id]
 						if ls <= 15 && rs <= 15 {
@@ -343,7 +343,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 			tsc := st.targetCol
 			tec := tsc + byte(len(st.targetName))
 			fs.newStmt(st.thenLine)
-			if nameExpr, isName := st.expr.(*parser2.Name); isName {
+			if nameExpr, isName := st.expr.(*ast.Name); isName {
 				srcSlot, isLocal := fs.slots[nameExpr.Id]
 				if isLocal {
 					sc := byte(nameExpr.P.Col)
@@ -393,7 +393,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 					// Start of condition: update statement line to the if/elif line.
 					fs.newStmt(br.condLine)
 					// Condition.
-					cmpNode := br.condExpr.(*parser2.Compare)
+					cmpNode := br.condExpr.(*ast.Compare)
 					_, base, _ := cmpOpFromOp(cmpNode.Ops[0])
 					cmpOparg := bytecode.CompareCondArg(base)
 					leftExpr := cmpNode.Left
@@ -401,8 +401,8 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 					var condStart, condEnd byte
 					lflblflb := false
-					if ln, lok := leftExpr.(*parser2.Name); lok {
-						if rn, rok := rightExpr.(*parser2.Name); rok {
+					if ln, lok := leftExpr.(*ast.Name); lok {
+						if rn, rok := rightExpr.(*ast.Name); rok {
 							ls := fs.slots[ln.Id]
 							rs := fs.slots[rn.Id]
 							if ls <= 15 && rs <= 15 {
@@ -482,7 +482,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 			cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
 
 			// LFLBLFLB optimisation: target and RHS are both local Name nodes.
-			if rhsName, isRhsName := st.expr.(*parser2.Name); isRhsName {
+			if rhsName, isRhsName := st.expr.(*ast.Name); isRhsName {
 				rs, rsOK := slots[rhsName.Id]
 				if rsOK && slot <= 15 && rs <= 15 {
 					rec := byte(rhsName.P.Col) + byte(len(rhsName.Id))
@@ -505,7 +505,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		} else {
 			// Simple assignment. A bare local-Name RHS uses LOAD_FAST (move
 			// semantics); globals and other expressions use walkExpr (BORROW).
-			if nameExpr, isName := st.expr.(*parser2.Name); isName {
+			if nameExpr, isName := st.expr.(*ast.Name); isName {
 				srcSlot, isLocal := fs.slots[nameExpr.Id]
 				if isLocal {
 					sc := byte(nameExpr.P.Col)
@@ -710,9 +710,9 @@ func (fs *funcState) extendLastEntry(extra int) {
 
 // walkExpr compiles expr recursively, returning (startCol, endCol, depth).
 // It always emits the expression instructions into fs.bc and fs.lt.
-func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int) {
+func (fs *funcState) walkExpr(e ast.Expr) (startCol, endCol byte, depth int) {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		slot, isLocal := fs.slots[n.Id]
 		sc := byte(n.P.Col)
 		ec := sc + byte(len(n.Id))
@@ -732,16 +732,16 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = ec
 		return sc, ec, 1
 
-	case *parser2.Constant:
+	case *ast.Constant:
 		sc, ec := fs.loadConst(n)
 		fs.emit(1, sc, ec)
 		fs.trackDepth(1)
 		return sc, ec, 1
 
-	case *parser2.Attribute:
+	case *ast.Attribute:
 		// a.attr: load object then LOAD_ATTR (no method bit).
 		// LOAD_ATTR has 9 cache words (10 CUs); split into 8+2.
-		obj := n.Value.(*parser2.Name) // validated by isFuncBodyExpr
+		obj := n.Value.(*ast.Name) // validated by isFuncBodyExpr
 		objStart := byte(obj.P.Col)
 		objEnd := objStart + byte(len(obj.Id))
 		methodEnd := objEnd + 1 + byte(len(n.Attr)) // +1 for '.'
@@ -762,7 +762,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = methodEnd
 		return objStart, methodEnd, 1
 
-	case *parser2.Tuple:
+	case *ast.Tuple:
 		nElts := len(n.Elts)
 		var firstStart, lastEnd byte
 
@@ -771,8 +771,8 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		// wherever it finds two back-to-back local loads, not only at element 0.
 		for i := 0; i < nElts; {
 			if i+1 < nElts {
-				if ln, lok := n.Elts[i].(*parser2.Name); lok {
-					if rn, rok := n.Elts[i+1].(*parser2.Name); rok {
+				if ln, lok := n.Elts[i].(*ast.Name); lok {
+					if rn, rok := n.Elts[i+1].(*ast.Name); rok {
 						ls, lOK := fs.slots[ln.Id]
 						rs, rOK := fs.slots[rn.Id]
 						if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -823,11 +823,11 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = lastEnd
 		return firstStart, lastEnd, 1
 
-	case *parser2.Subscript:
+	case *ast.Subscript:
 		// a[b] compiles to BINARY_OP NbGetItem, same pattern as BinOp.
 		cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
-		if ln, lok := n.Value.(*parser2.Name); lok {
-			if rn, rok := n.Slice.(*parser2.Name); rok {
+		if ln, lok := n.Value.(*ast.Name); lok {
+			if rn, rok := n.Slice.(*ast.Name); rok {
 				ls, lOK := fs.slots[ln.Id]
 				rs, rOK := fs.slots[rn.Id]
 				if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -853,9 +853,9 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = closeEnd
 		return lsc, closeEnd, d
 
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		// LFLBLFLB optimisation: left is a local Name and right's first load is also local.
-		if ln, lok := n.Left.(*parser2.Name); lok {
+		if ln, lok := n.Left.(*ast.Name); lok {
 			ls, lOK := fs.slots[ln.Id]
 			if lOK && ls <= 15 {
 				if rs, rOK := fs.peekFirstLocalSlot(n.Right); rOK {
@@ -876,7 +876,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		}
 		// General case: walk left then right.
 		lsc, _, ld := fs.walkExpr(n.Left)
-		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
+		if _, isBinOp := n.Left.(*ast.BinOp); isBinOp {
 			// Only include the '(' if it wraps just the left child, not the
 			// entire expression. Verify by checking that the matching ')' closes
 			// before the right child's column.
@@ -889,7 +889,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			}
 		}
 		rsc, rec, rd := fs.walkExpr(n.Right)
-		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
+		if _, isBinOp := n.Right.(*ast.BinOp); isBinOp {
 			// Extend rec to include ')' only when the right sub-expression's
 			// leftmost token is directly preceded by '(' — i.e. the whole
 			// right child is parenthesized. Use rsc (the start column returned
@@ -907,7 +907,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = rec
 		return lsc, rec, d
 
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		opc := byte(n.P.Col)
 		switch n.Op {
 		case "USub":
@@ -926,14 +926,14 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			// Special case: not (compare) → COMPARE_OP(oparg+16) + UNARY_NOT,
 			// no TO_BOOL. This matches CPython's conditional-flag optimisation.
 			cmpCache := int(bytecode.CacheSize[bytecode.COMPARE_OP])
-			if cmpExpr, isCmp := n.Operand.(*parser2.Compare); isCmp &&
+			if cmpExpr, isCmp := n.Operand.(*ast.Compare); isCmp &&
 				len(cmpExpr.Ops) == 1 && len(cmpExpr.Comparators) == 1 {
 				_, oparg, _ := cmpOpFromOp(cmpExpr.Ops[0])
 				oparg += 16 // conditional context flag
 				leftExpr := cmpExpr.Left
 				rightExpr := cmpExpr.Comparators[0]
-				if ln, lok := leftExpr.(*parser2.Name); lok {
-					if rn, rok := rightExpr.(*parser2.Name); rok {
+				if ln, lok := leftExpr.(*ast.Name); lok {
+					if rn, rok := rightExpr.(*ast.Name); rok {
 						ls, lOK := fs.slots[ln.Id]
 						rs, rOK := fs.slots[rn.Id]
 						if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -984,7 +984,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			return opc, closedEnd, 1
 		}
 
-	case *parser2.Compare:
+	case *ast.Compare:
 		// Single-comparison only (validated by isFuncBodyExpr).
 		leftExpr := n.Left
 		rightExpr := n.Comparators[0]
@@ -992,8 +992,8 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		cacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
 
 		// LFLBLFLB optimisation: both operands are direct Name references.
-		if ln, lok := leftExpr.(*parser2.Name); lok {
-			if rn, rok := rightExpr.(*parser2.Name); rok {
+		if ln, lok := leftExpr.(*ast.Name); lok {
+			if rn, rok := rightExpr.(*ast.Name); rok {
 				ls, lOK := fs.slots[ln.Id]
 				rs, rOK := fs.slots[rn.Id]
 				if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -1026,14 +1026,14 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		fs.lastExprEnd = rec
 		return lsc, rec, d
 
-	case *parser2.Call:
+	case *ast.Call:
 		// Determine call kind: global function or method (attribute call).
 		var callStart, callFuncEnd byte
 		nArgs := len(n.Args)
 
-		if attr, isAttr := n.Func.(*parser2.Attribute); isAttr {
+		if attr, isAttr := n.Func.(*ast.Attribute); isAttr {
 			// Method call: obj.method(args...)
-			obj := attr.Value.(*parser2.Name) // validated by isFuncBodyExpr
+			obj := attr.Value.(*ast.Name) // validated by isFuncBodyExpr
 			objStart := byte(obj.P.Col)
 			objEnd := objStart + byte(len(obj.Id))
 			methodEnd := objEnd + 1 + byte(len(attr.Attr)) // +1 for '.'
@@ -1061,7 +1061,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			callFuncEnd = methodEnd
 		} else {
 			// Global function call: fn(args...)
-			fn := n.Func.(*parser2.Name) // validated by isFuncBodyExpr
+			fn := n.Func.(*ast.Name) // validated by isFuncBodyExpr
 			callStart = byte(fn.P.Col)
 			callFuncEnd = callStart + byte(len(fn.Id))
 
@@ -1080,8 +1080,8 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		lastArgEnd := callFuncEnd
 		startArg := 0
 		if nArgs >= 2 {
-			if ln, lok := n.Args[0].(*parser2.Name); lok {
-				if rn, rok := n.Args[1].(*parser2.Name); rok {
+			if ln, lok := n.Args[0].(*ast.Name); lok {
+				if rn, rok := n.Args[1].(*ast.Name); rok {
 					ls, lOK := fs.slots[ln.Id]
 					rs, rOK := fs.slots[rn.Id]
 					if lOK && rOK && ls <= 15 && rs <= 15 {
@@ -1217,25 +1217,25 @@ func (fs *funcState) scanMatchingClose(openCol byte) byte {
 }
 
 // exprCol returns the start column of an expression node.
-func exprCol(e parser2.Expr) byte {
+func exprCol(e ast.Expr) byte {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		return byte(n.P.Col)
-	case *parser2.Constant:
+	case *ast.Constant:
 		return byte(n.P.Col)
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		return byte(n.P.Col)
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		return byte(n.P.Col)
-	case *parser2.Compare:
+	case *ast.Compare:
 		return byte(n.P.Col)
-	case *parser2.Call:
+	case *ast.Call:
 		return byte(n.P.Col)
-	case *parser2.Attribute:
+	case *ast.Attribute:
 		return byte(n.P.Col)
-	case *parser2.Subscript:
+	case *ast.Subscript:
 		return byte(n.P.Col)
-	case *parser2.Tuple:
+	case *ast.Tuple:
 		return byte(n.P.Col)
 	}
 	return 0
@@ -1267,11 +1267,11 @@ func (fs *funcState) scanTokenEnd(startCol byte) byte {
 
 // exprEndCol returns the end column of expression e by inspecting the AST.
 // Used to pre-compute ternEnd before emitting bytecode for ternary returns.
-func (fs *funcState) exprEndCol(e parser2.Expr) byte {
+func (fs *funcState) exprEndCol(e ast.Expr) byte {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		return byte(n.P.Col) + byte(len(n.Id))
-	case *parser2.Constant:
+	case *ast.Constant:
 		switch n.Kind {
 		case "int":
 			return byte(n.P.Col) + byte(len(strconv.Itoa(int(n.Value.(int64)))))
@@ -1286,31 +1286,31 @@ func (fs *funcState) exprEndCol(e parser2.Expr) byte {
 		case "str":
 			return fs.scanStringEnd(byte(n.P.Col))
 		}
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		return fs.exprEndCol(n.Right)
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		return fs.exprEndCol(n.Operand)
-	case *parser2.Compare:
+	case *ast.Compare:
 		return fs.exprEndCol(n.Comparators[0])
-	case *parser2.Tuple:
+	case *ast.Tuple:
 		if len(n.Elts) > 0 {
 			return fs.exprEndCol(n.Elts[len(n.Elts)-1])
 		}
-	case *parser2.Attribute:
-		obj := n.Value.(*parser2.Name)
+	case *ast.Attribute:
+		obj := n.Value.(*ast.Name)
 		return byte(obj.P.Col) + byte(len(obj.Id)) + 1 + byte(len(n.Attr))
-	case *parser2.Subscript:
+	case *ast.Subscript:
 		return fs.scanSubscriptEnd(fs.exprEndCol(n.Slice))
-	case *parser2.Call:
+	case *ast.Call:
 		var lastEnd byte
 		if len(n.Args) > 0 {
 			lastEnd = fs.exprEndCol(n.Args[len(n.Args)-1])
 		} else {
 			switch fn := n.Func.(type) {
-			case *parser2.Name:
+			case *ast.Name:
 				lastEnd = byte(fn.P.Col) + byte(len(fn.Id))
-			case *parser2.Attribute:
-				obj := fn.Value.(*parser2.Name)
+			case *ast.Attribute:
+				obj := fn.Value.(*ast.Name)
 				lastEnd = byte(obj.P.Col) + byte(len(obj.Id)) + 1 + byte(len(fn.Attr))
 			}
 		}
@@ -1387,14 +1387,14 @@ func (fs *funcState) trackDepth(d int) {
 // peekFirstLocalSlot returns the local variable slot that would be loaded first
 // when evaluating e, following the leftmost path. Returns (0, false) if e does
 // not start with a local variable load (slot ≤ 15).
-func (fs *funcState) peekFirstLocalSlot(e parser2.Expr) (byte, bool) {
+func (fs *funcState) peekFirstLocalSlot(e ast.Expr) (byte, bool) {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		s, ok := fs.slots[n.Id]
 		if ok && s <= 15 {
 			return s, true
 		}
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		return fs.peekFirstLocalSlot(n.Left)
 	}
 	return 0, false
@@ -1404,20 +1404,20 @@ func (fs *funcState) peekFirstLocalSlot(e parser2.Expr) (byte, bool) {
 // LOAD_FAST_BORROW was already emitted by a preceding LFLBLFLB instruction.
 // Returns (startCol, endCol, depth) where depth is the peak additional stack
 // usage above the pre-loaded first-local value.
-func (fs *funcState) walkExprSkipFirstLocal(e parser2.Expr) (startCol, endCol byte, depth int) {
+func (fs *funcState) walkExprSkipFirstLocal(e ast.Expr) (startCol, endCol byte, depth int) {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		sc := byte(n.P.Col)
 		ec := sc + byte(len(n.Id))
 		fs.lastExprEnd = ec
 		return sc, ec, 0
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		lsc, _, ld := fs.walkExprSkipFirstLocal(n.Left)
 		// Extend lsc backward to include the opening '(' when the left
 		// sub-expression is itself a BinOp that was parenthesized in source.
 		// Guard: verify the matching ')' closes before the right child, so we
 		// don't grab a paren that wraps the entire expression.
-		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
+		if _, isBinOp := n.Left.(*ast.BinOp); isBinOp {
 			candidate := fs.scanBackOpen(lsc)
 			if candidate < lsc {
 				closeCol := fs.scanMatchingClose(candidate)
@@ -1429,7 +1429,7 @@ func (fs *funcState) walkExprSkipFirstLocal(e parser2.Expr) (startCol, endCol by
 		rsc, rec, rd := fs.walkExpr(n.Right)
 		// Extend rec forward to include ')' only when the right sub-expression's
 		// leftmost token is directly preceded by '(' (parenthesized as a unit).
-		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
+		if _, isBinOp := n.Right.(*ast.BinOp); isBinOp {
 			if fs.scanBackOpen(rsc) < rsc {
 				rec = fs.scanEndCol(rec)
 			}
@@ -1472,7 +1472,7 @@ func (fs *funcState) buildConsts() []any {
 // CPython stores only the first integer constant in co_consts; subsequent
 // integers use LOAD_SMALL_INT without a co_consts entry. None/True/False are
 // always stored in co_consts on first occurrence.
-func (fs *funcState) loadConst(c *parser2.Constant) (sc, ec byte) {
+func (fs *funcState) loadConst(c *ast.Constant) (sc, ec byte) {
 	sc = byte(c.P.Col)
 	switch c.Kind {
 	case "int":

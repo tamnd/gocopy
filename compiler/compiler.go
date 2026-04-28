@@ -29,9 +29,11 @@ import (
 	"errors"
 	"strings"
 
-	parser2 "github.com/tamnd/gopapy/parser"
+	parser "github.com/tamnd/gopapy/parser"
 
 	"github.com/tamnd/gocopy/bytecode"
+	"github.com/tamnd/gocopy/compiler/future"
+	"github.com/tamnd/gocopy/compiler/lower"
 	"github.com/tamnd/gocopy/compiler/symtable"
 )
 
@@ -47,8 +49,22 @@ type Options struct {
 
 // Compile returns the CodeObject for the given Python source bytes.
 func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
-	mod, parseErr := parser2.ParseFile(opts.Filename, string(source))
+	pmod, parseErr := parser.ParseFile(opts.Filename, string(source))
 	if parseErr != nil {
+		return nil, ErrUnsupportedSource
+	}
+	// Cross the parser→ast boundary exactly once. Lower is the
+	// identity at v0.6.2 (ast types alias parser types) but the
+	// signature is the contract every later release keeps.
+	mod, lowerErr := lower.Lower(pmod)
+	if lowerErr != nil {
+		return nil, ErrUnsupportedSource
+	}
+	// __future__ flags are collected eagerly. Today the only flag
+	// codegen would consume (Annotations) is dormant, so a non-zero
+	// result is silently kept; misplaced future imports surface as
+	// ErrUnsupportedSource to match parser-level rejection paths.
+	if _, futureErr := future.Collect(mod); futureErr != nil {
 		return nil, ErrUnsupportedSource
 	}
 	// v0.6.1: build the symbol table as a shadow pass so any

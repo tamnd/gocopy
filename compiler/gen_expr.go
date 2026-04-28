@@ -2,7 +2,7 @@ package compiler
 
 import (
 	"github.com/tamnd/gocopy/bytecode"
-	parser2 "github.com/tamnd/gopapy/parser"
+	"github.com/tamnd/gocopy/compiler/ast"
 )
 
 // compileGenExpr lowers a general expression assignment `x = <expr>` at
@@ -74,9 +74,9 @@ func newGenState(assignLine int, srcLines [][]byte) *genState {
 }
 
 // walk compiles expr, returning (startCol, endCol, maxStackDepth).
-func (gs *genState) walk(e parser2.Expr) (startCol, endCol byte, depth int) {
+func (gs *genState) walk(e ast.Expr) (startCol, endCol byte, depth int) {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		idx := gs.nameIdx(n.Id)
 		sc := byte(n.P.Col)
 		ec := sc + byte(len(n.Id))
@@ -84,7 +84,7 @@ func (gs *genState) walk(e parser2.Expr) (startCol, endCol byte, depth int) {
 		gs.emitLoad(1, sc, ec)
 		return sc, ec, 1
 
-	case *parser2.Constant:
+	case *ast.Constant:
 		iv := n.Value.(int64)
 		sc := byte(n.P.Col)
 		ec := gs.constEndCol(n)
@@ -93,7 +93,7 @@ func (gs *genState) walk(e parser2.Expr) (startCol, endCol byte, depth int) {
 		gs.emitLoad(1, sc, ec)
 		return sc, ec, 1
 
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		lsc, _, ld := gs.walk(n.Left)
 		_, rec, rd := gs.walk(n.Right)
 		oparg, _ := binOpargFromOp(n.Op)
@@ -103,7 +103,7 @@ func (gs *genState) walk(e parser2.Expr) (startCol, endCol byte, depth int) {
 		d := max(ld, rd+1)
 		return lsc, rec, d
 
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		_, oec, od := gs.walk(n.Operand)
 		opc := byte(n.P.Col)
 		switch n.Op {
@@ -184,7 +184,7 @@ func (gs *genState) buildConsts() []any {
 
 // constEndCol returns the column after the last character of the
 // constant token starting at n.P.Col on the assignment line.
-func (gs *genState) constEndCol(n *parser2.Constant) byte {
+func (gs *genState) constEndCol(n *ast.Constant) byte {
 	line := n.P.Line
 	if line < 1 || line > len(gs.srcLines) {
 		return byte(n.P.Col) + 1

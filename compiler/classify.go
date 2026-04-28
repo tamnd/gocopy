@@ -2,7 +2,7 @@ package compiler
 
 import (
 	"github.com/tamnd/gocopy/bytecode"
-	parser2 "github.com/tamnd/gopapy/parser"
+	"github.com/tamnd/gocopy/compiler/ast"
 )
 
 type modKind uint8
@@ -611,7 +611,7 @@ type genExprInfo struct {
 	targetLen  byte
 	line       int
 	lineEndCol byte
-	expr       parser2.Expr
+	expr       ast.Expr
 	srcLines   [][]byte
 }
 
@@ -660,8 +660,8 @@ type fbStmt struct {
 	targetName      string // assignment target (for !isReturn; also then-body target for isIfAssign / isIfElseAssign)
 	targetCol       byte   // column of the assignment target name
 	retKwCol        byte   // column of the `return` keyword (for isReturn / then-return of isIfReturn)
-	condExpr        parser2.Expr   // condition expression (for isIfReturn / isIfAssign)
-	expr            parser2.Expr   // return value or assignment RHS
+	condExpr        ast.Expr   // condition expression (for isIfReturn / isIfAssign)
+	expr            ast.Expr   // return value or assignment RHS
 	ifElseBranches  []ifElseExprBranch // branches for isIfElseAssign
 }
 
@@ -669,10 +669,10 @@ type fbStmt struct {
 // where each body is an arbitrary expression (not a small-int constant).
 // The else arm has condExpr == nil.
 type ifElseExprBranch struct {
-	condExpr parser2.Expr // nil for the else branch
+	condExpr ast.Expr // nil for the else branch
 	condLine int          // source line of `if`/`elif` keyword
 	bodyLine int          // source line of the assignment
-	expr     parser2.Expr // RHS of the assignment
+	expr     ast.Expr // RHS of the assignment
 }
 
 // whileAssign holds the parsed form of `while cond: name = val` where
