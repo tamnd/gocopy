@@ -50,6 +50,10 @@ func (e *ImportEntry) cuCount() int {
 		// LOAD_SMALL_INT + LOAD_CONST + IMPORT_NAME + STORE_NAME
 		return 4
 	}
+	if len(e.Aliases) == 1 && e.Aliases[0].Name == "*" {
+		// LOAD_SMALL_INT + LOAD_CONST + IMPORT_NAME + CALL_INTRINSIC_1 + POP_TOP
+		return 5
+	}
 	// LOAD_SMALL_INT + LOAD_CONST(tuple) + IMPORT_NAME +
 	// (IMPORT_FROM + STORE_NAME)*N + POP_TOP
 	return 4 + 2*len(e.Aliases)
@@ -78,14 +82,18 @@ func ImportBytecode(entries []ImportEntry, constIdxs []byte, nameRefs []ImportNa
 				byte(LOAD_CONST), constIdxs[i],
 				byte(IMPORT_NAME), ref.ModuleIdx,
 			)
-			for j, a := range ref.AliasIdxs {
-				_ = a
-				out = append(out,
-					byte(IMPORT_FROM), ref.AliasIdxs[j].NameIdx,
-					byte(STORE_NAME), ref.AliasIdxs[j].StoreIdx,
-				)
+			if len(e.Aliases) == 1 && e.Aliases[0].Name == "*" {
+				out = append(out, byte(CALL_INTRINSIC_1), 2, byte(POP_TOP), 0)
+			} else {
+				for j, a := range ref.AliasIdxs {
+					_ = a
+					out = append(out,
+						byte(IMPORT_FROM), ref.AliasIdxs[j].NameIdx,
+						byte(STORE_NAME), ref.AliasIdxs[j].StoreIdx,
+					)
+				}
+				out = append(out, byte(POP_TOP), 0)
 			}
-			out = append(out, byte(POP_TOP), 0)
 		}
 	}
 	out = append(out, byte(LOAD_CONST), noneIdx, byte(RETURN_VALUE), 0)
@@ -173,6 +181,71 @@ func appendImportContChunk(out []byte, length int, sc, ec byte) []byte {
 		out = append(out, entryHeader(0, length), payload)
 	} else {
 		out = append(out, entryHeader(codeOneLine0, length), sc, ec)
+	}
+	return out
+}
+
+// ClcImportEntry carries linetable metadata for one import in a
+// CLC-then-imports module body.
+type ClcImportEntry struct {
+	Line    int
+	EndCol  byte
+	CUCount int // precomputed (e.cuCount())
+	IsLast  bool
+}
+
+// ClcThenImportsLineTable returns the PEP 626 line table for a module whose
+// body is one constant-literal list assignment (3..30 elements, possibly
+// multi-line) followed by one or more import/from-import statements.
+//
+// clcLine/clcCloseLine are the 1-indexed source lines of '[' and ']'.
+// If clcCloseLine > clcLine the list spans multiple source lines and a LONG
+// entry is emitted; otherwise ONE_LINE1 is used.
+// clcOpenCol/clcCloseEnd are the column positions of '[' and ']'+1.
+// clcTargetLen is the byte length of the assignment target name (for the
+// SHORT0 STORE_NAME entry that follows the 3-CU build group).
+// entries holds per-import metadata in source order.
+func ClcThenImportsLineTable(
+	clcLine, clcCloseLine int, clcOpenCol, clcCloseEnd, clcTargetLen byte,
+	entries []ClcImportEntry,
+) []byte {
+	out := []byte{0xf0, 0x03, 0x01, 0x01, 0x01} // RESUME prologue
+	prevLine := 0
+
+	clcLineDelta := clcLine - prevLine
+	if clcCloseLine > clcLine {
+		out = appendListSpanEntry(out, 3, clcLineDelta, clcCloseLine-clcLine, clcOpenCol, clcCloseEnd)
+	} else {
+		out = appendValueEntryN(out, 3, clcLineDelta, clcOpenCol, clcCloseEnd)
+	}
+	out = appendShort0Entry(out, 1, 0, clcTargetLen)
+	prevLine = clcLine
+
+	for _, e := range entries {
+		cu := e.CUCount
+		if e.IsLast {
+			cu += 2 // LOAD_CONST None + RETURN_VALUE
+		}
+		lineDelta := e.Line - prevLine
+		sc := byte(0)
+		ec := e.EndCol
+
+		remaining := cu
+		first := true
+		for remaining > 0 {
+			chunk := remaining
+			if chunk > 8 {
+				chunk = 8
+			}
+			remaining -= chunk
+			if first {
+				out = appendImportFirstChunk(out, lineDelta, chunk, sc, ec)
+				first = false
+			} else {
+				out = appendImportContChunk(out, chunk, sc, ec)
+			}
+		}
+		prevLine = e.Line
 	}
 	return out
 }

@@ -188,6 +188,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileConstLitSeq(opts.Filename, cls.constLitSeqAsgn)
 	case modFrozenSetContains:
 		return compileFrozenSetContains(opts.Filename, cls.frozensetAsgn)
+	case modClcThenImports:
+		return compileClcThenImports(opts.Filename, cls.clcThenImportsAsgn)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -1275,6 +1277,157 @@ func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.Cod
 	} else {
 		co.StackSize = 2
 	}
+	return co, nil
+}
+
+// compileFrozenSetContains lowers `target = frozenset(arg).__contains__`.
+func compileFrozenSetContains(filename string, a frozenSetContainsAssign) (*bytecode.CodeObject, error) {
+	consts := []any{nil} // co_consts: (None,)
+	names := []string{"frozenset", a.argName, "__contains__", a.target}
+
+	bc := bytecode.FrozenSetContainsBytecode()
+	lt := bytecode.FrozenSetContainsLineTable(a.line, a.targetLen, a.frozensetCol, a.argCol, a.argLen)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 3
+	return co, nil
+}
+
+// compileClcThenImports lowers a module body that is one 3..30-element
+// all-string-constant list assignment followed by one or more from-import
+// statements. co_consts layout: (first_elem, fromlist_1, ..., fromlist_k,
+// None, full_tuple). Wildcard from-import (`from X import *`) emits
+// CALL_INTRINSIC_1 2 + POP_TOP instead of IMPORT_FROM + STORE_NAME + POP_TOP.
+func compileClcThenImports(filename string, cls clcThenImportsClassify) (*bytecode.CodeObject, error) {
+	a := cls.clcAssign
+	entries := cls.imports
+
+	n := len(a.elts)
+	if !a.isList || n < 3 || n >= 31 {
+		return nil, ErrUnsupportedSource
+	}
+	k := len(entries)
+	if k == 0 {
+		return nil, ErrUnsupportedSource
+	}
+
+	// Build co_consts: first_elem, fromlist_1..k, None, full_tuple.
+	first := a.elts[0].val
+	tup := make(bytecode.ConstTuple, n)
+	for i, e := range a.elts {
+		tup[i] = e.val
+	}
+	consts := make([]any, 0, 2+k+1)
+	consts = append(consts, first)
+
+	fromlistIdxs := make([]byte, k)
+	for i, e := range entries {
+		if !e.IsFrom {
+			return nil, ErrUnsupportedSource
+		}
+		fromlist := make(bytecode.ConstTuple, len(e.Aliases))
+		for j, al := range e.Aliases {
+			fromlist[j] = al.Name
+		}
+		fromlistIdxs[i] = byte(len(consts))
+		consts = append(consts, fromlist)
+	}
+	noneIdx := byte(len(consts))
+	consts = append(consts, nil)
+	tupleIdx := byte(len(consts))
+	consts = append(consts, tup)
+
+	// Build co_names: CLC target, then module names and alias names in order.
+	names := []string{}
+	nameMap := map[string]byte{}
+	addName := func(s string) byte {
+		if i, ok := nameMap[s]; ok {
+			return i
+		}
+		i := byte(len(names))
+		nameMap[s] = i
+		names = append(names, s)
+		return i
+	}
+	clcTargetIdx := addName(a.target)
+
+	type entryInfo struct {
+		modIdx    byte
+		aliasRefs []bytecode.AliasNameRef
+		isWild    bool
+	}
+	compiled := make([]entryInfo, k)
+	for i, e := range entries {
+		modIdx := addName(e.FromMod)
+		isWild := len(e.Aliases) == 1 && e.Aliases[0].Name == "*"
+		var aliasRefs []bytecode.AliasNameRef
+		if !isWild {
+			aliasRefs = make([]bytecode.AliasNameRef, len(e.Aliases))
+			for j, al := range e.Aliases {
+				ni := addName(al.Name)
+				si := ni
+				if al.Asname != "" {
+					si = addName(al.Asname)
+				}
+				aliasRefs[j] = bytecode.AliasNameRef{NameIdx: ni, StoreIdx: si}
+			}
+		}
+		compiled[i] = entryInfo{modIdx: modIdx, aliasRefs: aliasRefs, isWild: isWild}
+	}
+
+	// Build bytecode.
+	bc := []byte{
+		byte(bytecode.RESUME), 0,
+		byte(bytecode.BUILD_LIST), 0,
+		byte(bytecode.LOAD_CONST), tupleIdx,
+		byte(bytecode.LIST_EXTEND), 1,
+		byte(bytecode.STORE_NAME), clcTargetIdx,
+	}
+	for i, e := range entries {
+		bc = append(bc,
+			byte(bytecode.LOAD_SMALL_INT), byte(e.Level),
+			byte(bytecode.LOAD_CONST), fromlistIdxs[i],
+			byte(bytecode.IMPORT_NAME), compiled[i].modIdx,
+		)
+		if compiled[i].isWild {
+			bc = append(bc, byte(bytecode.CALL_INTRINSIC_1), 2, byte(bytecode.POP_TOP), 0)
+		} else {
+			for _, ref := range compiled[i].aliasRefs {
+				bc = append(bc,
+					byte(bytecode.IMPORT_FROM), ref.NameIdx,
+					byte(bytecode.STORE_NAME), ref.StoreIdx,
+				)
+			}
+			bc = append(bc, byte(bytecode.POP_TOP), 0)
+		}
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), noneIdx, byte(bytecode.RETURN_VALUE), 0)
+
+	// Compute per-import CU counts for the linetable.
+	ltEntries := make([]bytecode.ClcImportEntry, k)
+	for i, e := range entries {
+		cu := 3 + 2 // LOAD_SMALL_INT + LOAD_CONST + IMPORT_NAME + ... base = 3
+		if compiled[i].isWild {
+			cu = 5 // LOAD_SMALL_INT + LOAD_CONST + IMPORT_NAME + CALL_INTRINSIC_1 + POP_TOP
+		} else {
+			cu = 4 + 2*len(e.Aliases) // 4 + 2×N
+		}
+		ltEntries[i] = bytecode.ClcImportEntry{
+			Line:    e.Line,
+			EndCol:  e.EndCol,
+			CUCount: cu,
+			IsLast:  i == k-1,
+		}
+	}
+
+	lt := bytecode.ClcThenImportsLineTable(
+		a.line, a.closeLine,
+		a.openCol, a.closeEnd, a.targetLen,
+		ltEntries,
+	)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 2
 	return co, nil
 }
 
