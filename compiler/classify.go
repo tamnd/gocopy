@@ -36,6 +36,7 @@ const (
 	modFuncBodyExpr   // def f(args...): [assigns]* return expr  (general function body)
 	modImports        // sequence of import / from-import statements
 	modConstLitColl   // x = ["a","b","c"] or x = ("a","b","c") — all-string-constant collection
+	modConstLitSeq    // [docstring +] 2+ constLitColl assignments in sequence
 )
 
 type classification struct {
@@ -108,6 +109,8 @@ type classification struct {
 	imports []importEntry
 	// modConstLitColl fields:
 	constLitCollAsgn constLitCollAssign
+	// modConstLitSeq fields:
+	constLitSeqAsgn constLitSeqClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -258,6 +261,17 @@ type cmpAssign struct {
 type negLiteral struct {
 	pos any
 	neg any
+}
+
+// constLitSeqClassify describes a multi-statement module body: an optional
+// docstring followed by one or more constant-literal collection assignments.
+type constLitSeqClassify struct {
+	hasDocstring bool
+	docLine      int    // 1-indexed start line of docstring
+	docEndLine   int    // 1-indexed end line of docstring
+	docEndCol    byte   // exclusive end column of docstring on docEndLine
+	docText      string // the docstring value
+	stmts        []constLitCollAssign
 }
 
 // constLitElt is one element in a constant-literal collection assignment.
@@ -705,6 +719,39 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			kind:             modConstLitColl,
 			constLitCollAsgn: first.constLitCollAsgn,
 		}, true
+	}
+	// modConstLitSeq: [docstring] + (≥1 constLitColl with docstring, or ≥2 without)
+	{
+		hasdoc := len(stmts) > 0 && stmts[0].kind == stmtString
+		start := 0
+		if hasdoc {
+			start = 1
+		}
+		allCLC := start < len(stmts)
+		for i := start; i < len(stmts); i++ {
+			if stmts[i].kind != stmtConstLitColl {
+				allCLC = false
+				break
+			}
+		}
+		numCLC := len(stmts) - start
+		if allCLC && (numCLC >= 2 || (hasdoc && numCLC >= 1)) {
+			seq := constLitSeqClassify{hasDocstring: hasdoc}
+			if hasdoc {
+				seq.docLine = stmts[0].line
+				seq.docEndLine = stmts[0].endLine
+				seq.docEndCol = stmts[0].endCol
+				seq.docText = stmts[0].text
+			}
+			seq.stmts = make([]constLitCollAssign, numCLC)
+			for i := range numCLC {
+				seq.stmts[i] = stmts[start+i].constLitCollAsgn
+			}
+			return classification{
+				kind:           modConstLitSeq,
+				constLitSeqAsgn: seq,
+			}, true
+		}
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
