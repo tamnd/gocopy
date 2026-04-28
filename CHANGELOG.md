@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.4](changelog/v0.6.4.md) - flow graph (CFG) with read-only construction and dominators (2026-04-29)
 - [v0.6.3](changelog/v0.6.3.md) - instruction sequence IR with decode/encode round-trip (2026-04-29)
 - [v0.6.2](changelog/v0.6.2.md) - gocopy AST surface, lowering boundary, __future__ flags (2026-04-29)
 - [v0.6.1](changelog/v0.6.1.md) - symbol table pass mirroring CPython's symtable.c (2026-04-29)
