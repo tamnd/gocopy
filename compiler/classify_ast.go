@@ -480,10 +480,18 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 
 	switch e := value.(type) {
 	case *parser2.List:
-		return extractCollection(line, target, bytecode.CollList, e.P.Col, e.Elts, lines)
+		rs, ok := extractCollection(line, target, bytecode.CollList, e.P.Col, e.Elts, lines)
+		if ok {
+			return rs, true
+		}
+		return extractConstLitColl(line, target, true, byte(e.P.Col), e.Elts, lines)
 
 	case *parser2.Tuple:
-		return extractCollection(line, target, bytecode.CollTuple, e.P.Col, e.Elts, lines)
+		rs, ok := extractCollection(line, target, bytecode.CollTuple, e.P.Col, e.Elts, lines)
+		if ok {
+			return rs, true
+		}
+		return extractConstLitColl(line, target, false, byte(e.P.Col), e.Elts, lines)
 
 	case *parser2.Set:
 		return extractCollection(line, target, bytecode.CollSet, e.P.Col, e.Elts, lines)
@@ -1364,6 +1372,62 @@ func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, b
 			outerRetArgCol:   byte(outerRetName.P.Col),
 			outerRetArgEnd:   outerRetArgEnd,
 			outerRetKwCol:    byte(outerRet.P.Col),
+		},
+	}, true
+}
+
+// extractConstLitColl handles `x = ["a", "b", "c"]` or `x = ("a", "b", "c")`
+// where all elements are plain-ASCII single-line string constants.
+// openCol is the column of the opening bracket, isList=true for list, false for tuple.
+func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+	if openCol > 255 || len(target.Id) > 15 || target.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(eltsExprs) == 0 {
+		return rawStmt{}, false // empty collections handled by extractCollection
+	}
+	if line < 1 || line > len(lines) {
+		return rawStmt{}, false
+	}
+	ln := trimRight(stripLineComment(lines[line-1]))
+	if len(ln) > 255 {
+		return rawStmt{}, false
+	}
+	closeEnd := byte(len(ln))
+
+	elts := make([]constLitElt, 0, len(eltsExprs))
+	for _, expr := range eltsExprs {
+		c, isConst := expr.(*parser2.Constant)
+		if !isConst || c.Kind != "str" || c.P.Col > 255 || c.P.Line != line {
+			return rawStmt{}, false
+		}
+		sv, ok := c.Value.(string)
+		if !ok {
+			return rawStmt{}, false
+		}
+		if strings.Contains(sv, "\n") {
+			return rawStmt{}, false
+		}
+		if !isPlainAscii([]byte(sv), 0) {
+			return rawStmt{}, false
+		}
+		col := byte(c.P.Col)
+		endCol := col + 2 + byte(len(sv)) // opening-quote + content + closing-quote
+		elts = append(elts, constLitElt{val: sv, col: col, endCol: endCol})
+	}
+
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtConstLitColl,
+		constLitCollAsgn: constLitCollAssign{
+			line:      line,
+			target:    target.Id,
+			targetLen: byte(len(target.Id)),
+			openCol:   openCol,
+			closeEnd:  closeEnd,
+			isList:    isList,
+			elts:      elts,
 		},
 	}, true
 }

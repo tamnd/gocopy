@@ -46,6 +46,7 @@ const (
 	IS_OP             Opcode = 74
 	JUMP_BACKWARD     Opcode = 75
 	JUMP_FORWARD      Opcode = 77
+	LIST_EXTEND       Opcode = 79
 	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
 	LOAD_DEREF        Opcode = 83
