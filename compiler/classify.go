@@ -33,6 +33,7 @@ const (
 	modFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 	modClosureDef     // def f(x): def g(): return x; return g  (simple one-free-var closure)
 	modGenExpr        // x = <general expression> (recursive Name/Constant/BinOp/UnaryOp)
+	modFuncBodyExpr   // def f(args...): [assigns]* return expr  (general function body)
 )
 
 type classification struct {
@@ -99,6 +100,8 @@ type classification struct {
 	closureAsgn closureDef
 	// modGenExpr fields:
 	genExprAsgn genExprInfo
+	// modFuncBodyExpr fields:
+	funcBodyAsgn funcBodyInfo
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -151,6 +154,8 @@ type rawStmt struct {
 	closureAsgn closureDef
 	// stmtGenExpr fields:
 	genExprAsgn genExprInfo
+	// stmtFuncBodyExpr fields:
+	funcBodyAsgn funcBodyInfo
 }
 
 type rawStmtKind uint8
@@ -178,6 +183,7 @@ const (
 	stmtFuncDef        // def f(arg): return arg  (single-arg, single return-arg body)
 	stmtClosureDef     // def f(x): def g(): return x; return g  (simple closure)
 	stmtGenExpr        // x = <general expression>
+	stmtFuncBodyExpr   // def f(args...): [assigns]* return expr
 )
 
 // asgn is the parsed form of a single `name = literal` assignment.
@@ -455,6 +461,41 @@ type genExprInfo struct {
 	srcLines   [][]byte
 }
 
+// funcBodyInfo holds the parsed form of a function definition whose body
+// consists of zero or more local-assignment statements followed by one
+// return statement. All expressions in the body are recursively composed
+// of Name nodes referring to function parameters or previously assigned
+// locals, plus BinOp and UnaryOp (USub/Invert) nodes.
+type funcBodyInfo struct {
+	funcName    string
+	funcNameLen byte
+	defLine     int
+	params      []fbParam  // positional parameters in declaration order
+	stmts       []fbStmt   // body statements: all assignments then one return
+	srcLines    [][]byte
+}
+
+// fbParam is one positional parameter in a funcBodyInfo.
+type fbParam struct {
+	name string
+}
+
+// fbStmt is one statement in a funcBodyInfo body.
+type fbStmt struct {
+	isReturn    bool   // true for the return statement, false for assignments
+	isAugAssign bool   // true for augmented assignments (target op= rhs)
+	isIfReturn  bool   // true for `if cond: return expr` (early-return if)
+	isIfAssign  bool   // true for `if cond: target = expr` (conditional assignment, no else)
+	augOp       byte   // NbInplace* oparg, only meaningful when isAugAssign
+	line        int    // source line (1-indexed)
+	thenLine    int    // line of the then-branch (for isIfReturn / isIfAssign)
+	targetName  string // assignment target (for !isReturn; also then-body target for isIfAssign)
+	targetCol   byte   // column of the assignment target name
+	retKwCol    byte   // column of the `return` keyword (for isReturn / then-return of isIfReturn)
+	condExpr    parser2.Expr // condition expression (for isIfReturn / isIfAssign)
+	expr        parser2.Expr // return value or assignment RHS
+}
+
 // whileAssign holds the parsed form of `while cond: name = val` where
 // cond is a name and val is a small integer (0-255).
 type whileAssign struct {
@@ -577,6 +618,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:        modGenExpr,
 			genExprAsgn: first.genExprAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtFuncBodyExpr {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:         modFuncBodyExpr,
+			funcBodyAsgn: first.funcBodyAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

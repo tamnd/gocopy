@@ -229,7 +229,10 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 		case *parser2.FunctionDef:
 			rs, ok2 := extractFuncDef(s)
 			if !ok2 {
-				return classification{}, false
+				rs, ok2 = extractFuncBodyExpr(s, lines)
+				if !ok2 {
+					return classification{}, false
+				}
 			}
 			stmts = append(stmts, rs)
 
@@ -1254,6 +1257,397 @@ func isGenExpr(e parser2.Expr) bool {
 			return false
 		}
 		return isGenExpr(n.Operand)
+	}
+	return false
+}
+
+// extractFuncBodyExpr recognises a function definition whose body consists
+// of zero or more local-assignment statements followed by one return
+// statement. Every expression in the body must be composed only of Name
+// nodes (referring to params or previously assigned locals), BinOp, and
+// UnaryOp (USub/Invert). No constants, no *args / **kwargs, no decorators.
+// All source positions must fit in a byte. Each statement must be on a
+// distinct source line (no semicolons) so STORE_FAST_LOAD_FAST is not needed.
+func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bool) {
+	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
+		return rawStmt{}, false
+	}
+	args := s.Args
+	if args == nil || len(args.PosOnly) != 0 || len(args.KwOnly) != 0 ||
+		args.Vararg != nil || args.Kwarg != nil || len(args.Defaults) != 0 {
+		return rawStmt{}, false
+	}
+	if len(args.Args) > 15 {
+		return rawStmt{}, false
+	}
+	if len(s.Name) > 15 || s.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(s.Body) < 1 {
+		return rawStmt{}, false
+	}
+
+	params := make([]fbParam, len(args.Args))
+	knownNames := map[string]bool{}
+	for i, a := range args.Args {
+		if a.Annotation != nil || a.P.Col > 255 || len(a.Name) == 0 {
+			return rawStmt{}, false
+		}
+		params[i] = fbParam{name: a.Name}
+		knownNames[a.Name] = true
+	}
+
+	// Total local slots = params + body-assigned locals; must fit in nibble (≤15).
+	// We'll verify during body extraction.
+
+	stmtNodes := s.Body
+	fbStmts := make([]fbStmt, 0, len(stmtNodes))
+	prevLine := s.P.Line // def line; each body stmt must be on a later line
+
+	for i, node := range stmtNodes {
+		isLast := i == len(stmtNodes)-1
+
+		switch st := node.(type) {
+		case *parser2.Assign:
+			if isLast {
+				return rawStmt{}, false // last stmt must be return
+			}
+			if len(st.Targets) != 1 {
+				return rawStmt{}, false
+			}
+			tgt, ok := st.Targets[0].(*parser2.Name)
+			if !ok || len(tgt.Id) > 15 || tgt.P.Col > 255 {
+				return rawStmt{}, false
+			}
+			if st.P.Line <= prevLine {
+				return rawStmt{}, false // require each stmt on its own line
+			}
+			if !isFuncBodyExpr(st.Value, knownNames) {
+				return rawStmt{}, false
+			}
+			knownNames[tgt.Id] = true
+			fbStmts = append(fbStmts, fbStmt{
+				isReturn:   false,
+				line:       st.P.Line,
+				targetName: tgt.Id,
+				targetCol:  byte(tgt.P.Col),
+				expr:       st.Value,
+			})
+			prevLine = st.P.Line
+
+		case *parser2.AugAssign:
+			if isLast {
+				return rawStmt{}, false
+			}
+			tgt, ok := st.Target.(*parser2.Name)
+			if !ok || !knownNames[tgt.Id] || len(tgt.Id) > 15 || tgt.P.Col > 255 {
+				return rawStmt{}, false
+			}
+			oparg, ok2 := augOpargFromOp(st.Op)
+			if !ok2 {
+				return rawStmt{}, false
+			}
+			if st.P.Line <= prevLine {
+				return rawStmt{}, false
+			}
+			if !isFuncBodyExpr(st.Value, knownNames) {
+				return rawStmt{}, false
+			}
+			fbStmts = append(fbStmts, fbStmt{
+				isReturn:    false,
+				isAugAssign: true,
+				augOp:       oparg,
+				line:        st.P.Line,
+				targetName:  tgt.Id,
+				targetCol:   byte(tgt.P.Col),
+				expr:        st.Value,
+			})
+			prevLine = st.P.Line
+
+		case *parser2.Return:
+			if !isLast {
+				return rawStmt{}, false
+			}
+			if st.Value == nil {
+				return rawStmt{}, false
+			}
+			if st.P.Line <= prevLine {
+				return rawStmt{}, false
+			}
+			if st.P.Col > 255 {
+				return rawStmt{}, false
+			}
+			// Special case: ternary return `return val if cond else other`.
+			// Only a single-Compare condition is supported; Body and OrElse
+			// must each pass isFuncBodyExpr.
+			if ifexpr, isIfExpr := st.Value.(*parser2.IfExp); isIfExpr {
+				cmpNode, isCmp := ifexpr.Test.(*parser2.Compare)
+				if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
+					return rawStmt{}, false
+				}
+				ternOp, _, ok := cmpOpFromOp(cmpNode.Ops[0])
+				if !ok || ternOp != bytecode.COMPARE_OP {
+					return rawStmt{}, false
+				}
+				if !isFuncBodyExpr(cmpNode.Left, knownNames) || !isFuncBodyExpr(cmpNode.Comparators[0], knownNames) {
+					return rawStmt{}, false
+				}
+				if !isFuncBodyExpr(ifexpr.Body, knownNames) || !isFuncBodyExpr(ifexpr.OrElse, knownNames) {
+					return rawStmt{}, false
+				}
+			} else if !isFuncBodyExpr(st.Value, knownNames) {
+				return rawStmt{}, false
+			}
+			fbStmts = append(fbStmts, fbStmt{
+				isReturn: true,
+				line:     st.P.Line,
+				retKwCol: byte(st.P.Col),
+				expr:     st.Value,
+			})
+
+		case *parser2.If:
+			// Support `if <compare>: return <expr>` chains, including:
+			//   - plain `if`: no else (non-last statement)
+			//   - elif chains: If node in orelse (non-last statement)
+			//   - if/else return: If with orelse=[Return] (can be last statement)
+			// Also handles `if <compare>: target = expr` (no else, non-last).
+			node := st
+			for {
+				if len(node.Body) != 1 {
+					return rawStmt{}, false
+				}
+				// isIfAssign: body is a single Assign to an already-known Name.
+				if assignNode, ok2 := node.Body[0].(*parser2.Assign); ok2 {
+					if isLast || len(node.Orelse) != 0 {
+						return rawStmt{}, false
+					}
+					if len(assignNode.Targets) != 1 {
+						return rawStmt{}, false
+					}
+					tgtName, isNameTgt := assignNode.Targets[0].(*parser2.Name)
+					if !isNameTgt || !knownNames[tgtName.Id] || tgtName.P.Col > 255 {
+						return rawStmt{}, false
+					}
+					if !isFuncBodyExpr(assignNode.Value, knownNames) {
+						return rawStmt{}, false
+					}
+					if node.P.Line <= prevLine {
+						return rawStmt{}, false
+					}
+					cmpNode, isCmp := node.Test.(*parser2.Compare)
+					if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
+						return rawStmt{}, false
+					}
+					op3, _, ok3 := cmpOpFromOp(cmpNode.Ops[0])
+					if !ok3 {
+						return rawStmt{}, false
+					}
+					if op3 == bytecode.IS_OP {
+						// Only `x is None` / `x is not None` are supported.
+						nc, isNC := cmpNode.Comparators[0].(*parser2.Constant)
+						vn, isVN := cmpNode.Left.(*parser2.Name)
+						if !isNC || nc.Kind != "None" || nc.P.Col > 255 || !isVN || !knownNames[vn.Id] {
+							return rawStmt{}, false
+						}
+					} else if !isFuncBodyExpr(cmpNode.Left, knownNames) || !isFuncBodyExpr(cmpNode.Comparators[0], knownNames) {
+						return rawStmt{}, false
+					}
+					fbStmts = append(fbStmts, fbStmt{
+						isIfAssign: true,
+						line:       node.P.Line,
+						thenLine:   assignNode.P.Line,
+						targetName: tgtName.Id,
+						targetCol:  byte(tgtName.P.Col),
+						condExpr:   node.Test,
+						expr:       assignNode.Value,
+					})
+					prevLine = node.P.Line
+					break
+				}
+				retNode, ok := node.Body[0].(*parser2.Return)
+				if !ok || retNode.Value == nil || retNode.P.Col > 255 {
+					return rawStmt{}, false
+				}
+				if node.P.Line <= prevLine {
+					return rawStmt{}, false
+				}
+				cmpNode, isCmp := node.Test.(*parser2.Compare)
+				if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
+					return rawStmt{}, false
+				}
+				op2, _, ok2 := cmpOpFromOp(cmpNode.Ops[0])
+				if !ok2 {
+					return rawStmt{}, false
+				}
+				if op2 == bytecode.IS_OP {
+					// Only `x is None` / `x is not None` are supported.
+					nc, isNC := cmpNode.Comparators[0].(*parser2.Constant)
+					vn, isVN := cmpNode.Left.(*parser2.Name)
+					if !isNC || nc.Kind != "None" || nc.P.Col > 255 || !isVN || !knownNames[vn.Id] {
+						return rawStmt{}, false
+					}
+				} else if !isFuncBodyExpr(cmpNode.Left, knownNames) || !isFuncBodyExpr(cmpNode.Comparators[0], knownNames) {
+					return rawStmt{}, false
+				}
+				if !isFuncBodyExpr(retNode.Value, knownNames) {
+					return rawStmt{}, false
+				}
+				fbStmts = append(fbStmts, fbStmt{
+					isIfReturn: true,
+					line:       node.P.Line,
+					thenLine:   retNode.P.Line,
+					retKwCol:   byte(retNode.P.Col),
+					condExpr:   node.Test,
+					expr:       retNode.Value,
+				})
+				prevLine = node.P.Line
+				if len(node.Orelse) == 0 {
+					// Plain if with no else: only valid as non-last statement.
+					if isLast {
+						return rawStmt{}, false
+					}
+					break
+				}
+				// orelse=[Return]: else branch becomes the fallthrough return.
+				if elseRet, isRet := node.Orelse[0].(*parser2.Return); isRet && len(node.Orelse) == 1 {
+					if elseRet.Value == nil || elseRet.P.Col > 255 {
+						return rawStmt{}, false
+					}
+					if !isFuncBodyExpr(elseRet.Value, knownNames) {
+						return rawStmt{}, false
+					}
+					fbStmts = append(fbStmts, fbStmt{
+						isReturn: true,
+						line:     elseRet.P.Line,
+						retKwCol: byte(elseRet.P.Col),
+						expr:     elseRet.Value,
+					})
+					break
+				}
+				// orelse=[If]: elif — continue the loop.
+				elif, isElif := node.Orelse[0].(*parser2.If)
+				if !isElif || len(node.Orelse) != 1 {
+					return rawStmt{}, false
+				}
+				node = elif
+			}
+
+		default:
+			return rawStmt{}, false
+		}
+	}
+
+	// Count total slots: params + unique assigned locals.
+	// Ensure total ≤ 15 so LFLBLFLB opargs fit in a nibble.
+	nLocals := 0
+	for _, st := range fbStmts {
+		if !st.isReturn && !st.isIfReturn && !st.isIfAssign {
+			nLocals++
+		}
+	}
+	if len(params)+nLocals > 15 {
+		return rawStmt{}, false
+	}
+
+	defLine := s.P.Line
+	lastStmt := fbStmts[len(fbStmts)-1]
+
+	return rawStmt{
+		line:    defLine,
+		endLine: lastStmt.line,
+		kind:    stmtFuncBodyExpr,
+		funcBodyAsgn: funcBodyInfo{
+			funcName:    s.Name,
+			funcNameLen: byte(len(s.Name)),
+			defLine:     defLine,
+			params:      params,
+			stmts:       fbStmts,
+			srcLines:    srcLines,
+		},
+	}, true
+}
+
+// isFuncBodyExpr reports whether e is a valid function-body expression:
+// a Name referring to a known local/param, a non-negative integer constant
+// (0-255), None/True/False, a BinOp/UnaryOp (USub/Invert/Not), a single
+// Compare with a COMPARE_OP operator, or a Call with a global Name function
+// and all positional args being valid func body exprs.
+func isFuncBodyExpr(e parser2.Expr, known map[string]bool) bool {
+	switch n := e.(type) {
+	case *parser2.Name:
+		// Accept known locals and unknown globals (LOAD_GLOBAL read form).
+		return len(n.Id) <= 15 && n.P.Col <= 255
+	case *parser2.Constant:
+		if n.P.Col > 255 {
+			return false
+		}
+		switch n.Kind {
+		case "int":
+			iv, ok := n.Value.(int64)
+			return ok && iv >= 0 // no upper bound; large ints use LOAD_CONST
+		case "None", "True", "False":
+			return true
+		case "float":
+			return true
+		}
+		return false
+	case *parser2.BinOp:
+		_, ok := binOpargFromOp(n.Op)
+		return ok && isFuncBodyExpr(n.Left, known) && isFuncBodyExpr(n.Right, known)
+	case *parser2.UnaryOp:
+		if n.Op != "USub" && n.Op != "Invert" && n.Op != "Not" {
+			return false
+		}
+		return isFuncBodyExpr(n.Operand, known)
+	case *parser2.Compare:
+		if len(n.Ops) != 1 || len(n.Comparators) != 1 {
+			return false
+		}
+		op, _, ok := cmpOpFromOp(n.Ops[0])
+		return ok && op == bytecode.COMPARE_OP &&
+			isFuncBodyExpr(n.Left, known) && isFuncBodyExpr(n.Comparators[0], known)
+	case *parser2.Attribute:
+		// a.attr: receiver must be a known local/param Name.
+		obj, ok := n.Value.(*parser2.Name)
+		return ok && known[obj.Id] && obj.P.Col <= 255
+	case *parser2.Tuple:
+		if len(n.Elts) < 1 {
+			return false
+		}
+		for _, elt := range n.Elts {
+			if !isFuncBodyExpr(elt, known) {
+				return false
+			}
+		}
+		return true
+	case *parser2.Subscript:
+		// a[b] compiles to BINARY_OP 26 (NbGetItem), same as a BinOp.
+		return isFuncBodyExpr(n.Value, known) && isFuncBodyExpr(n.Slice, known)
+	case *parser2.Call:
+		if len(n.Keywords) > 0 {
+			return false
+		}
+		switch fn := n.Func.(type) {
+		case *parser2.Name:
+			// Global function call: callee must not be a known local/param.
+			if known[fn.Id] || fn.P.Col > 255 {
+				return false
+			}
+		case *parser2.Attribute:
+			// Method call: receiver must be a known local/param Name.
+			obj, ok := fn.Value.(*parser2.Name)
+			if !ok || !known[obj.Id] || obj.P.Col > 255 {
+				return false
+			}
+		default:
+			return false
+		}
+		for _, arg := range n.Args {
+			if !isFuncBodyExpr(arg, known) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

@@ -47,12 +47,17 @@ const (
 	LOAD_ATTR         Opcode = 80
 	LOAD_CONST        Opcode = 82
 	LOAD_DEREF        Opcode = 83
-	LOAD_FAST_BORROW  Opcode = 86
-	LOAD_NAME         Opcode = 93
+	LOAD_FAST                         Opcode = 84
+	LOAD_FAST_BORROW                  Opcode = 86
+	LOAD_FAST_BORROW_LOAD_FAST_BORROW Opcode = 87
+	LOAD_GLOBAL                       Opcode = 92
+	LOAD_NAME                         Opcode = 93
 	MAKE_CELL         Opcode = 97
 	LOAD_SMALL_INT    Opcode = 94
-	POP_JUMP_IF_FALSE Opcode = 100
-	POP_JUMP_IF_TRUE  Opcode = 103
+	POP_JUMP_IF_FALSE    Opcode = 100
+	POP_JUMP_IF_NONE     Opcode = 101
+	POP_JUMP_IF_NOT_NONE Opcode = 102
+	POP_JUMP_IF_TRUE     Opcode = 103
 	SET_FUNCTION_ATTRIBUTE Opcode = 108
 	STORE_NAME             Opcode = 116
 	STORE_ATTR             Opcode = 110
@@ -73,12 +78,15 @@ var CacheSize = [256]uint8{
 	39:  3, // TO_BOOL: 3 inline-cache words (6 bytes)
 	52:  3, // CALL: 3 inline-cache words (6 bytes)
 	44:  5, // BINARY_OP: 5 inline-cache words (10 bytes)
+	92:  4, // LOAD_GLOBAL: 4 inline-cache words (8 bytes)
 	56:  1, // COMPARE_OP: 1 inline-cache word (2 bytes)
 	57:  1, // CONTAINS_OP: 1 inline-cache word (2 bytes)
 	80:  9, // LOAD_ATTR: 9 inline-cache words (18 bytes)
 	70:  1, // FOR_ITER: 1 inline-cache word (2 bytes)
 	75:  1, // JUMP_BACKWARD: 1 inline-cache word (2 bytes)
 	100: 1, // POP_JUMP_IF_FALSE: 1 inline-cache word (2 bytes)
+	101: 1, // POP_JUMP_IF_NONE: 1 inline-cache word (2 bytes)
+	102: 1, // POP_JUMP_IF_NOT_NONE: 1 inline-cache word (2 bytes)
 	103: 1, // POP_JUMP_IF_TRUE: 1 inline-cache word (2 bytes)
 	110: 4, // STORE_ATTR: 4 inline-cache words (8 bytes)
 }
