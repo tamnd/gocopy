@@ -838,7 +838,7 @@ func TestUnsupportedSourceRejected(t *testing.T) {
 		{"assignment to reserved name", []byte("None = 1\n")},
 		{"augmented assignment", []byte("x += 1\n")},
 		{"call", []byte("print('hi')\n")},
-		{"import", []byte("import sys\n")},
+		{"import dotted alias", []byte("import os.path as p\n")},
 		{"docstring with backslash escape", []byte("\"hi\\nthere\"\n")},
 		{"non-ascii docstring", []byte("\"héllo\"\n")},
 		{"f-string", []byte("f\"hi\"\n")},
