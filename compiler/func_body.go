@@ -634,7 +634,14 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			lastEnd = ec
 			fs.trackDepth(i + 1)
 		}
-		// BUILD_TUPLE: span from first element to last element.
+		// For parenthesised tuples the parser sets n.P to the '(' position,
+		// which is one column before the first element. Extend the span to
+		// include both '(' and the matching ')'.
+		if tupleStart := byte(n.P.Col); tupleStart < firstStart {
+			firstStart = tupleStart
+		}
+		lastEnd = fs.scanEndCol(lastEnd)
+		// BUILD_TUPLE: span from first element (or '(') to last element (or ')').
 		fs.bc = append(fs.bc, byte(bytecode.BUILD_TUPLE), byte(nElts))
 		fs.emitSame(1, firstStart, lastEnd)
 		fs.trackDepth(nElts)
@@ -695,6 +702,9 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		// General case: walk left then right.
 		lsc, _, ld := fs.walkExpr(n.Left)
 		_, rec, rd := fs.walkExpr(n.Right)
+		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
+			rec = fs.scanEndCol(rec)
+		}
 		boparg, _ := binOpargFromOp(n.Op)
 		cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
 		fs.emitBinOp(boparg, cacheWords, lsc, rec)
