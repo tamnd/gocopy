@@ -190,6 +190,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileFrozenSetContains(opts.Filename, cls.frozensetAsgn)
 	case modClcThenImports:
 		return compileClcThenImports(opts.Filename, cls.clcThenImportsAsgn)
+	case modAssignsThenFuncDef:
+		return compileAssignsThenFuncDef(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -716,6 +718,97 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 		}
 	}
 	lt := bytecode.MultiAssignLineTable(ltAsgns, tail)
+
+	return module(filename, bc, lt, consts, names), nil
+}
+
+// compileAssignsThenFuncDef lowers a module body of N ≥ 1 constant-folded
+// assignments followed by one function definition.
+func compileAssignsThenFuncDef(filename string, cls classification) (*bytecode.CodeObject, error) {
+	g := cls.assignsThenFuncDefAsgn
+
+	// Compile the inner function body code object.
+	innerCls := classification{kind: modFuncBodyExpr, funcBodyAsgn: g.funcBody}
+	innerCode, bodyEndLine, bodyEndCol, err := compileFuncBodyCore(filename, innerCls)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build co_names: assign names in order, then funcName.
+	namesIdx := map[string]byte{}
+	names := []string{}
+	for _, a := range g.asgns {
+		if _, ok := namesIdx[a.name]; !ok {
+			namesIdx[a.name] = byte(len(names))
+			names = append(names, a.name)
+		}
+	}
+	funcNameIdx := byte(len(names))
+	names = append(names, g.funcBody.funcName)
+
+	// Build co_consts.
+	// Layout: [leftVal_of_first_fold, innerCode, None, result_fold_1, result_fold_2, ...]
+	consts := []any{}
+	addConst := func(v any) byte {
+		for i, c := range consts {
+			if c == v {
+				return byte(i)
+			}
+		}
+		idx := byte(len(consts))
+		consts = append(consts, v)
+		return idx
+	}
+	firstFold := g.asgns[0].value.(foldedBinOp)
+	addConst(firstFold.leftVal)
+	codeObjIdx := addConst(innerCode)
+	noneIdx := addConst(nil)
+
+	loadIdx := make([]byte, len(g.asgns))
+	type deferredEntry struct {
+		asgnIdx int
+		val     any
+	}
+	var deferred []deferredEntry
+	for i, a := range g.asgns {
+		fold := a.value.(foldedBinOp)
+		deferred = append(deferred, deferredEntry{i, fold.result})
+		_ = loadIdx[i]
+	}
+	deferredIdxMap := map[any]byte{}
+	for _, d := range deferred {
+		if _, ok := deferredIdxMap[d.val]; !ok {
+			deferredIdxMap[d.val] = byte(len(consts))
+			consts = append(consts, d.val)
+		}
+		loadIdx[d.asgnIdx] = deferredIdxMap[d.val]
+	}
+
+	// Build bytecode.
+	bc := make([]byte, 0, 2+4*len(g.asgns)+8)
+	bc = append(bc, byte(bytecode.RESUME), 0)
+	for i, a := range g.asgns {
+		bc = append(bc, byte(bytecode.LOAD_CONST), loadIdx[i])
+		bc = append(bc, byte(bytecode.STORE_NAME), namesIdx[a.name])
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), codeObjIdx)
+	bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
+	bc = append(bc, byte(bytecode.STORE_NAME), funcNameIdx)
+	bc = append(bc, byte(bytecode.LOAD_CONST), noneIdx)
+	bc = append(bc, byte(bytecode.RETURN_VALUE), 0)
+
+	// Build line table.
+	defLine := g.funcBody.defLine
+	ltAsgns := make([]bytecode.AssignInfo, len(g.asgns))
+	for i, a := range g.asgns {
+		ltAsgns[i] = bytecode.AssignInfo{
+			Line:     a.line,
+			NameLen:  a.nameLen,
+			ValStart: a.valStart,
+			ValEnd:   a.valEnd,
+		}
+	}
+	lt := bytecode.AssignsThenFuncDefLineTable(ltAsgns, defLine, bodyEndLine, bodyEndCol)
 
 	return module(filename, bc, lt, consts, names), nil
 }

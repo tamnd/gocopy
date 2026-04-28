@@ -408,7 +408,6 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		}
 	}
 
-	// Compute stack size and body end info for the module-level linetable.
 	maxDepth := fs.maxDepth
 	if maxDepth < 1 {
 		maxDepth = 1
@@ -416,7 +415,6 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 	lastStmt := g.stmts[len(g.stmts)-1]
 	bodyEndLine := lastStmt.line
-	// bodyEndCol: end column of the return expression's rightmost token.
 	bodyEndCol := fs.lastExprEnd
 
 	innerCode := &bytecode.CodeObject{
@@ -424,7 +422,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		PosOnlyArgCount: 0,
 		KwOnlyArgCount:  0,
 		StackSize:       int32(maxDepth),
-		Flags:           0x3, // CO_OPTIMIZED | CO_NEWLOCALS
+		Flags:           0x3,
 		Bytecode:        fs.bc,
 		Consts:          fs.buildConsts(),
 		Names:           fs.buildNames(),
@@ -456,6 +454,42 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		LineTable:       bytecode.FuncDefModuleLineTable(g.defLine, bodyEndLine, bodyEndCol),
 		ExcTable:        []byte{},
 	}, nil
+}
+
+// compileFuncBodyCore compiles a function body and returns the inner code object
+// together with the last body statement's line and the end column of the last
+// expression, needed to build the enclosing module's line table.
+func compileFuncBodyCore(filename string, cls classification) (innerCode *bytecode.CodeObject, bodyEndLine int, bodyEndCol byte, err error) {
+	outerMod, e := compileFuncBodyExpr(filename, cls)
+	if e != nil {
+		return nil, 0, 0, e
+	}
+	inner := outerMod.Consts[0].(*bytecode.CodeObject)
+	// Decode bodyEndLine and bodyEndCol from the outer module's line table.
+	// Layout: 5-byte prologue + LONG-5CU header + lineDelta + endLineDelta + startCol+1 + endCol+1.
+	lt := outerMod.LineTable
+	pos := 6 // skip prologue (5) + header byte (1)
+	// skip lineDelta (signed varint)
+	for lt[pos]&0x40 != 0 {
+		pos++
+	}
+	pos++
+	// read endLineDelta (unsigned varint)
+	endLineDelta := 0
+	for shift := 0; ; shift += 6 {
+		b := lt[pos]
+		pos++
+		endLineDelta |= int(b&0x3f) << shift
+		if b < 0x40 {
+			break
+		}
+	}
+	// skip startCol+1 (always 1, one byte)
+	pos++
+	// read endCol+1 (unsigned varint, always fits in one byte for col < 64)
+	endCol1 := int(lt[pos] & 0x3f)
+	defLine := int(outerMod.FirstLineNo)
+	return inner, defLine + endLineDelta, byte(endCol1 - 1), nil
 }
 
 // funcState accumulates bytecode and linetable for a function body.
@@ -638,24 +672,23 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		return lsc, closeEnd, d
 
 	case *parser2.BinOp:
-		// LFLBLFLB optimisation: both operands are direct Name references.
+		// LFLBLFLB optimisation: left is a local Name and right's first load is also local.
 		if ln, lok := n.Left.(*parser2.Name); lok {
-			if rn, rok := n.Right.(*parser2.Name); rok {
-				ls, lOK := fs.slots[ln.Id]
-				rs, rOK := fs.slots[rn.Id]
-				if lOK && rOK && ls <= 15 && rs <= 15 {
-					oparg := byte((ls << 4) | rs)
+			ls, lOK := fs.slots[ln.Id]
+			if lOK && ls <= 15 {
+				if rs, rOK := fs.peekFirstLocalSlot(n.Right); rOK {
 					lsc := byte(ln.P.Col)
 					lec := lsc + byte(len(ln.Id))
-					rec := byte(rn.P.Col) + byte(len(rn.Id))
-					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), oparg)
+					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
 					fs.emit(1, lsc, lec)
 					boparg, _ := binOpargFromOp(n.Op)
 					cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
+					_, rec, dSkip := fs.walkExprSkipFirstLocal(n.Right)
 					fs.emitBinOp(boparg, cacheWords, lsc, rec)
-					fs.trackDepth(2)
+					d := 2 + dSkip
+					fs.trackDepth(d)
 					fs.lastExprEnd = rec
-					return lsc, rec, 2
+					return lsc, rec, d
 				}
 			}
 		}
@@ -942,6 +975,21 @@ func (fs *funcState) scanChar(startCol byte, ch byte) byte {
 // scanCallEnd finds the closing ')' of a call starting from startCol.
 func (fs *funcState) scanCallEnd(startCol byte) byte { return fs.scanChar(startCol, ')') }
 
+// scanBackOpen checks whether the character immediately before col on the
+// current statement's source line is '('. If so, returns col-1; otherwise
+// returns col unchanged. Used to include the opening paren in BINARY_OP
+// spans when the left sub-expression was parenthesized in source.
+func (fs *funcState) scanBackOpen(col byte) byte {
+	if col == 0 || int(fs.stmtLine) < 1 || int(fs.stmtLine) > len(fs.srcLines) {
+		return col
+	}
+	line := fs.srcLines[fs.stmtLine-1]
+	if int(col) <= len(line) && line[col-1] == '(' {
+		return col - 1
+	}
+	return col
+}
+
 // scanTokenEnd scans forward from startCol on the current statement's source
 // line, consuming numeric literal characters (digits, '.', '_', 'e', 'E',
 // '+', '-'). Returns the column past the last consumed character.
@@ -1081,6 +1129,57 @@ func (fs *funcState) trackDepth(d int) {
 	if d > fs.maxDepth {
 		fs.maxDepth = d
 	}
+}
+
+// peekFirstLocalSlot returns the local variable slot that would be loaded first
+// when evaluating e, following the leftmost path. Returns (0, false) if e does
+// not start with a local variable load (slot ≤ 15).
+func (fs *funcState) peekFirstLocalSlot(e parser2.Expr) (byte, bool) {
+	switch n := e.(type) {
+	case *parser2.Name:
+		s, ok := fs.slots[n.Id]
+		if ok && s <= 15 {
+			return s, true
+		}
+	case *parser2.BinOp:
+		return fs.peekFirstLocalSlot(n.Left)
+	}
+	return 0, false
+}
+
+// walkExprSkipFirstLocal emits bytecode for expression e assuming its first
+// LOAD_FAST_BORROW was already emitted by a preceding LFLBLFLB instruction.
+// Returns (startCol, endCol, depth) where depth is the peak additional stack
+// usage above the pre-loaded first-local value.
+func (fs *funcState) walkExprSkipFirstLocal(e parser2.Expr) (startCol, endCol byte, depth int) {
+	switch n := e.(type) {
+	case *parser2.Name:
+		sc := byte(n.P.Col)
+		ec := sc + byte(len(n.Id))
+		fs.lastExprEnd = ec
+		return sc, ec, 0
+	case *parser2.BinOp:
+		lsc, _, ld := fs.walkExprSkipFirstLocal(n.Left)
+		// Extend lsc backward to include the opening '(' when the left
+		// sub-expression is itself a BinOp (i.e. was parenthesized in source).
+		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
+			lsc = fs.scanBackOpen(lsc)
+		}
+		_, rec, rd := fs.walkExpr(n.Right)
+		// Extend rec forward to include the closing ')' when the right
+		// sub-expression is a BinOp (i.e. was parenthesized in source).
+		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
+			rec = fs.scanEndCol(rec)
+		}
+		boparg, _ := binOpargFromOp(n.Op)
+		cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
+		fs.emitBinOp(boparg, cacheWords, lsc, rec)
+		d := max(ld, rd)
+		fs.trackDepth(d)
+		fs.lastExprEnd = rec
+		return lsc, rec, d
+	}
+	return 0, 0, 0
 }
 
 // constIndex returns the co_consts index for v, adding it if not already present.
