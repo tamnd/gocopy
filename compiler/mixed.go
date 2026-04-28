@@ -288,7 +288,7 @@ func compileFuncDefInner(filename string, fd funcDefClassify) (*bytecode.CodeObj
 		Consts:          []any{nil},
 		Names:           []string{},
 		LocalsPlusNames: []string{fd.argName},
-		LocalsPlusKinds: []byte{0x26},
+		LocalsPlusKinds: []byte{bytecode.LocalsKindArg},
 		Filename:        filename,
 		Name:            fd.funcName,
 		QualName:        fd.funcName,

@@ -22,7 +22,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 	for i, p := range g.params {
 		slots[p.name] = byte(i)
 		localsPlusNames = append(localsPlusNames, p.name)
-		localsPlusKinds = append(localsPlusKinds, 0x26) // CO_FAST_LOCAL | CO_FAST_ARG
+		localsPlusKinds = append(localsPlusKinds, bytecode.LocalsKindArg)
 	}
 	// Assign slots to body locals in declaration order.
 	nextSlot := byte(len(g.params))
@@ -34,7 +34,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		if _, ok := slots[st.targetName]; !ok {
 			slots[st.targetName] = nextSlot
 			localsPlusNames = append(localsPlusNames, st.targetName)
-			localsPlusKinds = append(localsPlusKinds, 0x20) // CO_FAST_LOCAL
+			localsPlusKinds = append(localsPlusKinds, bytecode.LocalsKindLocal)
 			nextSlot++
 		}
 	}
@@ -70,7 +70,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 				cmpNode := ifexpr.Test.(*parser2.Compare)
 				_, cmpBase, _ := cmpOpFromOp(cmpNode.Ops[0])
-				cmpOparg := cmpBase + 16
+				cmpOparg := bytecode.CompareCondArg(cmpBase)
 				cmpCacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
 				pjifCacheWords := int(bytecode.CacheSize[bytecode.POP_JUMP_IF_FALSE])
 
@@ -87,7 +87,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 							lsc := byte(ln.P.Col)
 							lec := lsc + byte(len(ln.Id))
 							rec := byte(rn.P.Col) + byte(len(rn.Id))
-							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 							fs.emit(1, lsc, lec)
 							fs.trackDepth(2)
 							condStart, condEnd = lsc, rec
@@ -192,7 +192,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				fs.lastCondStart, fs.lastCondEnd = varStart, condEnd
 			} else {
 				// COMPARE_OP (conditional) + POP_JUMP_IF_FALSE path.
-				cmpOparg := cmpBase + 16
+				cmpOparg := bytecode.CompareCondArg(cmpBase)
 				cmpCacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
 				pjifCacheWords = int(bytecode.CacheSize[bytecode.POP_JUMP_IF_FALSE])
 
@@ -209,7 +209,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 							lsc := byte(ln.P.Col)
 							lec := lsc + byte(len(ln.Id))
 							rec := byte(rn.P.Col) + byte(len(rn.Id))
-							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 							fs.emit(1, lsc, lec)
 							fs.trackDepth(2)
 							condStart, condEnd = lsc, rec
@@ -294,7 +294,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				fs.emitSame(1+pjifCacheWords+1, varStart, condEnd)
 			} else {
 				// COMPARE_OP (conditional) + POP_JUMP_IF_FALSE path.
-				cmpOparg := cmpBase + 16
+				cmpOparg := bytecode.CompareCondArg(cmpBase)
 				cmpCacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
 				pjifCacheWords = int(bytecode.CacheSize[bytecode.POP_JUMP_IF_FALSE])
 
@@ -311,7 +311,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 							lsc := byte(ln.P.Col)
 							lec := lsc + byte(len(ln.Id))
 							rec := byte(rn.P.Col) + byte(len(rn.Id))
-							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 							fs.emit(1, lsc, lec)
 							fs.trackDepth(2)
 							condStart, condEnd = lsc, rec
@@ -395,7 +395,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 					// Condition.
 					cmpNode := br.condExpr.(*parser2.Compare)
 					_, base, _ := cmpOpFromOp(cmpNode.Ops[0])
-					cmpOparg := base + 16
+					cmpOparg := bytecode.CompareCondArg(base)
 					leftExpr := cmpNode.Left
 					rightExpr := cmpNode.Comparators[0]
 
@@ -409,7 +409,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 								lsc := byte(ln.P.Col)
 								lec := lsc + byte(len(ln.Id))
 								rec := byte(rn.P.Col) + byte(len(rn.Id))
-								fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+								fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 								fs.emit(1, lsc, lec)
 								fs.trackDepth(2)
 								condStart, condEnd = lsc, rec
@@ -486,7 +486,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				rs, rsOK := slots[rhsName.Id]
 				if rsOK && slot <= 15 && rs <= 15 {
 					rec := byte(rhsName.P.Col) + byte(len(rhsName.Id))
-					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (slot<<4)|rs)
+					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(slot, rs))
 					fs.emit(1, tsc, tec)
 					fs.emitBinOp(st.augOp, cacheWords, tsc, rec)
 					fs.bc = append(fs.bc, byte(bytecode.STORE_FAST), slot)
@@ -552,7 +552,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 	flags := uint32(0x3)
 	if g.hasDocstring {
-		flags |= 0x4000000 // CO_HAS_DOCSTRING
+		flags |= bytecode.CO_HAS_DOCSTRING
 	}
 	innerCode := &bytecode.CodeObject{
 		ArgCount:        int32(len(g.params)),
@@ -722,7 +722,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		} else {
 			nameIdx := fs.nameIndex(n.Id)
 			lgCache := int(bytecode.CacheSize[bytecode.LOAD_GLOBAL])
-			fs.bc = append(fs.bc, byte(bytecode.LOAD_GLOBAL), byte(nameIdx<<1)) // bit 0 = 0: value, no NULL
+			fs.bc = append(fs.bc, byte(bytecode.LOAD_GLOBAL), bytecode.LoadGlobalArg(nameIdx, false))
 			for range lgCache {
 				fs.bc = append(fs.bc, 0, 0)
 			}
@@ -753,7 +753,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 
 		nameIdx := fs.nameIndex(n.Attr)
 		laCache := int(bytecode.CacheSize[bytecode.LOAD_ATTR])
-		fs.bc = append(fs.bc, byte(bytecode.LOAD_ATTR), byte(nameIdx<<1)) // no method bit
+		fs.bc = append(fs.bc, byte(bytecode.LOAD_ATTR), bytecode.LoadAttrArg(nameIdx, false))
 		for range laCache {
 			fs.bc = append(fs.bc, 0, 0)
 		}
@@ -779,7 +779,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 							lsc := byte(ln.P.Col)
 							lec := lsc + byte(len(ln.Id))
 							rec := byte(rn.P.Col) + byte(len(rn.Id))
-							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 							fs.emit(1, lsc, lec)
 							fs.trackDepth(i + 2)
 							if i == 0 {
@@ -835,7 +835,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 					lec := lsc + byte(len(ln.Id))
 					rec := byte(rn.P.Col) + byte(len(rn.Id))
 					closeEnd := fs.scanSubscriptEnd(rec)
-					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 					fs.emit(1, lsc, lec)
 					fs.emitBinOp(bytecode.NbGetItem, cacheWords, lsc, closeEnd)
 					fs.trackDepth(2)
@@ -861,7 +861,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 				if rs, rOK := fs.peekFirstLocalSlot(n.Right); rOK {
 					lsc := byte(ln.P.Col)
 					lec := lsc + byte(len(ln.Id))
-					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 					fs.emit(1, lsc, lec)
 					boparg, _ := binOpargFromOp(n.Op)
 					cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
@@ -941,7 +941,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 							lec := lsc + byte(len(ln.Id))
 							rec := byte(rn.P.Col) + byte(len(rn.Id))
 							closedRec := fs.scanEndCol(rec)
-							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 							fs.emit(1, lsc, lec)
 							fs.bc = append(fs.bc, byte(bytecode.COMPARE_OP), oparg)
 							for range cmpCache {
@@ -1000,7 +1000,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 					lsc := byte(ln.P.Col)
 					lec := lsc + byte(len(ln.Id))
 					rec := byte(rn.P.Col) + byte(len(rn.Id))
-					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+					fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 					fs.emit(1, lsc, lec)
 					fs.bc = append(fs.bc, byte(bytecode.COMPARE_OP), oparg)
 					for range cacheWords {
@@ -1048,7 +1048,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			// Split linetable entry: 8 CUs + 2 CUs (max SHORT entry = 8).
 			nameIdx := fs.nameIndex(attr.Attr)
 			laCache := int(bytecode.CacheSize[bytecode.LOAD_ATTR])
-			fs.bc = append(fs.bc, byte(bytecode.LOAD_ATTR), byte((nameIdx<<1)|1))
+			fs.bc = append(fs.bc, byte(bytecode.LOAD_ATTR), bytecode.LoadAttrArg(nameIdx, true))
 			for range laCache {
 				fs.bc = append(fs.bc, 0, 0)
 			}
@@ -1067,7 +1067,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 
 			nameIdx := fs.nameIndex(fn.Id)
 			lgCache := int(bytecode.CacheSize[bytecode.LOAD_GLOBAL])
-			fs.bc = append(fs.bc, byte(bytecode.LOAD_GLOBAL), byte((nameIdx<<1)|1))
+			fs.bc = append(fs.bc, byte(bytecode.LOAD_GLOBAL), bytecode.LoadGlobalArg(nameIdx, true))
 			for range lgCache {
 				fs.bc = append(fs.bc, 0, 0)
 			}
@@ -1088,7 +1088,7 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 						lsc := byte(ln.P.Col)
 						lec := lsc + byte(len(ln.Id))
 						rec := byte(rn.P.Col) + byte(len(rn.Id))
-						fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+						fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), bytecode.LflblflbArg(ls, rs))
 						fs.emitSame(1, lsc, lec)
 						lastArgEnd = rec
 						startArg = 2
