@@ -192,6 +192,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileClcThenImports(opts.Filename, cls.clcThenImportsAsgn)
 	case modAssignsThenFuncDef:
 		return compileAssignsThenFuncDef(opts.Filename, cls)
+	case modMultiFuncDef:
+		return compileMultiFuncDef(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -811,6 +813,73 @@ func compileAssignsThenFuncDef(filename string, cls classification) (*bytecode.C
 	lt := bytecode.AssignsThenFuncDefLineTable(ltAsgns, defLine, bodyEndLine, bodyEndCol)
 
 	return module(filename, bc, lt, consts, names), nil
+}
+
+// compileMultiFuncDef lowers a module body of N >= 2 function definitions with
+// no other top-level statements.
+func compileMultiFuncDef(filename string, cls classification) (*bytecode.CodeObject, error) {
+	funcs := cls.multiFuncDefAsgns
+	n := len(funcs)
+
+	// Compile each function body to get its code object and body extents.
+	type funcEntry struct {
+		code        *bytecode.CodeObject
+		bodyEndLine int
+		bodyEndCol  byte
+	}
+	entries := make([]funcEntry, n)
+	for i, f := range funcs {
+		innerCls := classification{kind: modFuncBodyExpr, funcBodyAsgn: f}
+		code, endLine, endCol, err := compileFuncBodyCore(filename, innerCls)
+		if err != nil {
+			return nil, err
+		}
+		entries[i] = funcEntry{code, endLine, endCol}
+	}
+
+	// co_consts: [code0, code1, ..., codeN-1, None]
+	consts := make([]any, n+1)
+	for i, e := range entries {
+		consts[i] = e.code
+	}
+	consts[n] = nil
+
+	// co_names: function names in source order.
+	names := make([]string, n)
+	for i, f := range funcs {
+		names[i] = f.funcName
+	}
+
+	// Bytecode: RESUME + N x (LOAD_CONST + MAKE_FUNCTION + STORE_NAME) + LOAD_CONST(None) + RETURN_VALUE
+	bc := make([]byte, 0, 2+3*2*n+4)
+	bc = append(bc, byte(bytecode.RESUME), 0)
+	for i := range n {
+		bc = append(bc, byte(bytecode.LOAD_CONST), byte(i))
+		bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
+		bc = append(bc, byte(bytecode.STORE_NAME), byte(i))
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), byte(n))
+	bc = append(bc, byte(bytecode.RETURN_VALUE), 0)
+
+	// Line table.
+	type ltEntry struct {
+		defLine     int
+		bodyEndLine int
+		bodyEndCol  byte
+	}
+	ltEntries := make([]bytecode.MultiFuncDefEntry, n)
+	for i, f := range funcs {
+		ltEntries[i] = bytecode.MultiFuncDefEntry{
+			DefLine:     f.defLine,
+			BodyEndLine: entries[i].bodyEndLine,
+			BodyEndCol:  entries[i].bodyEndCol,
+		}
+	}
+	lt := bytecode.MultiFuncDefLineTable(ltEntries)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 1
+	return co, nil
 }
 
 // compileCallAssign lowers `x = f(args...)` where f and all positional args are names.

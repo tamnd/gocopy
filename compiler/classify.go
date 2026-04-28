@@ -40,6 +40,7 @@ const (
 	modFrozenSetContains   // x = frozenset(name).__contains__
 	modClcThenImports      // x = [list] + from-imports
 	modAssignsThenFuncDef  // N foldedBinOp assigns + funcbody def
+	modMultiFuncDef        // 2+ funcbody defs with no other statements
 )
 
 type classification struct {
@@ -120,6 +121,8 @@ type classification struct {
 	clcThenImportsAsgn clcThenImportsClassify
 	// modAssignsThenFuncDef fields:
 	assignsThenFuncDefAsgn assignsThenFuncDefClassify
+	// modMultiFuncDef fields:
+	multiFuncDefAsgns []funcBodyInfo
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -739,15 +742,38 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtFuncBodyExpr {
+		allNoOp := true
 		for _, s := range stmts[1:] {
 			if s.kind != stmtNoOp {
-				return classification{}, false
+				allNoOp = false
+				break
 			}
 		}
-		return classification{
-			kind:         modFuncBodyExpr,
-			funcBodyAsgn: first.funcBodyAsgn,
-		}, true
+		if allNoOp {
+			return classification{
+				kind:         modFuncBodyExpr,
+				funcBodyAsgn: first.funcBodyAsgn,
+			}, true
+		}
+		// modMultiFuncDef: 2+ stmtFuncBodyExpr and nothing else
+		allFuncBody := true
+		for _, s := range stmts[1:] {
+			if s.kind != stmtFuncBodyExpr {
+				allFuncBody = false
+				break
+			}
+		}
+		if allFuncBody {
+			funcs := make([]funcBodyInfo, len(stmts))
+			for i, s := range stmts {
+				funcs[i] = s.funcBodyAsgn
+			}
+			return classification{
+				kind:              modMultiFuncDef,
+				multiFuncDefAsgns: funcs,
+			}, true
+		}
+		return classification{}, false
 	}
 	// modAssignsThenFuncDef: N >= 1 stmtAssign (all foldedBinOp) + stmtFuncBodyExpr
 	if len(stmts) >= 2 && stmts[len(stmts)-1].kind == stmtFuncBodyExpr {

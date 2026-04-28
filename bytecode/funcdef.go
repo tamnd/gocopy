@@ -63,6 +63,40 @@ func AssignsThenFuncDefLineTable(asgns []AssignInfo, defLine, bodyEndLine int, b
 	return out
 }
 
+// MultiFuncDefEntry describes one function definition within a modMultiFuncDef module.
+type MultiFuncDefEntry struct {
+	DefLine     int
+	BodyEndLine int
+	BodyEndCol  byte
+}
+
+// MultiFuncDefLineTable returns the PEP 626 line table for a module body of
+// N >= 2 function definitions with no other top-level statements.
+//
+// Layout:
+//   - Prologue: 1 CU (RESUME, no-source)
+//   - For each funcdef except the last: 3 CUs (LOAD_CONST + MAKE_FUNCTION + STORE_NAME)
+//   - For the last funcdef: 5 CUs (LOAD_CONST + MAKE_FUNCTION + STORE_NAME + LOAD_CONST None + RETURN_VALUE)
+func MultiFuncDefLineTable(entries []MultiFuncDefEntry) []byte {
+	n := len(entries)
+	out := make([]byte, 0, 5+5*n)
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // prologue (RESUME)
+	prevLine := 0
+	for i, e := range entries {
+		cuCount := 3
+		if i == n-1 {
+			cuCount = 5
+		}
+		out = append(out, entryHeader(codeLong, cuCount))
+		out = appendSignedVarint(out, e.DefLine-prevLine)
+		out = appendVarint(out, uint(e.BodyEndLine-e.DefLine))
+		out = appendVarint(out, 1) // start_col+1=1 → col 0
+		out = appendVarint(out, uint(e.BodyEndCol)+1)
+		prevLine = e.DefLine
+	}
+	return out
+}
+
 // FuncReturnArgBytecode returns the instruction stream for a function whose
 // single body statement is `return arg` where arg is at argIdx in
 // co_localsplusnames.

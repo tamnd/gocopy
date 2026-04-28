@@ -488,12 +488,23 @@ func (rc *refCounter) code(c *bytecode.CodeObject, topLevel bool) {
 	rc.tuple(c.Consts)
 	rc.stringTuple(c.Names)
 	rc.stringTuple(c.LocalsPlusNames)
-	rc.bytestring(c.LocalsPlusKinds)
+	rc.localspluskinds(c.LocalsPlusKinds)
 	rc.shortAscii(c.Filename, true)
 	rc.shortAscii(c.Name, true)
 	rc.shortAscii(c.QualName, true)
 	rc.bytestring(c.LineTable)
 	rc.bytestring(c.ExcTable)
+}
+
+// localspluskinds counts co_localspluskinds. CPython creates a fresh bytes
+// object per code object for this field: even when two functions share the
+// same parameter kinds bytes, each has REFCNT=1 → no FLAG_REF. Only empty
+// bytes (b'') uses the global singleton key (immortal in CPython).
+func (rc *refCounter) localspluskinds(b []byte) {
+	if len(b) == 0 {
+		rc.bump(bsKey(b))
+	}
+	// Non-empty: don't bump any key — writer sees count=0 → no FLAG_REF.
 }
 
 // bytecode does NOT contribute to bytestring counts because it lives in
