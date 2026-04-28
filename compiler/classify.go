@@ -39,6 +39,7 @@ const (
 	modConstLitSeq         // [docstring +] 2+ constLitColl assignments in sequence
 	modFrozenSetContains   // x = frozenset(name).__contains__
 	modClcThenImports      // x = [list] + from-imports
+	modAssignsThenFuncDef  // N foldedBinOp assigns + funcbody def
 )
 
 type classification struct {
@@ -117,6 +118,8 @@ type classification struct {
 	frozensetAsgn frozenSetContainsAssign
 	// modClcThenImports fields:
 	clcThenImportsAsgn clcThenImportsClassify
+	// modAssignsThenFuncDef fields:
+	assignsThenFuncDefAsgn assignsThenFuncDefClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -324,6 +327,13 @@ type constLitCollAssign struct {
 type clcThenImportsClassify struct {
 	clcAssign constLitCollAssign
 	imports   []importEntry
+}
+
+// assignsThenFuncDefClassify holds the parsed form of a module body consisting
+// of N ≥ 1 constant-folded BinOp assignments followed by one function definition.
+type assignsThenFuncDefClassify struct {
+	asgns    []asgn
+	funcBody funcBodyInfo
 }
 
 // foldedBinOp is the value type for `name = const op const` assignments
@@ -738,6 +748,40 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			kind:         modFuncBodyExpr,
 			funcBodyAsgn: first.funcBodyAsgn,
 		}, true
+	}
+	// modAssignsThenFuncDef: N >= 1 stmtAssign (all foldedBinOp) + stmtFuncBodyExpr
+	if len(stmts) >= 2 && stmts[len(stmts)-1].kind == stmtFuncBodyExpr {
+		lastIdx := len(stmts) - 1
+		asgns := make([]asgn, lastIdx)
+		allFolded := true
+		for i := 0; i < lastIdx; i++ {
+			s := stmts[i]
+			if s.kind != stmtAssign {
+				allFolded = false
+				break
+			}
+			if _, ok := s.asgnValue.(foldedBinOp); !ok {
+				allFolded = false
+				break
+			}
+			asgns[i] = asgn{
+				name:     s.text,
+				nameLen:  s.asgnNameLen,
+				valStart: s.asgnValStart,
+				valEnd:   s.asgnValEnd,
+				value:    s.asgnValue,
+				line:     s.line,
+			}
+		}
+		if allFolded {
+			return classification{
+				kind: modAssignsThenFuncDef,
+				assignsThenFuncDefAsgn: assignsThenFuncDefClassify{
+					asgns:    asgns,
+					funcBody: stmts[lastIdx].funcBodyAsgn,
+				},
+			}, true
+		}
 	}
 	if first := stmts[0]; first.kind == stmtConstLitColl {
 		// Check for CLC + imports (modClcThenImports).

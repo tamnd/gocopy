@@ -43,6 +43,26 @@ func FuncDefModuleLineTable(defLine, bodyEndLine int, bodyEndCol byte) []byte {
 	return out
 }
 
+// AssignsThenFuncDefLineTable returns the PEP 626 line table for a module body
+// consisting of N ≥ 1 constant-folded assignments followed by a function definition.
+// Each assign contributes 2 CUs (LOAD_CONST + STORE_NAME); the funcdef contributes 5.
+func AssignsThenFuncDefLineTable(asgns []AssignInfo, defLine, bodyEndLine int, bodyEndCol byte) []byte {
+	out := make([]byte, 0, 5+3*len(asgns)+6)
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // prologue (RESUME)
+	prevLine := 0
+	for _, a := range asgns {
+		out = appendValueEntry(out, a.Line-prevLine, a.ValStart, a.ValEnd)
+		out = appendShort0Entry(out, 1, 0, a.NameLen)
+		prevLine = a.Line
+	}
+	out = append(out, entryHeader(codeLong, 5))
+	out = appendSignedVarint(out, defLine-prevLine)
+	out = appendVarint(out, uint(bodyEndLine-defLine))
+	out = appendVarint(out, 1)
+	out = appendVarint(out, uint(bodyEndCol)+1)
+	return out
+}
+
 // FuncReturnArgBytecode returns the instruction stream for a function whose
 // single body statement is `return arg` where arg is at argIdx in
 // co_localsplusnames.
