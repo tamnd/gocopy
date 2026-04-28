@@ -1,0 +1,145 @@
+package compiler
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	parser "github.com/tamnd/gopapy/parser"
+
+	"github.com/tamnd/gocopy/bytecode"
+	"github.com/tamnd/gocopy/compiler/codegen"
+	"github.com/tamnd/gocopy/compiler/lower"
+	"github.com/tamnd/gocopy/compiler/symtable"
+)
+
+// TestCodegenParity is the v0.6.6 foundation parallel-output gate.
+// For every fixture: if codegen.Build produces a CodeObject (i.e.
+// the shape is one codegen owns), it must byte-equal the classifier
+// path's CodeObject. Shapes codegen does not own (returns
+// ErrUnsupported) skip — they exercise the classifier through
+// compiler.Compile and the oracle covers them.
+//
+// The gate grows automatically: every release that teaches codegen
+// a new shape lights up the corresponding fixtures here without
+// touching this test.
+func TestCodegenParity(t *testing.T) {
+	root := findFixturesDir(t)
+	files, err := filepath.Glob(filepath.Join(root, "*.py"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(files) == 0 {
+		t.Skipf("no fixtures found under %s", root)
+	}
+	codegenHits := 0
+	for _, f := range files {
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			pmod, parseErr := parser.ParseFile(filepath.Base(f), string(src))
+			if parseErr != nil {
+				t.Skipf("parser rejected: %v", parseErr)
+			}
+			mod, lowerErr := lower.Lower(pmod)
+			if lowerErr != nil {
+				t.Skipf("lower rejected: %v", lowerErr)
+			}
+			scope, _ := symtable.Build(mod) // best-effort, mirrors Compile
+			co, cgErr := codegen.Build(mod, scope, codegen.Options{
+				Filename:    filepath.Base(f),
+				Name:        "<module>",
+				QualName:    "<module>",
+				FirstLineNo: 1,
+			})
+			if errors.Is(cgErr, codegen.ErrUnsupported) {
+				return // shape not yet owned by codegen
+			}
+			if cgErr != nil {
+				t.Fatalf("codegen.Build: %v", cgErr)
+			}
+			ref := compileViaClassifier(t, src, filepath.Base(f), mod)
+			diffCodeObject(t, co, ref)
+			codegenHits++
+		})
+	}
+	if codegenHits == 0 {
+		t.Fatalf("no fixture exercised the codegen path; the gate is dormant")
+	}
+}
+
+// compileViaClassifier reproduces the classifier path inside Compile
+// (skipping the codegen attempt) so the parity test can compare
+// codegen output against a deterministic reference.
+func compileViaClassifier(t *testing.T, source []byte, filename string, mod *parserModule) *bytecode.CodeObject {
+	t.Helper()
+	cls, ok := classifyAST(source, mod)
+	if !ok {
+		t.Fatalf("classifier rejected fixture")
+	}
+	switch cls.kind {
+	case modEmpty:
+		return module(filename,
+			bytecode.NoOpBytecode(1),
+			bytecode.LineTableEmpty(),
+			[]any{nil}, nil,
+		)
+	}
+	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
+	return nil
+}
+
+// parserModule is the type Compile receives after lower.Lower; we
+// alias it here so the helper signature reads naturally without
+// importing the gopapy parser into every test that touches it.
+type parserModule = parser.Module
+
+func diffCodeObject(t *testing.T, got, want *bytecode.CodeObject) {
+	t.Helper()
+	if !bytes.Equal(got.Bytecode, want.Bytecode) {
+		t.Fatalf("bytecode diverges\n got  %x\n want %x", got.Bytecode, want.Bytecode)
+	}
+	if !bytes.Equal(got.LineTable, want.LineTable) {
+		t.Fatalf("linetable diverges\n got  %x\n want %x", got.LineTable, want.LineTable)
+	}
+	if !bytes.Equal(got.ExcTable, want.ExcTable) {
+		t.Fatalf("exctable diverges (got %d bytes, want %d)", len(got.ExcTable), len(want.ExcTable))
+	}
+	if got.StackSize != want.StackSize {
+		t.Fatalf("stacksize = %d, want %d", got.StackSize, want.StackSize)
+	}
+	if got.FirstLineNo != want.FirstLineNo {
+		t.Fatalf("firstlineno = %d, want %d", got.FirstLineNo, want.FirstLineNo)
+	}
+	if got.Filename != want.Filename || got.Name != want.Name || got.QualName != want.QualName {
+		t.Fatalf("metadata = %q/%q/%q, want %q/%q/%q",
+			got.Filename, got.Name, got.QualName,
+			want.Filename, want.Name, want.QualName)
+	}
+}
+
+func findFixturesDir(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	cur := cwd
+	for {
+		candidate := filepath.Join(cur, "tests", "fixtures")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || !strings.Contains(parent, "gocopy") {
+			t.Skipf("could not locate tests/fixtures from %s", cwd)
+			return ""
+		}
+		cur = parent
+	}
+}

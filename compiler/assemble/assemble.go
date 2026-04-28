@@ -20,13 +20,33 @@ import (
 // Options carries metadata fields the IR does not yet hold (the
 // CodeObject's filename, name, qualname, flags, argcount tuple,
 // names/locals/consts when the IR's containers are not authoritative
-// for the final layout). v0.6.5 uses Source to copy these from the
-// fixture's existing CodeObject so the round-trip can compare bytes.
+// for the final layout).
 //
-// v0.6.6 onward fills these from the symtable scope and codegen
-// options; Source becomes optional.
+// Two ways to populate the metadata:
+//
+//   - Source != nil: every metadata field is copied from Source.
+//     This is the v0.6.5 round-trip path: the fixture's CodeObject
+//     supplies filename/name/qualname/flags/consts/etc., and the
+//     assembler only re-derives the byte-level fields.
+//   - Source == nil: the explicit fields below populate the
+//     CodeObject. This is the v0.6.6+ codegen path; the driver
+//     hands codegen-built consts/names directly.
 type Options struct {
 	Source *bytecode.CodeObject
+
+	Filename string
+	Name     string
+	QualName string
+	Flags    uint32
+
+	ArgCount        int32
+	PosOnlyArgCount int32
+	KwOnlyArgCount  int32
+
+	Consts          []any
+	Names           []string
+	LocalsPlusNames []string
+	LocalsPlusKinds []byte
 }
 
 // Assemble materializes a CodeObject from an InstrSeq.
@@ -76,6 +96,27 @@ func Assemble(seq *ir.InstrSeq, opts Options) (*bytecode.CodeObject, error) {
 		co.Filename = src.Filename
 		co.Name = src.Name
 		co.QualName = src.QualName
+	} else {
+		co.ArgCount = opts.ArgCount
+		co.PosOnlyArgCount = opts.PosOnlyArgCount
+		co.KwOnlyArgCount = opts.KwOnlyArgCount
+		co.Flags = opts.Flags
+		co.Consts = opts.Consts
+		co.Names = opts.Names
+		co.LocalsPlusNames = opts.LocalsPlusNames
+		co.LocalsPlusKinds = opts.LocalsPlusKinds
+		co.Filename = opts.Filename
+		co.Name = opts.Name
+		co.QualName = opts.QualName
+		if co.Names == nil {
+			co.Names = []string{}
+		}
+		if co.LocalsPlusNames == nil {
+			co.LocalsPlusNames = []string{}
+		}
+		if co.LocalsPlusKinds == nil {
+			co.LocalsPlusKinds = []byte{}
+		}
 	}
 	return co, nil
 }

@@ -32,6 +32,7 @@ import (
 	parser "github.com/tamnd/gopapy/parser"
 
 	"github.com/tamnd/gocopy/bytecode"
+	"github.com/tamnd/gocopy/compiler/codegen"
 	"github.com/tamnd/gocopy/compiler/future"
 	"github.com/tamnd/gocopy/compiler/lower"
 	"github.com/tamnd/gocopy/compiler/symtable"
@@ -69,20 +70,32 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	}
 	// v0.6.1: build the symbol table as a shadow pass so any
 	// regression in symtable.Build surfaces while the classifier
-	// still drives codegen. The result is intentionally unused
-	// today; v0.6.2+ starts threading it through. A symtable
-	// failure on a supported fixture means the table missed a
-	// shape, so it has to surface as a compile error rather than
-	// silently fall back.
-	if scope, symErr := symtable.Build(mod); symErr != nil {
-		// Only fail when the classifier would also accept the
-		// source; if classify rejects too, leave the existing
-		// ErrUnsupportedSource path in charge.
+	// still drives codegen. v0.6.6 starts threading the scope into
+	// codegen for the empty-module shape; v0.6.7+ extends it. A
+	// symtable failure on a classifier-supported fixture surfaces
+	// as a compile error rather than silently falling back.
+	scope, symErr := symtable.Build(mod)
+	if symErr != nil {
 		if _, classOK := classifyAST(source, mod); classOK {
 			return nil, symErr
 		}
-		_ = scope
+		scope = nil
 	}
+
+	// v0.6.6: try codegen first; on ErrUnsupported, fall back to the
+	// classifier. Other codegen errors (a malformed IR is a bug, not
+	// "this shape is not yet wired") propagate.
+	if co, cgErr := codegen.Build(mod, scope, codegen.Options{
+		Filename:    opts.Filename,
+		Name:        "<module>",
+		QualName:    "<module>",
+		FirstLineNo: 1,
+	}); cgErr == nil {
+		return co, nil
+	} else if !errors.Is(cgErr, codegen.ErrUnsupported) {
+		return nil, cgErr
+	}
+
 	cls, ok := classifyAST(source, mod)
 	if !ok {
 		return nil, ErrUnsupportedSource
