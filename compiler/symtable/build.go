@@ -5,7 +5,7 @@ import (
 	"slices"
 
 	"github.com/tamnd/gocopy/bytecode"
-	parser "github.com/tamnd/gopapy/parser"
+	"github.com/tamnd/gocopy/compiler/ast"
 )
 
 // UnsupportedScopeError reports a scope shape the v0.6.1 symtable
@@ -14,7 +14,7 @@ import (
 // names the AST node so the offending fixture is obvious.
 type UnsupportedScopeError struct {
 	Kind string
-	Pos  parser.Pos
+	Pos  ast.Pos
 }
 
 func (e *UnsupportedScopeError) Error() string {
@@ -36,7 +36,7 @@ func (e *UnsupportedScopeError) Error() string {
 //
 // On unsupported scope shapes (class, comprehension, lambda,
 // async), Build returns an UnsupportedScopeError.
-func Build(mod *parser.Module) (*Scope, error) {
+func Build(mod *ast.Module) (*Scope, error) {
 	root := NewScope(ScopeModule, "", nil)
 
 	b := &builder{root: root}
@@ -55,7 +55,7 @@ type builder struct {
 	root *Scope
 }
 
-func (b *builder) visitStmts(s *Scope, stmts []parser.Stmt) error {
+func (b *builder) visitStmts(s *Scope, stmts []ast.Stmt) error {
 	for _, st := range stmts {
 		if err := b.visitStmt(s, st); err != nil {
 			return err
@@ -64,15 +64,15 @@ func (b *builder) visitStmts(s *Scope, stmts []parser.Stmt) error {
 	return nil
 }
 
-func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
+func (b *builder) visitStmt(s *Scope, st ast.Stmt) error {
 	switch n := st.(type) {
-	case *parser.Pass, *parser.Break, *parser.Continue:
+	case *ast.Pass, *ast.Break, *ast.Continue:
 		return nil
 
-	case *parser.ExprStmt:
+	case *ast.ExprStmt:
 		return b.visitExpr(s, n.Value)
 
-	case *parser.Assign:
+	case *ast.Assign:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
@@ -83,19 +83,19 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return nil
 
-	case *parser.AugAssign:
+	case *ast.AugAssign:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
 		// AugAssign target is both used and assigned. visitTarget
 		// would only set SymAssigned, so add SymUsed for Name targets.
-		if name, ok := n.Target.(*parser.Name); ok {
+		if name, ok := n.Target.(*ast.Name); ok {
 			s.Define(name.Id, SymAssigned|SymUsed)
 			return nil
 		}
 		return b.visitTarget(s, n.Target)
 
-	case *parser.AnnAssign:
+	case *ast.AnnAssign:
 		if n.Annotation != nil {
 			if err := b.visitExpr(s, n.Annotation); err != nil {
 				return err
@@ -106,7 +106,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 				return err
 			}
 		}
-		if name, ok := n.Target.(*parser.Name); ok {
+		if name, ok := n.Target.(*ast.Name); ok {
 			flags := SymAnnotated
 			if n.Value != nil {
 				flags |= SymAssigned
@@ -116,13 +116,13 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return b.visitTarget(s, n.Target)
 
-	case *parser.Return:
+	case *ast.Return:
 		if n.Value != nil {
 			return b.visitExpr(s, n.Value)
 		}
 		return nil
 
-	case *parser.Raise:
+	case *ast.Raise:
 		if n.Exc != nil {
 			if err := b.visitExpr(s, n.Exc); err != nil {
 				return err
@@ -133,7 +133,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return nil
 
-	case *parser.If:
+	case *ast.If:
 		if err := b.visitExpr(s, n.Test); err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return b.visitStmts(s, n.Orelse)
 
-	case *parser.While:
+	case *ast.While:
 		if err := b.visitExpr(s, n.Test); err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return b.visitStmts(s, n.Orelse)
 
-	case *parser.For:
+	case *ast.For:
 		if err := b.visitExpr(s, n.Iter); err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return b.visitStmts(s, n.Orelse)
 
-	case *parser.Import:
+	case *ast.Import:
 		for _, a := range n.Names {
 			bound := a.Asname
 			if bound == "" {
@@ -174,7 +174,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return nil
 
-	case *parser.ImportFrom:
+	case *ast.ImportFrom:
 		for _, a := range n.Names {
 			if a.Name == "*" {
 				if s.Kind == ScopeModule {
@@ -195,13 +195,13 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return nil
 
-	case *parser.Global:
+	case *ast.Global:
 		for _, name := range n.Names {
 			s.Define(name, SymGlobal)
 		}
 		return nil
 
-	case *parser.Nonlocal:
+	case *ast.Nonlocal:
 		// Nonlocal is illegal at module scope; otherwise marks the
 		// name as a free variable that must be bound in some
 		// enclosing function scope.
@@ -213,7 +213,7 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return nil
 
-	case *parser.FunctionDef:
+	case *ast.FunctionDef:
 		// Defaults / decorators / annotations are evaluated in the
 		// enclosing scope.
 		if err := b.visitArgsDefaults(s, n.Args); err != nil {
@@ -240,15 +240,15 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 		}
 		return b.visitStmts(inner, n.Body)
 
-	case *parser.AsyncFunctionDef:
+	case *ast.AsyncFunctionDef:
 		return &UnsupportedScopeError{Kind: "async def", Pos: n.P}
 
-	case *parser.ClassDef:
+	case *ast.ClassDef:
 		return &UnsupportedScopeError{Kind: "class def", Pos: n.P}
 
-	case *parser.Try, *parser.TryStar, *parser.With, *parser.AsyncWith,
-		*parser.AsyncFor, *parser.Match, *parser.TypeAlias, *parser.Delete,
-		*parser.Assert:
+	case *ast.Try, *ast.TryStar, *ast.With, *ast.AsyncWith,
+		*ast.AsyncFor, *ast.Match, *ast.TypeAlias, *ast.Delete,
+		*ast.Assert:
 		return &UnsupportedScopeError{Kind: fmt.Sprintf("%T", st), Pos: stmtPos(st)}
 
 	default:
@@ -256,36 +256,36 @@ func (b *builder) visitStmt(s *Scope, st parser.Stmt) error {
 	}
 }
 
-func stmtPos(st parser.Stmt) parser.Pos {
-	type poser interface{ getPos() parser.Pos }
+func stmtPos(st ast.Stmt) ast.Pos {
+	type poser interface{ getPos() ast.Pos }
 	// Each Stmt struct has a P field. Cover the common ones; fall
 	// through to zero Pos for unknowns.
 	switch n := st.(type) {
-	case *parser.Try:
+	case *ast.Try:
 		return n.P
-	case *parser.TryStar:
+	case *ast.TryStar:
 		return n.P
-	case *parser.With:
+	case *ast.With:
 		return n.P
-	case *parser.AsyncWith:
+	case *ast.AsyncWith:
 		return n.P
-	case *parser.AsyncFor:
+	case *ast.AsyncFor:
 		return n.P
-	case *parser.Match:
+	case *ast.Match:
 		return n.P
-	case *parser.TypeAlias:
+	case *ast.TypeAlias:
 		return n.P
-	case *parser.Delete:
+	case *ast.Delete:
 		return n.P
-	case *parser.Assert:
+	case *ast.Assert:
 		return n.P
 	}
-	return parser.Pos{}
+	return ast.Pos{}
 }
 
 // visitArgsDefaults visits default-value expressions in the
 // enclosing scope before the function scope is entered.
-func (b *builder) visitArgsDefaults(s *Scope, args *parser.Arguments) error {
+func (b *builder) visitArgsDefaults(s *Scope, args *ast.Arguments) error {
 	if args == nil {
 		return nil
 	}
@@ -303,7 +303,7 @@ func (b *builder) visitArgsDefaults(s *Scope, args *parser.Arguments) error {
 		}
 	}
 	// Annotations on params are also evaluated in the enclosing scope.
-	visit := func(a *parser.Arg) error {
+	visit := func(a *ast.Arg) error {
 		if a == nil || a.Annotation == nil {
 			return nil
 		}
@@ -333,11 +333,11 @@ func (b *builder) visitArgsDefaults(s *Scope, args *parser.Arguments) error {
 // bindArgs records each parameter as SymParam|SymLocal in the
 // function scope and populates Params, ArgCount, KwOnlyCount,
 // PosOnlyCount, HasVararg, HasKwarg.
-func (b *builder) bindArgs(s *Scope, args *parser.Arguments) error {
+func (b *builder) bindArgs(s *Scope, args *ast.Arguments) error {
 	if args == nil {
 		return nil
 	}
-	add := func(a *parser.Arg) {
+	add := func(a *ast.Arg) {
 		s.Define(a.Name, SymParam|SymLocal|SymAssigned)
 		s.Params = append(s.Params, a.Name)
 	}
@@ -369,30 +369,30 @@ func (b *builder) bindArgs(s *Scope, args *parser.Arguments) error {
 // SymAssigned|SymLocal. Tuple/List targets recurse. Attribute and
 // Subscript targets visit their bases as uses (the base must
 // already exist).
-func (b *builder) visitTarget(s *Scope, t parser.Expr) error {
+func (b *builder) visitTarget(s *Scope, t ast.Expr) error {
 	switch n := t.(type) {
-	case *parser.Name:
+	case *ast.Name:
 		s.Define(n.Id, SymAssigned|SymLocal)
 		return nil
-	case *parser.Tuple:
+	case *ast.Tuple:
 		for _, e := range n.Elts {
 			if err := b.visitTarget(s, e); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.List:
+	case *ast.List:
 		for _, e := range n.Elts {
 			if err := b.visitTarget(s, e); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.Starred:
+	case *ast.Starred:
 		return b.visitTarget(s, n.Value)
-	case *parser.Attribute:
+	case *ast.Attribute:
 		return b.visitExpr(s, n.Value)
-	case *parser.Subscript:
+	case *ast.Subscript:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
@@ -407,31 +407,31 @@ func (b *builder) visitTarget(s *Scope, t parser.Expr) error {
 // visitExpr records every Name read as SymUsed and recurses into
 // child expressions. Lambda / comprehension / async-aware nodes are
 // rejected as unsupported scope shapes.
-func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
+func (b *builder) visitExpr(s *Scope, e ast.Expr) error {
 	if e == nil {
 		return nil
 	}
 	switch n := e.(type) {
-	case *parser.Constant:
+	case *ast.Constant:
 		return nil
-	case *parser.Name:
+	case *ast.Name:
 		s.Define(n.Id, SymUsed)
 		return nil
-	case *parser.UnaryOp:
+	case *ast.UnaryOp:
 		return b.visitExpr(s, n.Operand)
-	case *parser.BinOp:
+	case *ast.BinOp:
 		if err := b.visitExpr(s, n.Left); err != nil {
 			return err
 		}
 		return b.visitExpr(s, n.Right)
-	case *parser.BoolOp:
+	case *ast.BoolOp:
 		for _, v := range n.Values {
 			if err := b.visitExpr(s, v); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.Compare:
+	case *ast.Compare:
 		if err := b.visitExpr(s, n.Left); err != nil {
 			return err
 		}
@@ -441,14 +441,14 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 			}
 		}
 		return nil
-	case *parser.Attribute:
+	case *ast.Attribute:
 		return b.visitExpr(s, n.Value)
-	case *parser.Subscript:
+	case *ast.Subscript:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
 		return b.visitExpr(s, n.Slice)
-	case *parser.Slice:
+	case *ast.Slice:
 		if err := b.visitExpr(s, n.Lower); err != nil {
 			return err
 		}
@@ -456,7 +456,7 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 			return err
 		}
 		return b.visitExpr(s, n.Step)
-	case *parser.Call:
+	case *ast.Call:
 		if err := b.visitExpr(s, n.Func); err != nil {
 			return err
 		}
@@ -471,28 +471,28 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 			}
 		}
 		return nil
-	case *parser.List:
+	case *ast.List:
 		for _, el := range n.Elts {
 			if err := b.visitExpr(s, el); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.Tuple:
+	case *ast.Tuple:
 		for _, el := range n.Elts {
 			if err := b.visitExpr(s, el); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.Set:
+	case *ast.Set:
 		for _, el := range n.Elts {
 			if err := b.visitExpr(s, el); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.Dict:
+	case *ast.Dict:
 		for _, k := range n.Keys {
 			if err := b.visitExpr(s, k); err != nil {
 				return err
@@ -504,7 +504,7 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 			}
 		}
 		return nil
-	case *parser.IfExp:
+	case *ast.IfExp:
 		if err := b.visitExpr(s, n.Test); err != nil {
 			return err
 		}
@@ -512,29 +512,29 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 			return err
 		}
 		return b.visitExpr(s, n.OrElse)
-	case *parser.Starred:
+	case *ast.Starred:
 		return b.visitExpr(s, n.Value)
-	case *parser.NamedExpr:
+	case *ast.NamedExpr:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
 		return b.visitTarget(s, n.Target)
-	case *parser.JoinedStr:
+	case *ast.JoinedStr:
 		for _, v := range n.Values {
 			if err := b.visitExpr(s, v); err != nil {
 				return err
 			}
 		}
 		return nil
-	case *parser.FormattedValue:
+	case *ast.FormattedValue:
 		if err := b.visitExpr(s, n.Value); err != nil {
 			return err
 		}
 		return b.visitExpr(s, n.FormatSpec)
 
-	case *parser.Lambda, *parser.ListComp, *parser.SetComp, *parser.DictComp,
-		*parser.GeneratorExp, *parser.Await, *parser.Yield, *parser.YieldFrom,
-		*parser.TemplateStr, *parser.Interpolation:
+	case *ast.Lambda, *ast.ListComp, *ast.SetComp, *ast.DictComp,
+		*ast.GeneratorExp, *ast.Await, *ast.Yield, *ast.YieldFrom,
+		*ast.TemplateStr, *ast.Interpolation:
 		return &UnsupportedScopeError{Kind: fmt.Sprintf("%T", e), Pos: exprPos(e)}
 
 	default:
@@ -546,68 +546,68 @@ func (b *builder) visitExpr(s *Scope, e parser.Expr) error {
 // switching on the public types. The parser's pos() method is
 // unexported, so external packages have to read the P field
 // directly.
-func exprPos(e parser.Expr) parser.Pos {
+func exprPos(e ast.Expr) ast.Pos {
 	switch n := e.(type) {
-	case *parser.Constant:
+	case *ast.Constant:
 		return n.P
-	case *parser.Name:
+	case *ast.Name:
 		return n.P
-	case *parser.UnaryOp:
+	case *ast.UnaryOp:
 		return n.P
-	case *parser.BinOp:
+	case *ast.BinOp:
 		return n.P
-	case *parser.BoolOp:
+	case *ast.BoolOp:
 		return n.P
-	case *parser.Compare:
+	case *ast.Compare:
 		return n.P
-	case *parser.Attribute:
+	case *ast.Attribute:
 		return n.P
-	case *parser.Subscript:
+	case *ast.Subscript:
 		return n.P
-	case *parser.Slice:
+	case *ast.Slice:
 		return n.P
-	case *parser.Call:
+	case *ast.Call:
 		return n.P
-	case *parser.List:
+	case *ast.List:
 		return n.P
-	case *parser.Tuple:
+	case *ast.Tuple:
 		return n.P
-	case *parser.Set:
+	case *ast.Set:
 		return n.P
-	case *parser.Dict:
+	case *ast.Dict:
 		return n.P
-	case *parser.IfExp:
+	case *ast.IfExp:
 		return n.P
-	case *parser.Starred:
+	case *ast.Starred:
 		return n.P
-	case *parser.NamedExpr:
+	case *ast.NamedExpr:
 		return n.P
-	case *parser.JoinedStr:
+	case *ast.JoinedStr:
 		return n.P
-	case *parser.FormattedValue:
+	case *ast.FormattedValue:
 		return n.P
-	case *parser.Lambda:
+	case *ast.Lambda:
 		return n.P
-	case *parser.ListComp:
+	case *ast.ListComp:
 		return n.P
-	case *parser.SetComp:
+	case *ast.SetComp:
 		return n.P
-	case *parser.DictComp:
+	case *ast.DictComp:
 		return n.P
-	case *parser.GeneratorExp:
+	case *ast.GeneratorExp:
 		return n.P
-	case *parser.Await:
+	case *ast.Await:
 		return n.P
-	case *parser.Yield:
+	case *ast.Yield:
 		return n.P
-	case *parser.YieldFrom:
+	case *ast.YieldFrom:
 		return n.P
-	case *parser.TemplateStr:
+	case *ast.TemplateStr:
 		return n.P
-	case *parser.Interpolation:
+	case *ast.Interpolation:
 		return n.P
 	}
-	return parser.Pos{}
+	return ast.Pos{}
 }
 
 // analyze runs the second pass: classify every symbol into

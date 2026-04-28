@@ -5,14 +5,14 @@ import (
 	"strconv"
 	"strings"
 
-	parser2 "github.com/tamnd/gopapy/parser"
+	"github.com/tamnd/gocopy/compiler/ast"
 
 	"github.com/tamnd/gocopy/bytecode"
 )
 
 // classifyAST walks a gopapy v2 Module and returns the classification
 // of the module body if it falls within the supported subset.
-func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
+func classifyAST(src []byte, mod *ast.Module) (classification, bool) {
 	lines := splitLines(src)
 
 	lineEndCol := func(line int) (byte, bool) {
@@ -30,7 +30,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 
 	for _, stmt := range mod.Body {
 		switch s := stmt.(type) {
-		case *parser2.Pass:
+		case *ast.Pass:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
@@ -38,13 +38,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rawStmt{line: line, endLine: line, endCol: ec, kind: stmtNoOp})
 
-		case *parser2.ExprStmt:
+		case *ast.ExprStmt:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
 				return classification{}, false
 			}
-			c, isConst := s.Value.(*parser2.Constant)
+			c, isConst := s.Value.(*ast.Constant)
 			if !isConst {
 				return classification{}, false
 			}
@@ -84,7 +84,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				return classification{}, false
 			}
 
-		case *parser2.Assign:
+		case *ast.Assign:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
@@ -93,14 +93,14 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			// Check for subscript/attr store targets: a[b] = x, a.b = x.
 			if len(s.Targets) == 1 {
 				switch tgt := s.Targets[0].(type) {
-				case *parser2.Subscript:
+				case *ast.Subscript:
 					rs, ok2 := extractSubscriptStore(line, tgt, s.Value)
 					if !ok2 {
 						return classification{}, false
 					}
 					stmts = append(stmts, rs)
 					continue
-				case *parser2.Attribute:
+				case *ast.Attribute:
 					rs, ok2 := extractAttrStore(line, tgt, s.Value)
 					if !ok2 {
 						return classification{}, false
@@ -116,7 +116,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				if len(s.Targets) != 1 {
 					return classification{}, false
 				}
-				target, isName := s.Targets[0].(*parser2.Name)
+				target, isName := s.Targets[0].(*ast.Name)
 				if !isName || len(target.Id) > 15 {
 					return classification{}, false
 				}
@@ -137,7 +137,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 
 			if len(s.Targets) == 1 {
-				name, isName := s.Targets[0].(*parser2.Name)
+				name, isName := s.Targets[0].(*ast.Name)
 				if !isName || len(name.Id) > 15 {
 					return classification{}, false
 				}
@@ -155,7 +155,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			} else {
 				targets := make([]chainedTarget, len(s.Targets))
 				for i, t := range s.Targets {
-					name, isName := t.(*parser2.Name)
+					name, isName := t.(*ast.Name)
 					if !isName || name.P.Col > 255 || len(name.Id) > 15 {
 						return classification{}, false
 					}
@@ -177,13 +177,13 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				})
 			}
 
-		case *parser2.AugAssign:
+		case *ast.AugAssign:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
 				return classification{}, false
 			}
-			target, isName := s.Target.(*parser2.Name)
+			target, isName := s.Target.(*ast.Name)
 			if !isName || len(target.Id) > 15 {
 				return classification{}, false
 			}
@@ -191,7 +191,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			if !ok2 {
 				return classification{}, false
 			}
-			c, isConst := s.Value.(*parser2.Constant)
+			c, isConst := s.Value.(*ast.Constant)
 			if !isConst || c.Kind != "int" {
 				return classification{}, false
 			}
@@ -212,28 +212,28 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				augOparg:     oparg,
 			})
 
-		case *parser2.If:
+		case *ast.If:
 			rs, ok2 := extractIfElse(s, lines)
 			if !ok2 {
 				return classification{}, false
 			}
 			stmts = append(stmts, rs)
 
-		case *parser2.While:
+		case *ast.While:
 			rs, ok2 := extractWhileAssign(s)
 			if !ok2 {
 				return classification{}, false
 			}
 			stmts = append(stmts, rs)
 
-		case *parser2.For:
+		case *ast.For:
 			rs, ok2 := extractForAssign(s)
 			if !ok2 {
 				return classification{}, false
 			}
 			stmts = append(stmts, rs)
 
-		case *parser2.FunctionDef:
+		case *ast.FunctionDef:
 			rs, ok2 := extractFuncDef(s)
 			if !ok2 {
 				rs, ok2 = extractFuncBodyExpr(s, lines)
@@ -243,7 +243,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rs)
 
-		case *parser2.Import:
+		case *ast.Import:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
@@ -267,7 +267,7 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 				})
 			}
 
-		case *parser2.ImportFrom:
+		case *ast.ImportFrom:
 			line := s.P.Line
 			ec, ok := lineEndCol(line)
 			if !ok {
@@ -298,19 +298,19 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 	return stmtsToClassification(stmts)
 }
 
-func extractValue(e parser2.Expr) (val any, valStart byte, ok bool) {
+func extractValue(e ast.Expr) (val any, valStart byte, ok bool) {
 	switch v := e.(type) {
-	case *parser2.Constant:
+	case *ast.Constant:
 		cval, cok := constantToValue(v)
 		if !cok || v.P.Col > 255 {
 			return nil, 0, false
 		}
 		return cval, byte(v.P.Col), true
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		if v.Op != "USub" || v.P.Col > 255 {
 			return nil, 0, false
 		}
-		c, isConst := v.Operand.(*parser2.Constant)
+		c, isConst := v.Operand.(*ast.Constant)
 		if !isConst {
 			return nil, 0, false
 		}
@@ -325,9 +325,9 @@ func extractValue(e parser2.Expr) (val any, valStart byte, ok bool) {
 			fv := c.Value.(float64)
 			return negLiteral{pos: fv, neg: -fv}, byte(v.P.Col), true
 		}
-	case *parser2.BinOp:
-		left, leftOK := v.Left.(*parser2.Constant)
-		right, rightOK := v.Right.(*parser2.Constant)
+	case *ast.BinOp:
+		left, leftOK := v.Left.(*ast.Constant)
+		right, rightOK := v.Right.(*ast.Constant)
 		if !leftOK || !rightOK || left.P.Col > 255 {
 			return nil, 0, false
 		}
@@ -346,7 +346,7 @@ func extractValue(e parser2.Expr) (val any, valStart byte, ok bool) {
 }
 
 // numConstVal extracts the numeric value (int64 or float64) from a constant node.
-func numConstVal(c *parser2.Constant) (any, bool) {
+func numConstVal(c *ast.Constant) (any, bool) {
 	switch c.Kind {
 	case "int":
 		return c.Value.(int64), true
@@ -445,7 +445,7 @@ func foldBinOp(left any, op string, right any) (any, bool) {
 	return nil, false
 }
 
-func constantToValue(c *parser2.Constant) (any, bool) {
+func constantToValue(c *ast.Constant) (any, bool) {
 	switch c.Kind {
 	case "None":
 		return nil, true
@@ -481,33 +481,33 @@ func constantToValue(c *parser2.Constant) (any, bool) {
 // UnaryOp(Name), BoolOp, IfExp, or collection literal assignment.
 // target is the already-validated single LHS name.
 // lines is the split source passed through for collection closing-col lookup.
-func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractExprAssign(line int, target *ast.Name, value ast.Expr, lines [][]byte) (rawStmt, bool) {
 	targetLen := byte(len(target.Id))
 
 	switch e := value.(type) {
-	case *parser2.List:
+	case *ast.List:
 		rs, ok := extractCollection(line, target, bytecode.CollList, e.P.Col, e.Elts, lines)
 		if ok {
 			return rs, true
 		}
 		return extractConstLitColl(line, target, true, byte(e.P.Col), e.Elts, lines)
 
-	case *parser2.Tuple:
+	case *ast.Tuple:
 		rs, ok := extractCollection(line, target, bytecode.CollTuple, e.P.Col, e.Elts, lines)
 		if ok {
 			return rs, true
 		}
 		return extractConstLitColl(line, target, false, byte(e.P.Col), e.Elts, lines)
 
-	case *parser2.Set:
+	case *ast.Set:
 		return extractCollection(line, target, bytecode.CollSet, e.P.Col, e.Elts, lines)
 
-	case *parser2.Dict:
+	case *ast.Dict:
 		if len(e.Keys) != len(e.Values) {
 			return rawStmt{}, false
 		}
 		// Flatten keys and values into alternating elts.
-		flatElts := make([]parser2.Expr, 0, 2*len(e.Keys))
+		flatElts := make([]ast.Expr, 0, 2*len(e.Keys))
 		for i, k := range e.Keys {
 			if k == nil {
 				return rawStmt{}, false // **other unpacking not yet supported
@@ -516,12 +516,12 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 		}
 		return extractCollection(line, target, bytecode.CollDict, e.P.Col, flatElts, lines)
 
-	case *parser2.BoolOp:
+	case *ast.BoolOp:
 		if len(e.Values) != 2 {
 			return rawStmt{}, false // chained bool ops deferred
 		}
-		leftName, leftOK := e.Values[0].(*parser2.Name)
-		rightName, rightOK := e.Values[1].(*parser2.Name)
+		leftName, leftOK := e.Values[0].(*ast.Name)
+		rightName, rightOK := e.Values[1].(*ast.Name)
 		if !leftOK || !rightOK {
 			return rawStmt{}, false
 		}
@@ -549,10 +549,10 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
-	case *parser2.IfExp:
-		condName, condOK := e.Test.(*parser2.Name)
-		trueName, trueOK := e.Body.(*parser2.Name)
-		falseName, falseOK := e.OrElse.(*parser2.Name)
+	case *ast.IfExp:
+		condName, condOK := e.Test.(*ast.Name)
+		trueName, trueOK := e.Body.(*ast.Name)
+		falseName, falseOK := e.OrElse.(*ast.Name)
 		if !condOK || !trueOK || !falseOK {
 			return rawStmt{}, false
 		}
@@ -582,24 +582,24 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
-	case *parser2.Call:
+	case *ast.Call:
 		return extractCallAssign(line, target, e, lines)
 
-	case *parser2.Subscript:
+	case *ast.Subscript:
 		return extractSubscriptLoad(line, target, e)
 
-	case *parser2.Attribute:
+	case *ast.Attribute:
 		if rs, ok := extractFrozenSetContains(line, target, e); ok {
 			return rs, true
 		}
 		return extractAttrLoad(line, target, e)
 
-	case *parser2.Compare:
+	case *ast.Compare:
 		if len(e.Ops) != 1 {
 			return rawStmt{}, false // chained comparisons deferred
 		}
-		leftName, leftOK := e.Left.(*parser2.Name)
-		rightName, rightOK := e.Comparators[0].(*parser2.Name)
+		leftName, leftOK := e.Left.(*ast.Name)
+		rightName, rightOK := e.Comparators[0].(*ast.Name)
 		if !leftOK || !rightOK {
 			return rawStmt{}, false
 		}
@@ -632,9 +632,9 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
-	case *parser2.BinOp:
-		leftName, leftOK := e.Left.(*parser2.Name)
-		rightName, rightOK := e.Right.(*parser2.Name)
+	case *ast.BinOp:
+		leftName, leftOK := e.Left.(*ast.Name)
+		rightName, rightOK := e.Right.(*ast.Name)
 		if !leftOK || !rightOK {
 			return rawStmt{}, false
 		}
@@ -668,8 +668,8 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 			},
 		}, true
 
-	case *parser2.UnaryOp:
-		operandName, operandOK := e.Operand.(*parser2.Name)
+	case *ast.UnaryOp:
+		operandName, operandOK := e.Operand.(*ast.Name)
 		if !operandOK {
 			return rawStmt{}, false
 		}
@@ -710,7 +710,7 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 // whose elements are name-only and all on the same source line.
 // lines is the split source (from classifyAST) needed to compute the
 // closing-bracket column from the trimmed line end.
-func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, openCol int, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractCollection(line int, target *ast.Name, kind bytecode.CollKind, openCol int, eltsExprs []ast.Expr, lines [][]byte) (rawStmt, bool) {
 	if openCol > 255 {
 		return rawStmt{}, false
 	}
@@ -718,7 +718,7 @@ func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, o
 	// Validate all elements are names on the same line.
 	elts := make([]bytecode.CollElt, 0, len(eltsExprs))
 	for _, expr := range eltsExprs {
-		n, isName := expr.(*parser2.Name)
+		n, isName := expr.(*ast.Name)
 		if !isName {
 			return rawStmt{}, false
 		}
@@ -758,8 +758,8 @@ func extractCollection(line int, target *parser2.Name, kind bytecode.CollKind, o
 
 // extractCallAssign handles `x = f(args...)` where f and all positional
 // args are names and there are no keyword arguments.
-func extractCallAssign(line int, target *parser2.Name, e *parser2.Call, lines [][]byte) (rawStmt, bool) {
-	funcName, funcOK := e.Func.(*parser2.Name)
+func extractCallAssign(line int, target *ast.Name, e *ast.Call, lines [][]byte) (rawStmt, bool) {
+	funcName, funcOK := e.Func.(*ast.Name)
 	if !funcOK || len(e.Keywords) > 0 {
 		return rawStmt{}, false
 	}
@@ -768,7 +768,7 @@ func extractCallAssign(line int, target *parser2.Name, e *parser2.Call, lines []
 	}
 	args := make([]bytecode.CallArg, 0, len(e.Args))
 	for _, a := range e.Args {
-		n, isName := a.(*parser2.Name)
+		n, isName := a.(*ast.Name)
 		if !isName || n.P.Col > 255 || len(n.Id) > 15 {
 			return rawStmt{}, false
 		}
@@ -804,9 +804,9 @@ func extractCallAssign(line int, target *parser2.Name, e *parser2.Call, lines []
 }
 
 // extractSubscriptLoad handles `x = a[b]` where a and b are names.
-func extractSubscriptLoad(line int, target *parser2.Name, e *parser2.Subscript) (rawStmt, bool) {
-	obj, objOK := e.Value.(*parser2.Name)
-	key, keyOK := e.Slice.(*parser2.Name)
+func extractSubscriptLoad(line int, target *ast.Name, e *ast.Subscript) (rawStmt, bool) {
+	obj, objOK := e.Value.(*ast.Name)
+	key, keyOK := e.Slice.(*ast.Name)
 	if !objOK || !keyOK {
 		return rawStmt{}, false
 	}
@@ -839,10 +839,10 @@ func extractSubscriptLoad(line int, target *parser2.Name, e *parser2.Subscript) 
 }
 
 // extractSubscriptStore handles `a[b] = x` where a, b and x are names.
-func extractSubscriptStore(line int, tgt *parser2.Subscript, value parser2.Expr) (rawStmt, bool) {
-	obj, objOK := tgt.Value.(*parser2.Name)
-	key, keyOK := tgt.Slice.(*parser2.Name)
-	val, valOK := value.(*parser2.Name)
+func extractSubscriptStore(line int, tgt *ast.Subscript, value ast.Expr) (rawStmt, bool) {
+	obj, objOK := tgt.Value.(*ast.Name)
+	key, keyOK := tgt.Slice.(*ast.Name)
+	val, valOK := value.(*ast.Name)
 	if !objOK || !keyOK || !valOK {
 		return rawStmt{}, false
 	}
@@ -877,8 +877,8 @@ func extractSubscriptStore(line int, tgt *parser2.Subscript, value parser2.Expr)
 }
 
 // extractAttrLoad handles `x = a.b` where a is a name.
-func extractAttrLoad(line int, target *parser2.Name, e *parser2.Attribute) (rawStmt, bool) {
-	obj, objOK := e.Value.(*parser2.Name)
+func extractAttrLoad(line int, target *ast.Name, e *ast.Attribute) (rawStmt, bool) {
+	obj, objOK := e.Value.(*ast.Name)
 	if !objOK {
 		return rawStmt{}, false
 	}
@@ -909,9 +909,9 @@ func extractAttrLoad(line int, target *parser2.Name, e *parser2.Attribute) (rawS
 }
 
 // extractAttrStore handles `a.b = x` where a and x are names.
-func extractAttrStore(line int, tgt *parser2.Attribute, value parser2.Expr) (rawStmt, bool) {
-	obj, objOK := tgt.Value.(*parser2.Name)
-	val, valOK := value.(*parser2.Name)
+func extractAttrStore(line int, tgt *ast.Attribute, value ast.Expr) (rawStmt, bool) {
+	obj, objOK := tgt.Value.(*ast.Name)
+	val, valOK := value.(*ast.Name)
 	if !objOK || !valOK {
 		return rawStmt{}, false
 	}
@@ -1008,7 +1008,7 @@ func binOpargFromOp(op string) (byte, bool) {
 // body is `name = <funcBodyExpr>` and all branches assign to the SAME name.
 // The chain must have an else branch (no dangling elif). Returns an fbStmt
 // with isIfElseAssign=true on success.
-func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fbStmt, bool) {
+func extractIfElseAssignChain(first *ast.If, knownNames map[string]bool) (fbStmt, bool) {
 	var branches []ifElseExprBranch
 	var targetName string
 	var targetCol byte
@@ -1019,11 +1019,11 @@ func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fb
 		if len(cur.Body) != 1 {
 			return fbStmt{}, false
 		}
-		assignNode, isAssign := cur.Body[0].(*parser2.Assign)
+		assignNode, isAssign := cur.Body[0].(*ast.Assign)
 		if !isAssign || len(assignNode.Targets) != 1 {
 			return fbStmt{}, false
 		}
-		tgtName, isNameTgt := assignNode.Targets[0].(*parser2.Name)
+		tgtName, isNameTgt := assignNode.Targets[0].(*ast.Name)
 		if !isNameTgt || tgtName.P.Col > 255 {
 			return fbStmt{}, false
 		}
@@ -1038,7 +1038,7 @@ func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fb
 			return fbStmt{}, false
 		}
 		// Condition must be a supported Compare.
-		cmpNode, isCmp := cur.Test.(*parser2.Compare)
+		cmpNode, isCmp := cur.Test.(*ast.Compare)
 		if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
 			return fbStmt{}, false
 		}
@@ -1059,16 +1059,16 @@ func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fb
 			return fbStmt{}, false // no else → not a complete if/elif/else chain
 		}
 		if len(cur.Orelse) == 1 {
-			if elif, isElif := cur.Orelse[0].(*parser2.If); isElif {
+			if elif, isElif := cur.Orelse[0].(*ast.If); isElif {
 				cur = elif
 				continue
 			}
 			// else branch: must be a single assign to the same variable
-			elseAssign, isElseAssign := cur.Orelse[0].(*parser2.Assign)
+			elseAssign, isElseAssign := cur.Orelse[0].(*ast.Assign)
 			if !isElseAssign || len(elseAssign.Targets) != 1 {
 				return fbStmt{}, false
 			}
-			elseTgt, isElseName := elseAssign.Targets[0].(*parser2.Name)
+			elseTgt, isElseName := elseAssign.Targets[0].(*ast.Name)
 			if !isElseName || elseTgt.Id != targetName {
 				return fbStmt{}, false
 			}
@@ -1099,7 +1099,7 @@ func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fb
 
 // extractIfElse extracts an if/elif/else chain where each branch body is
 // `name = small_int` (0-255). Returns stmtIfElse on success.
-func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
+func extractIfElse(s *ast.If, lines [][]byte) (rawStmt, bool) {
 	_ = lines // reserved for future use
 	var branches []ifElseBranch
 	var hasElse bool
@@ -1110,7 +1110,7 @@ func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
 
 	cur := s
 	for cur != nil {
-		cond, condOK := cur.Test.(*parser2.Name)
+		cond, condOK := cur.Test.(*ast.Name)
 		if !condOK || cond.P.Col > 255 || len(cond.Id) > 15 {
 			return rawStmt{}, false
 		}
@@ -1121,15 +1121,15 @@ func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
 		if len(cur.Body) != 1 {
 			return rawStmt{}, false
 		}
-		bodyAssign, isAssign := cur.Body[0].(*parser2.Assign)
+		bodyAssign, isAssign := cur.Body[0].(*ast.Assign)
 		if !isAssign || len(bodyAssign.Targets) != 1 {
 			return rawStmt{}, false
 		}
-		varName, isName := bodyAssign.Targets[0].(*parser2.Name)
+		varName, isName := bodyAssign.Targets[0].(*ast.Name)
 		if !isName || varName.P.Col > 255 || len(varName.Id) > 15 {
 			return rawStmt{}, false
 		}
-		constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+		constVal, isConst := bodyAssign.Value.(*ast.Constant)
 		if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
 			return rawStmt{}, false
 		}
@@ -1160,19 +1160,19 @@ func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
 		if len(cur.Orelse) == 0 {
 			cur = nil
 		} else if len(cur.Orelse) == 1 {
-			if elif, isIf := cur.Orelse[0].(*parser2.If); isIf {
+			if elif, isIf := cur.Orelse[0].(*ast.If); isIf {
 				cur = elif
 			} else {
 				// else body: must be one assign
-				elseAssign, isAssign2 := cur.Orelse[0].(*parser2.Assign)
+				elseAssign, isAssign2 := cur.Orelse[0].(*ast.Assign)
 				if !isAssign2 || len(elseAssign.Targets) != 1 {
 					return rawStmt{}, false
 				}
-				ev, isName2 := elseAssign.Targets[0].(*parser2.Name)
+				ev, isName2 := elseAssign.Targets[0].(*ast.Name)
 				if !isName2 || ev.P.Col > 255 || len(ev.Id) > 15 {
 					return rawStmt{}, false
 				}
-				ec, isConst2 := elseAssign.Value.(*parser2.Constant)
+				ec, isConst2 := elseAssign.Value.(*ast.Constant)
 				if !isConst2 || ec.Kind != "int" || ec.P.Col > 255 {
 					return rawStmt{}, false
 				}
@@ -1218,26 +1218,26 @@ func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
 
 // extractWhileAssign extracts a simple `while cond: name = val` loop where
 // cond is a name and val is a small integer (0-255), with no else/break/continue.
-func extractWhileAssign(s *parser2.While) (rawStmt, bool) {
+func extractWhileAssign(s *ast.While) (rawStmt, bool) {
 	if len(s.Orelse) != 0 {
 		return rawStmt{}, false
 	}
-	cond, condOK := s.Test.(*parser2.Name)
+	cond, condOK := s.Test.(*ast.Name)
 	if !condOK || cond.P.Col > 255 || len(cond.Id) > 15 {
 		return rawStmt{}, false
 	}
 	if len(s.Body) != 1 {
 		return rawStmt{}, false
 	}
-	bodyAssign, isAssign := s.Body[0].(*parser2.Assign)
+	bodyAssign, isAssign := s.Body[0].(*ast.Assign)
 	if !isAssign || len(bodyAssign.Targets) != 1 {
 		return rawStmt{}, false
 	}
-	varName, isName := bodyAssign.Targets[0].(*parser2.Name)
+	varName, isName := bodyAssign.Targets[0].(*ast.Name)
 	if !isName || varName.P.Col > 255 || len(varName.Id) > 15 {
 		return rawStmt{}, false
 	}
-	constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+	constVal, isConst := bodyAssign.Value.(*ast.Constant)
 	if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
 		return rawStmt{}, false
 	}
@@ -1275,30 +1275,30 @@ func extractWhileAssign(s *parser2.While) (rawStmt, bool) {
 
 // extractForAssign extracts a simple `for loopVar in iter: bodyVar = val` loop
 // where iter and loopVar are names and val is a small integer (0-255), with no else/break.
-func extractForAssign(s *parser2.For) (rawStmt, bool) {
+func extractForAssign(s *ast.For) (rawStmt, bool) {
 	if len(s.Orelse) != 0 {
 		return rawStmt{}, false
 	}
-	iter, iterOK := s.Iter.(*parser2.Name)
+	iter, iterOK := s.Iter.(*ast.Name)
 	if !iterOK || iter.P.Col > 255 || len(iter.Id) > 15 {
 		return rawStmt{}, false
 	}
-	loopVar, loopVarOK := s.Target.(*parser2.Name)
+	loopVar, loopVarOK := s.Target.(*ast.Name)
 	if !loopVarOK || loopVar.P.Col > 255 || len(loopVar.Id) > 15 {
 		return rawStmt{}, false
 	}
 	if len(s.Body) != 1 {
 		return rawStmt{}, false
 	}
-	bodyAssign, isAssign := s.Body[0].(*parser2.Assign)
+	bodyAssign, isAssign := s.Body[0].(*ast.Assign)
 	if !isAssign || len(bodyAssign.Targets) != 1 {
 		return rawStmt{}, false
 	}
-	bodyVar, isName := bodyAssign.Targets[0].(*parser2.Name)
+	bodyVar, isName := bodyAssign.Targets[0].(*ast.Name)
 	if !isName || bodyVar.P.Col > 255 || len(bodyVar.Id) > 15 {
 		return rawStmt{}, false
 	}
-	constVal, isConst := bodyAssign.Value.(*parser2.Constant)
+	constVal, isConst := bodyAssign.Value.(*ast.Constant)
 	if !isConst || constVal.Kind != "int" || constVal.P.Col > 255 {
 		return rawStmt{}, false
 	}
@@ -1342,7 +1342,7 @@ func extractForAssign(s *parser2.For) (rawStmt, bool) {
 // extractFuncDef extracts a simple `def f(arg): return arg` function
 // definition where f and arg are single identifiers with no decorators,
 // annotations, defaults, *args, or **kwargs.
-func extractFuncDef(s *parser2.FunctionDef) (rawStmt, bool) {
+func extractFuncDef(s *ast.FunctionDef) (rawStmt, bool) {
 	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
 		return rawStmt{}, false
 	}
@@ -1363,11 +1363,11 @@ func extractFuncDef(s *parser2.FunctionDef) (rawStmt, bool) {
 	}
 	switch len(s.Body) {
 	case 1:
-		ret, isReturn := s.Body[0].(*parser2.Return)
+		ret, isReturn := s.Body[0].(*ast.Return)
 		if !isReturn || ret.Value == nil {
 			return rawStmt{}, false
 		}
-		retName, isName := ret.Value.(*parser2.Name)
+		retName, isName := ret.Value.(*ast.Name)
 		if !isName || retName.Id != arg.Name {
 			return rawStmt{}, false
 		}
@@ -1401,9 +1401,9 @@ func extractFuncDef(s *parser2.FunctionDef) (rawStmt, bool) {
 
 // extractClosure recognises `def f(outerArg): def g(): return outerArg; return g`
 // and returns a stmtClosureDef rawStmt with all source positions.
-func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, bool) {
+func extractClosure(outer *ast.FunctionDef, outerArgName string) (rawStmt, bool) {
 	// Body[0]: inner def with 0 args, single body statement `return outerArgName`
-	innerDef, ok := outer.Body[0].(*parser2.FunctionDef)
+	innerDef, ok := outer.Body[0].(*ast.FunctionDef)
 	if !ok {
 		return rawStmt{}, false
 	}
@@ -1418,21 +1418,21 @@ func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, b
 	if len(innerDef.Body) != 1 {
 		return rawStmt{}, false
 	}
-	innerRet, ok := innerDef.Body[0].(*parser2.Return)
+	innerRet, ok := innerDef.Body[0].(*ast.Return)
 	if !ok || innerRet.Value == nil {
 		return rawStmt{}, false
 	}
-	innerRetName, ok := innerRet.Value.(*parser2.Name)
+	innerRetName, ok := innerRet.Value.(*ast.Name)
 	if !ok || innerRetName.Id != outerArgName {
 		return rawStmt{}, false
 	}
 
 	// Body[1]: `return innerFuncName`
-	outerRet, ok := outer.Body[1].(*parser2.Return)
+	outerRet, ok := outer.Body[1].(*ast.Return)
 	if !ok || outerRet.Value == nil {
 		return rawStmt{}, false
 	}
-	outerRetName, ok := outerRet.Value.(*parser2.Name)
+	outerRetName, ok := outerRet.Value.(*ast.Name)
 	if !ok || outerRetName.Id != innerDef.Name {
 		return rawStmt{}, false
 	}
@@ -1483,7 +1483,7 @@ func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, b
 // For n < 31 all elements must be on the same line as the opening bracket.
 // For n >= 31 (isList only) elements may each be on their own line.
 // openCol is the column of the opening bracket, isList=true for list, false for tuple.
-func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractConstLitColl(line int, target *ast.Name, isList bool, openCol byte, eltsExprs []ast.Expr, lines [][]byte) (rawStmt, bool) {
 	if openCol > 255 || len(target.Id) > 15 || target.P.Col > 255 {
 		return rawStmt{}, false
 	}
@@ -1507,7 +1507,7 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 	if isList && n > 0 {
 		spansLines := false
 		for _, expr := range eltsExprs {
-			if c, isConst := expr.(*parser2.Constant); isConst && c.P.Line != line {
+			if c, isConst := expr.(*ast.Constant); isConst && c.P.Line != line {
 				spansLines = true
 				break
 			}
@@ -1528,7 +1528,7 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 
 	elts := make([]constLitElt, 0, n)
 	for _, expr := range eltsExprs {
-		c, isConst := expr.(*parser2.Constant)
+		c, isConst := expr.(*ast.Constant)
 		if !isConst || c.Kind != "str" || c.P.Col > 255 || c.P.Line != line {
 			return rawStmt{}, false
 		}
@@ -1566,11 +1566,11 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 
 // extractLargeStringList handles all-string-constant list literals with n >= 31
 // elements, each on their own line, with the closing ']' on its own line.
-func extractLargeStringList(line int, target *parser2.Name, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractLargeStringList(line int, target *ast.Name, openCol byte, eltsExprs []ast.Expr, lines [][]byte) (rawStmt, bool) {
 	n := len(eltsExprs)
 	elts := make([]constLitElt, 0, n)
 	for _, expr := range eltsExprs {
-		c, isConst := expr.(*parser2.Constant)
+		c, isConst := expr.(*ast.Constant)
 		if !isConst || c.Kind != "str" || c.P.Col > 255 {
 			return rawStmt{}, false
 		}
@@ -1641,12 +1641,12 @@ func extractLargeStringList(line int, target *parser2.Name, openCol byte, eltsEx
 // per line. It validates all elements, finds the closing ']' by scanning
 // forward from the last element's line, and returns a constLitCollAssign with
 // closeLine set for use in multi-line LONG linetable entries.
-func extractMultiLineSmallList(line int, target *parser2.Name, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractMultiLineSmallList(line int, target *ast.Name, openCol byte, eltsExprs []ast.Expr, lines [][]byte) (rawStmt, bool) {
 	n := len(eltsExprs)
 	elts := make([]constLitElt, n)
 	lastLine := 0
 	for i, expr := range eltsExprs {
-		c, isConst := expr.(*parser2.Constant)
+		c, isConst := expr.(*ast.Constant)
 		if !isConst || c.Kind != "str" || c.P.Col > 255 {
 			return rawStmt{}, false
 		}
@@ -1707,7 +1707,7 @@ func extractMultiLineSmallList(line int, target *parser2.Name, openCol byte, elt
 // composed recursively of Name, small-int Constant, BinOp, and
 // UnaryOp (USub/Invert) nodes on a single source line. Returns a
 // stmtGenExpr rawStmt on success.
-func extractGenExprAssign(line int, lineEndCol byte, target *parser2.Name, value parser2.Expr, lines [][]byte) (rawStmt, bool) {
+func extractGenExprAssign(line int, lineEndCol byte, target *ast.Name, value ast.Expr, lines [][]byte) (rawStmt, bool) {
 	if len(target.Id) > 15 || target.P.Col > 255 {
 		return rawStmt{}, false
 	}
@@ -1732,11 +1732,11 @@ func extractGenExprAssign(line int, lineEndCol byte, target *parser2.Name, value
 // isGenExpr reports whether e is recursively a valid general expression:
 // Name, small-int Constant (0-255), BinOp with supported op, or
 // UnaryOp (USub/Invert).
-func isGenExpr(e parser2.Expr) bool {
+func isGenExpr(e ast.Expr) bool {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		return len(n.Id) <= 15 && n.P.Col <= 255
-	case *parser2.Constant:
+	case *ast.Constant:
 		if n.P.Col > 255 {
 			return false
 		}
@@ -1748,10 +1748,10 @@ func isGenExpr(e parser2.Expr) bool {
 			return false // defer to later release
 		}
 		return false
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		_, ok := binOpargFromOp(n.Op)
 		return ok && isGenExpr(n.Left) && isGenExpr(n.Right)
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		if n.Op != "USub" && n.Op != "Invert" {
 			return false
 		}
@@ -1767,7 +1767,7 @@ func isGenExpr(e parser2.Expr) bool {
 // UnaryOp (USub/Invert). No constants, no *args / **kwargs, no decorators.
 // All source positions must fit in a byte. Each statement must be on a
 // distinct source line (no semicolons) so STORE_FAST_LOAD_FAST is not needed.
-func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bool) {
+func extractFuncBodyExpr(s *ast.FunctionDef, srcLines [][]byte) (rawStmt, bool) {
 	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
 		return rawStmt{}, false
 	}
@@ -1790,7 +1790,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	nDefaults := len(args.Defaults)
 	defaults := make([]fbDefault, nDefaults)
 	for i, dexpr := range args.Defaults {
-		n, ok := dexpr.(*parser2.Name)
+		n, ok := dexpr.(*ast.Name)
 		colEnd := n.P.Col + len(n.Id)
 		if !ok || n.P.Col > 255 || colEnd > 255 {
 			return rawStmt{}, false
@@ -1822,8 +1822,8 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	hasDocstring := false
 	docstringText := ""
 	if len(stmtNodes) > 0 {
-		if exprStmt, ok := stmtNodes[0].(*parser2.ExprStmt); ok {
-			if cst, ok2 := exprStmt.Value.(*parser2.Constant); ok2 && cst.Kind == "str" {
+		if exprStmt, ok := stmtNodes[0].(*ast.ExprStmt); ok {
+			if cst, ok2 := exprStmt.Value.(*ast.Constant); ok2 && cst.Kind == "str" {
 				if sv, ok3 := cst.Value.(string); ok3 {
 					hasDocstring = true
 					docstringText = sv
@@ -1841,12 +1841,12 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 		isLast := i == len(stmtNodes)-1
 
 		switch st := node.(type) {
-		case *parser2.ExprStmt:
+		case *ast.ExprStmt:
 			// Bare call statement: func(args)
 			if isLast {
 				return rawStmt{}, false // last stmt must be return
 			}
-			if _, isCall := st.Value.(*parser2.Call); !isCall {
+			if _, isCall := st.Value.(*ast.Call); !isCall {
 				return rawStmt{}, false // only bare calls supported
 			}
 			if !isFuncBodyExpr(st.Value, knownNames) {
@@ -1862,14 +1862,14 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			})
 			prevLine = st.P.Line
 
-		case *parser2.Assign:
+		case *ast.Assign:
 			if isLast {
 				return rawStmt{}, false // last stmt must be return
 			}
 			if len(st.Targets) != 1 {
 				return rawStmt{}, false
 			}
-			tgt, ok := st.Targets[0].(*parser2.Name)
+			tgt, ok := st.Targets[0].(*ast.Name)
 			if !ok || len(tgt.Id) > 15 || tgt.P.Col > 255 {
 				return rawStmt{}, false
 			}
@@ -1889,11 +1889,11 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			})
 			prevLine = st.P.Line
 
-		case *parser2.AugAssign:
+		case *ast.AugAssign:
 			if isLast {
 				return rawStmt{}, false
 			}
-			tgt, ok := st.Target.(*parser2.Name)
+			tgt, ok := st.Target.(*ast.Name)
 			if !ok || !knownNames[tgt.Id] || len(tgt.Id) > 15 || tgt.P.Col > 255 {
 				return rawStmt{}, false
 			}
@@ -1918,7 +1918,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			})
 			prevLine = st.P.Line
 
-		case *parser2.Return:
+		case *ast.Return:
 			if !isLast {
 				return rawStmt{}, false
 			}
@@ -1934,8 +1934,8 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			// Special case: ternary return `return val if cond else other`.
 			// Only a single-Compare condition is supported; Body and OrElse
 			// must each pass isFuncBodyExpr.
-			if ifexpr, isIfExpr := st.Value.(*parser2.IfExp); isIfExpr {
-				cmpNode, isCmp := ifexpr.Test.(*parser2.Compare)
+			if ifexpr, isIfExpr := st.Value.(*ast.IfExp); isIfExpr {
+				cmpNode, isCmp := ifexpr.Test.(*ast.Compare)
 				if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
 					return rawStmt{}, false
 				}
@@ -1959,7 +1959,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 				expr:     st.Value,
 			})
 
-		case *parser2.If:
+		case *ast.If:
 			// Support `if <compare>: return <expr>` chains, including:
 			//   - plain `if`: no else (non-last statement)
 			//   - elif chains: If node in orelse (non-last statement)
@@ -1972,7 +1972,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 				}
 				// isIfElseAssign: if/elif/else chain where every branch assigns to
 				// the same known variable. Must not be the last statement.
-				if _, ok2 := node.Body[0].(*parser2.Assign); ok2 {
+				if _, ok2 := node.Body[0].(*ast.Assign); ok2 {
 					if !isLast && len(node.Orelse) != 0 {
 						if rs, ok3 := extractIfElseAssignChain(node, knownNames); ok3 {
 							fbStmts = append(fbStmts, rs)
@@ -1983,14 +1983,14 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					}
 				}
 				// isIfAssign: body is a single Assign to an already-known Name.
-				if assignNode, ok2 := node.Body[0].(*parser2.Assign); ok2 {
+				if assignNode, ok2 := node.Body[0].(*ast.Assign); ok2 {
 					if isLast || len(node.Orelse) != 0 {
 						return rawStmt{}, false
 					}
 					if len(assignNode.Targets) != 1 {
 						return rawStmt{}, false
 					}
-					tgtName, isNameTgt := assignNode.Targets[0].(*parser2.Name)
+					tgtName, isNameTgt := assignNode.Targets[0].(*ast.Name)
 					if !isNameTgt || !knownNames[tgtName.Id] || tgtName.P.Col > 255 {
 						return rawStmt{}, false
 					}
@@ -2000,7 +2000,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					if node.P.Line <= prevLine {
 						return rawStmt{}, false
 					}
-					cmpNode, isCmp := node.Test.(*parser2.Compare)
+					cmpNode, isCmp := node.Test.(*ast.Compare)
 					if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
 						return rawStmt{}, false
 					}
@@ -2010,8 +2010,8 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					}
 					if op3 == bytecode.IS_OP {
 						// Only `x is None` / `x is not None` are supported.
-						nc, isNC := cmpNode.Comparators[0].(*parser2.Constant)
-						vn, isVN := cmpNode.Left.(*parser2.Name)
+						nc, isNC := cmpNode.Comparators[0].(*ast.Constant)
+						vn, isVN := cmpNode.Left.(*ast.Name)
 						if !isNC || nc.Kind != "None" || nc.P.Col > 255 || !isVN || !knownNames[vn.Id] {
 							return rawStmt{}, false
 						}
@@ -2030,14 +2030,14 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					prevLine = node.P.Line
 					break
 				}
-				retNode, ok := node.Body[0].(*parser2.Return)
+				retNode, ok := node.Body[0].(*ast.Return)
 				if !ok || retNode.Value == nil || retNode.P.Col > 255 {
 					return rawStmt{}, false
 				}
 				if node.P.Line <= prevLine {
 					return rawStmt{}, false
 				}
-				cmpNode, isCmp := node.Test.(*parser2.Compare)
+				cmpNode, isCmp := node.Test.(*ast.Compare)
 				if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
 					return rawStmt{}, false
 				}
@@ -2047,8 +2047,8 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 				}
 				if op2 == bytecode.IS_OP {
 					// Only `x is None` / `x is not None` are supported.
-					nc, isNC := cmpNode.Comparators[0].(*parser2.Constant)
-					vn, isVN := cmpNode.Left.(*parser2.Name)
+					nc, isNC := cmpNode.Comparators[0].(*ast.Constant)
+					vn, isVN := cmpNode.Left.(*ast.Name)
 					if !isNC || nc.Kind != "None" || nc.P.Col > 255 || !isVN || !knownNames[vn.Id] {
 						return rawStmt{}, false
 					}
@@ -2079,7 +2079,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					break
 				}
 				// orelse=[Return]: else branch becomes the fallthrough return.
-				if elseRet, isRet := node.Orelse[0].(*parser2.Return); isRet && len(node.Orelse) == 1 {
+				if elseRet, isRet := node.Orelse[0].(*ast.Return); isRet && len(node.Orelse) == 1 {
 					if elseRet.Value == nil || elseRet.P.Col > 255 {
 						return rawStmt{}, false
 					}
@@ -2095,7 +2095,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 					break
 				}
 				// orelse=[If]: elif — continue the loop.
-				elif, isElif := node.Orelse[0].(*parser2.If)
+				elif, isElif := node.Orelse[0].(*ast.If)
 				if !isElif || len(node.Orelse) != 1 {
 					return rawStmt{}, false
 				}
@@ -2152,12 +2152,12 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 // (0-255), None/True/False, a BinOp/UnaryOp (USub/Invert/Not), a single
 // Compare with a COMPARE_OP operator, or a Call with a global Name function
 // and all positional args being valid func body exprs.
-func isFuncBodyExpr(e parser2.Expr, known map[string]bool) bool {
+func isFuncBodyExpr(e ast.Expr, known map[string]bool) bool {
 	switch n := e.(type) {
-	case *parser2.Name:
+	case *ast.Name:
 		// Accept known locals and unknown globals (LOAD_GLOBAL read form).
 		return len(n.Id) <= 15 && n.P.Col <= 255
-	case *parser2.Constant:
+	case *ast.Constant:
 		if n.P.Col > 255 {
 			return false
 		}
@@ -2173,26 +2173,26 @@ func isFuncBodyExpr(e parser2.Expr, known map[string]bool) bool {
 			return n.P.Col <= 255
 		}
 		return false
-	case *parser2.BinOp:
+	case *ast.BinOp:
 		_, ok := binOpargFromOp(n.Op)
 		return ok && isFuncBodyExpr(n.Left, known) && isFuncBodyExpr(n.Right, known)
-	case *parser2.UnaryOp:
+	case *ast.UnaryOp:
 		if n.Op != "USub" && n.Op != "Invert" && n.Op != "Not" {
 			return false
 		}
 		return isFuncBodyExpr(n.Operand, known)
-	case *parser2.Compare:
+	case *ast.Compare:
 		if len(n.Ops) != 1 || len(n.Comparators) != 1 {
 			return false
 		}
 		op, _, ok := cmpOpFromOp(n.Ops[0])
 		return ok && op == bytecode.COMPARE_OP &&
 			isFuncBodyExpr(n.Left, known) && isFuncBodyExpr(n.Comparators[0], known)
-	case *parser2.Attribute:
+	case *ast.Attribute:
 		// a.attr: receiver must be a known local/param Name.
-		obj, ok := n.Value.(*parser2.Name)
+		obj, ok := n.Value.(*ast.Name)
 		return ok && known[obj.Id] && obj.P.Col <= 255
-	case *parser2.Tuple:
+	case *ast.Tuple:
 		if len(n.Elts) < 1 {
 			return false
 		}
@@ -2202,22 +2202,22 @@ func isFuncBodyExpr(e parser2.Expr, known map[string]bool) bool {
 			}
 		}
 		return true
-	case *parser2.Subscript:
+	case *ast.Subscript:
 		// a[b] compiles to BINARY_OP 26 (NbGetItem), same as a BinOp.
 		return isFuncBodyExpr(n.Value, known) && isFuncBodyExpr(n.Slice, known)
-	case *parser2.Call:
+	case *ast.Call:
 		if len(n.Keywords) > 0 {
 			return false
 		}
 		switch fn := n.Func.(type) {
-		case *parser2.Name:
+		case *ast.Name:
 			// Global function call: callee must not be a known local/param.
 			if known[fn.Id] || fn.P.Col > 255 {
 				return false
 			}
-		case *parser2.Attribute:
+		case *ast.Attribute:
 			// Method call: receiver must be a known local/param Name.
-			obj, ok := fn.Value.(*parser2.Name)
+			obj, ok := fn.Value.(*ast.Name)
 			if !ok || !known[obj.Id] || obj.P.Col > 255 {
 				return false
 			}
@@ -2316,22 +2316,22 @@ func findTripleQuoteEnd(lines [][]byte, startLine int) (endLine int, endCol byte
 
 // extractFrozenSetContains handles `target = frozenset(arg).__contains__`
 // where arg is a Name node. Returns false for any other Attribute pattern.
-func extractFrozenSetContains(line int, target *parser2.Name, e *parser2.Attribute) (rawStmt, bool) {
+func extractFrozenSetContains(line int, target *ast.Name, e *ast.Attribute) (rawStmt, bool) {
 	if e.Attr != "__contains__" {
 		return rawStmt{}, false
 	}
-	call, callOK := e.Value.(*parser2.Call)
+	call, callOK := e.Value.(*ast.Call)
 	if !callOK {
 		return rawStmt{}, false
 	}
-	fn, fnOK := call.Func.(*parser2.Name)
+	fn, fnOK := call.Func.(*ast.Name)
 	if !fnOK || fn.Id != "frozenset" {
 		return rawStmt{}, false
 	}
 	if len(call.Args) != 1 || len(call.Keywords) != 0 {
 		return rawStmt{}, false
 	}
-	arg, argOK := call.Args[0].(*parser2.Name)
+	arg, argOK := call.Args[0].(*ast.Name)
 	if !argOK {
 		return rawStmt{}, false
 	}
