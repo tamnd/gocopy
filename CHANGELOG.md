@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.1](changelog/v0.6.1.md) - symbol table pass mirroring CPython's symtable.c (2026-04-29)
 - [v0.6.0](changelog/v0.6.0.md) - core types: Loc, Atom, Const, OpMeta, oparg helpers (2026-04-28)
 - [v0.5.11](changelog/v0.5.11.md) - call statements and function docstrings in modMixed (2026-04-28)
 - [v0.5.10](changelog/v0.5.10.md) - from-star-import in modMixed (2026-04-28)

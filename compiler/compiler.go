@@ -32,6 +32,7 @@ import (
 	parser2 "github.com/tamnd/gopapy/parser"
 
 	"github.com/tamnd/gocopy/bytecode"
+	"github.com/tamnd/gocopy/compiler/symtable"
 )
 
 // ErrUnsupportedSource is returned for any module body the v0.0.x
@@ -49,6 +50,22 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	mod, parseErr := parser2.ParseFile(opts.Filename, string(source))
 	if parseErr != nil {
 		return nil, ErrUnsupportedSource
+	}
+	// v0.6.1: build the symbol table as a shadow pass so any
+	// regression in symtable.Build surfaces while the classifier
+	// still drives codegen. The result is intentionally unused
+	// today; v0.6.2+ starts threading it through. A symtable
+	// failure on a supported fixture means the table missed a
+	// shape, so it has to surface as a compile error rather than
+	// silently fall back.
+	if scope, symErr := symtable.Build(mod); symErr != nil {
+		// Only fail when the classifier would also accept the
+		// source; if classify rejects too, leave the existing
+		// ErrUnsupportedSource path in charge.
+		if _, classOK := classifyAST(source, mod); classOK {
+			return nil, symErr
+		}
+		_ = scope
 	}
 	cls, ok := classifyAST(source, mod)
 	if !ok {
