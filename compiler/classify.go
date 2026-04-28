@@ -611,7 +611,8 @@ type funcBodyInfo struct {
 	funcName              string
 	funcNameLen           byte
 	defLine               int
-	params                []fbParam // positional parameters in declaration order
+	params                []fbParam  // positional parameters in declaration order
+	defaults              []fbDefault // default values for the last len(defaults) params
 	stmts                 []fbStmt  // body statements: all assignments then one return
 	srcLines              [][]byte
 	hasImplicitNoneReturn bool // function body ends without an explicit return
@@ -620,6 +621,14 @@ type funcBodyInfo struct {
 // fbParam is one positional parameter in a funcBodyInfo.
 type fbParam struct {
 	name string
+}
+
+// fbDefault describes one Name-expression default for the last K parameters.
+type fbDefault struct {
+	name     string // the Name identifier to load via LOAD_NAME
+	line     int    // source line of the default value
+	colStart byte   // start column of the default value
+	colEnd   byte   // end column (exclusive) of the default value
 }
 
 // fbStmt is one statement in a funcBodyInfo body.

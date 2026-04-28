@@ -1773,7 +1773,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	}
 	args := s.Args
 	if args == nil || len(args.PosOnly) != 0 || len(args.KwOnly) != 0 ||
-		args.Vararg != nil || args.Kwarg != nil || len(args.Defaults) != 0 {
+		args.Vararg != nil || args.Kwarg != nil {
 		return rawStmt{}, false
 	}
 	if len(args.Args) > 15 {
@@ -1784,6 +1784,23 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	}
 	if len(s.Body) < 1 {
 		return rawStmt{}, false
+	}
+
+	// Accept only Name-expression defaults (loaded via LOAD_NAME at module level).
+	nDefaults := len(args.Defaults)
+	defaults := make([]fbDefault, nDefaults)
+	for i, dexpr := range args.Defaults {
+		n, ok := dexpr.(*parser2.Name)
+		colEnd := n.P.Col + len(n.Id)
+		if !ok || n.P.Col > 255 || colEnd > 255 {
+			return rawStmt{}, false
+		}
+		defaults[i] = fbDefault{
+			name:     n.Id,
+			line:     n.P.Line,
+			colStart: byte(n.P.Col),
+			colEnd:   byte(colEnd),
+		}
 	}
 
 	params := make([]fbParam, len(args.Args))
@@ -2083,6 +2100,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 			funcNameLen:           byte(len(s.Name)),
 			defLine:               defLine,
 			params:                params,
+			defaults:              defaults,
 			stmts:                 fbStmts,
 			srcLines:              srcLines,
 			hasImplicitNoneReturn: implicitNoneReturn,

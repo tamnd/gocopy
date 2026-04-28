@@ -95,6 +95,12 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 		names = append(names, f.funcName)
 	}
 
+	// Build a name→co_names index map for LOAD_NAME lookups.
+	nameIdx := map[string]byte{}
+	for i, n := range names {
+		nameIdx[n] = byte(i)
+	}
+
 	// Build bytecode.
 	bc := make([]byte, 0, 2+4+4+4*nAsgns+6*nFuncs+4)
 	bc = append(bc, byte(bytecode.RESUME), 0)
@@ -116,9 +122,20 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 		bc = append(bc, byte(bytecode.STORE_NAME), asgnNameBase+byte(i))
 	}
 
-	for i := range nFuncs {
-		bc = append(bc, byte(bytecode.LOAD_CONST), funcConstBase+byte(i))
-		bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
+	for i, f := range m.funcs {
+		if len(f.defaults) > 0 {
+			for _, d := range f.defaults {
+				idx := nameIdx[d.name]
+				bc = append(bc, byte(bytecode.LOAD_NAME), idx)
+			}
+			bc = append(bc, byte(bytecode.BUILD_TUPLE), byte(len(f.defaults)))
+			bc = append(bc, byte(bytecode.LOAD_CONST), funcConstBase+byte(i))
+			bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
+			bc = append(bc, byte(bytecode.SET_FUNCTION_ATTRIBUTE), 1)
+		} else {
+			bc = append(bc, byte(bytecode.LOAD_CONST), funcConstBase+byte(i))
+			bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
+		}
 		bc = append(bc, byte(bytecode.STORE_NAME), funcNameBase+byte(i))
 	}
 
@@ -149,15 +166,35 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 	info.Funcs = make([]bytecode.MultiFuncDefEntry, nFuncs)
 	for i, f := range m.funcs {
-		info.Funcs[i] = bytecode.MultiFuncDefEntry{
+		entry := bytecode.MultiFuncDefEntry{
 			DefLine:     f.defLine,
 			BodyEndLine: entries[i].bodyEndLine,
 			BodyEndCol:  entries[i].bodyEndCol,
 		}
+		if len(f.defaults) > 0 {
+			entry.Defaults = make([]bytecode.DefaultInfo, len(f.defaults))
+			for j, d := range f.defaults {
+				entry.Defaults[j] = bytecode.DefaultInfo{
+					Line:     d.line,
+					ColStart: d.colStart,
+					ColEnd:   d.colEnd,
+				}
+			}
+		}
+		info.Funcs[i] = entry
 	}
 	lt := bytecode.MixedModuleLineTable(info)
 
+	// Stack size: loading K defaults before BUILD_TUPLE pushes K values, so
+	// the peak is max(2, maxDefaults) where 2 covers all non-default paths.
+	stackSize := int32(2)
+	for _, f := range m.funcs {
+		if k := int32(len(f.defaults)); k > stackSize {
+			stackSize = k
+		}
+	}
+
 	co := module(filename, bc, lt, consts, names)
-	co.StackSize = 2
+	co.StackSize = stackSize
 	return co, nil
 }

@@ -63,11 +63,19 @@ func AssignsThenFuncDefLineTable(asgns []AssignInfo, defLine, bodyEndLine int, b
 	return out
 }
 
+// DefaultInfo describes one Name-default-parameter load in a funcdef.
+type DefaultInfo struct {
+	Line     int  // source line of the default value expression
+	ColStart byte // start column
+	ColEnd   byte // end column (exclusive)
+}
+
 // MultiFuncDefEntry describes one function definition within a modMultiFuncDef module.
 type MultiFuncDefEntry struct {
 	DefLine     int
 	BodyEndLine int
 	BodyEndCol  byte
+	Defaults    []DefaultInfo // Name defaults; nil/empty = no defaults
 }
 
 // MultiFuncDefLineTable returns the PEP 626 line table for a module body of
@@ -83,9 +91,16 @@ func MultiFuncDefLineTable(entries []MultiFuncDefEntry) []byte {
 	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // prologue (RESUME)
 	prevLine := 0
 	for i, e := range entries {
+		for _, d := range e.Defaults {
+			out = appendValueEntry(out, d.Line-prevLine, d.ColStart, d.ColEnd)
+			prevLine = d.Line
+		}
 		cuCount := 3
-		if i == n-1 {
+		if len(e.Defaults) > 0 {
 			cuCount = 5
+		}
+		if i == n-1 {
+			cuCount += 2
 		}
 		out = append(out, entryHeader(codeLong, cuCount))
 		out = appendSignedVarint(out, e.DefLine-prevLine)
@@ -125,8 +140,15 @@ func MixedModuleLineTable(info MixedModuleInfo) []byte {
 	prevLine := 0
 
 	if info.HasDocstring {
-		// LOAD_CONST docstring + STORE_NAME __doc__ = 2 CU, multi-line span.
-		out = appendListSpanEntry(out, 2, info.DocLine-prevLine, info.DocEndLine-info.DocLine, 0, info.DocEndCol)
+		// LOAD_CONST docstring + STORE_NAME __doc__ = 2 CU.
+		// Single-line docstring uses the compact ONE_LINE encoding; multi-line uses LONG.
+		lineDelta := info.DocLine - prevLine
+		endLineDelta := info.DocEndLine - info.DocLine
+		if endLineDelta == 0 {
+			out = appendValueEntryN(out, 2, lineDelta, 0, info.DocEndCol)
+		} else {
+			out = appendListSpanEntry(out, 2, lineDelta, endLineDelta, 0, info.DocEndCol)
+		}
 		prevLine = info.DocLine
 	}
 
@@ -146,9 +168,19 @@ func MixedModuleLineTable(info MixedModuleInfo) []byte {
 
 	n := len(info.Funcs)
 	for i, f := range info.Funcs {
+		// Emit one 1-CU entry per Name default (loaded via LOAD_NAME).
+		for _, d := range f.Defaults {
+			out = appendValueEntry(out, d.Line-prevLine, d.ColStart, d.ColEnd)
+			prevLine = d.Line
+		}
+		// Funcdef group: 3 CU (no defaults) or 5 CU (with defaults) for non-last;
+		// 5 or 7 for the last funcdef (adds LOAD_CONST None + RETURN_VALUE).
 		cuCount := 3
+		if len(f.Defaults) > 0 {
+			cuCount = 5 // BUILD_TUPLE + LOAD_CONST + MAKE_FUNCTION + SET_FUNCTION_ATTRIBUTE + STORE_NAME
+		}
 		if i == n-1 {
-			cuCount = 5
+			cuCount += 2 // LOAD_CONST None + RETURN_VALUE
 		}
 		out = append(out, entryHeader(codeLong, cuCount))
 		out = appendSignedVarint(out, f.DefLine-prevLine)
