@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.4.5](changelog/v0.4.5.md) - frozenset(name).__contains__ assignments (2026-04-28)
 - [v0.4.4](changelog/v0.4.4.md) - multi-statement constant-literal collection sequences (2026-04-28)
 - [v0.4.3](changelog/v0.4.3.md) - large string list literals (n ≥ 31) (2026-04-28)
 - [v0.4.2](changelog/v0.4.2.md) - constant literal collections (string list and tuple assignments) (2026-04-28)

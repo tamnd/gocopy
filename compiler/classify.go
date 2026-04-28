@@ -36,7 +36,8 @@ const (
 	modFuncBodyExpr   // def f(args...): [assigns]* return expr  (general function body)
 	modImports        // sequence of import / from-import statements
 	modConstLitColl   // x = ["a","b","c"] or x = ("a","b","c") — all-string-constant collection
-	modConstLitSeq    // [docstring +] 2+ constLitColl assignments in sequence
+	modConstLitSeq         // [docstring +] 2+ constLitColl assignments in sequence
+	modFrozenSetContains   // x = frozenset(name).__contains__
 )
 
 type classification struct {
@@ -111,6 +112,8 @@ type classification struct {
 	constLitCollAsgn constLitCollAssign
 	// modConstLitSeq fields:
 	constLitSeqAsgn constLitSeqClassify
+	// modFrozenSetContains fields:
+	frozensetAsgn frozenSetContainsAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -169,6 +172,8 @@ type rawStmt struct {
 	importAsgn importEntry
 	// stmtConstLitColl fields:
 	constLitCollAsgn constLitCollAssign
+	// stmtFrozenSetContains fields:
+	frozensetAsgn frozenSetContainsAssign
 }
 
 type rawStmtKind uint8
@@ -199,7 +204,8 @@ const (
 	stmtFuncBodyExpr   // def f(args...): [assigns]* return expr
 	stmtImport         // import X [as Y] (one alias)
 	stmtFromImport     // from X import Y1 [as Z1], ...
-	stmtConstLitColl   // x = ["a","b"] or x = ("a","b") — all-string-constant collection
+	stmtConstLitColl       // x = ["a","b"] or x = ("a","b") — all-string-constant collection
+	stmtFrozenSetContains  // x = frozenset(name).__contains__
 )
 
 // importAlias is one (name, asname) pair in an import statement.
@@ -272,6 +278,17 @@ type constLitSeqClassify struct {
 	docEndCol    byte   // exclusive end column of docstring on docEndLine
 	docText      string // the docstring value
 	stmts        []constLitCollAssign
+}
+
+// frozenSetContainsAssign holds the parsed form of `target = frozenset(arg).__contains__`.
+type frozenSetContainsAssign struct {
+	line         int
+	target       string
+	targetLen    byte
+	argName      string
+	argCol       byte
+	argLen       byte
+	frozensetCol byte
 }
 
 // constLitElt is one element in a constant-literal collection assignment.
@@ -752,6 +769,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 				constLitSeqAsgn: seq,
 			}, true
 		}
+	}
+	if first := stmts[0]; first.kind == stmtFrozenSetContains {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:          modFrozenSetContains,
+			frozensetAsgn: first.frozensetAsgn,
+		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
