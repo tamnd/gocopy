@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.6](changelog/v0.6.6.md) - codegen module-level (foundation): empty-module shape (2026-04-29)
 - [v0.6.5](changelog/v0.6.5.md) - assembler with PEP 626 line-table encoder and stack-depth analysis (2026-04-29)
 - [v0.6.4](changelog/v0.6.4.md) - flow graph (CFG) with read-only construction and dominators (2026-04-29)
 - [v0.6.3](changelog/v0.6.3.md) - instruction sequence IR with decode/encode round-trip (2026-04-29)
