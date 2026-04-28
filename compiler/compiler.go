@@ -184,6 +184,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileImports(opts.Filename, cls.imports)
 	case modConstLitColl:
 		return compileConstLitColl(opts.Filename, cls.constLitCollAsgn)
+	case modConstLitSeq:
+		return compileConstLitSeq(opts.Filename, cls.constLitSeqAsgn)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -1096,4 +1098,120 @@ func compileConstLitColl(filename string, a constLitCollAssign) (*bytecode.CodeO
 		co.StackSize = 2
 		return co, nil
 	}
+}
+
+// compileConstLitSeq lowers a multi-statement module body consisting of an
+// optional docstring followed by one or more constant-literal collection
+// assignments. Only list statements with n≥3 (LIST_EXTEND) or n≥31 (large
+// list) are supported; tuple statements are also supported.
+func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.CodeObject, error) {
+	// Build co_names: __doc__ (if docstring), then each target in source order.
+	names := make([]string, 0, 1+len(seq.stmts))
+	if seq.hasDocstring {
+		names = append(names, "__doc__")
+	}
+	for _, s := range seq.stmts {
+		names = append(names, s.target)
+	}
+
+	// Build co_consts in three phases.
+	consts := make([]any, 0, 2+len(seq.stmts)+40)
+
+	// Phase 1: atomic strings — docstring then each large list's elements.
+	if seq.hasDocstring {
+		consts = append(consts, seq.docText)
+	}
+	elemBase := make([]int, len(seq.stmts)) // first const index of each large list's elements
+	for i, s := range seq.stmts {
+		if s.isList && len(s.elts) >= 31 {
+			elemBase[i] = len(consts)
+			for _, e := range s.elts {
+				consts = append(consts, e.val)
+			}
+		}
+	}
+
+	// Phase 2: None.
+	noneIdx := len(consts)
+	consts = append(consts, nil)
+
+	// Phase 3: tuples in source order (LIST_EXTEND and tuple stmts).
+	tupleIdx := make([]int, len(seq.stmts))
+	for i, s := range seq.stmts {
+		n := len(s.elts)
+		if s.isList && n >= 31 {
+			tupleIdx[i] = -1 // elements stored individually; no tuple
+			continue
+		}
+		if n < 3 && s.isList {
+			return nil, ErrUnsupportedSource // n=1,2 lists not supported in seq context
+		}
+		tupleIdx[i] = len(consts)
+		tup := make(bytecode.ConstTuple, n)
+		for j, e := range s.elts {
+			tup[j] = e.val
+		}
+		consts = append(consts, tup)
+	}
+
+	// Build bytecode.
+	bc := []byte{byte(bytecode.RESUME), 0}
+	nameIdx := 0
+	if seq.hasDocstring {
+		bc = append(bc, byte(bytecode.LOAD_CONST), 0, byte(bytecode.STORE_NAME), 0)
+		nameIdx = 1
+	}
+	for i, s := range seq.stmts {
+		n := len(s.elts)
+		switch {
+		case s.isList && n >= 31:
+			bc = append(bc, byte(bytecode.BUILD_LIST), 0)
+			for j := range n {
+				bc = append(bc, byte(bytecode.LOAD_CONST), byte(elemBase[i]+j), byte(bytecode.LIST_APPEND), 1)
+			}
+			bc = append(bc, byte(bytecode.STORE_NAME), byte(nameIdx))
+		case s.isList:
+			bc = append(bc,
+				byte(bytecode.BUILD_LIST), 0,
+				byte(bytecode.LOAD_CONST), byte(tupleIdx[i]),
+				byte(bytecode.LIST_EXTEND), 1,
+				byte(bytecode.STORE_NAME), byte(nameIdx))
+		default: // tuple
+			bc = append(bc,
+				byte(bytecode.LOAD_CONST), byte(tupleIdx[i]),
+				byte(bytecode.STORE_NAME), byte(nameIdx))
+		}
+		nameIdx++
+	}
+	bc = append(bc, byte(bytecode.LOAD_CONST), byte(noneIdx), byte(bytecode.RETURN_VALUE), 0)
+
+	// Build linetable.
+	ltStmts := make([]bytecode.ConstLitSeqStmt, len(seq.stmts))
+	for i, s := range seq.stmts {
+		var elts []bytecode.LargeListElt
+		if s.isList && len(s.elts) >= 31 {
+			elts = make([]bytecode.LargeListElt, len(s.elts))
+			for j, e := range s.elts {
+				elts[j] = bytecode.LargeListElt{Line: e.line, StartCol: e.col, EndCol: e.endCol}
+			}
+		}
+		ltStmts[i] = bytecode.ConstLitSeqStmt{
+			Line:      s.line,
+			CloseLine: s.closeLine,
+			TargetLen: s.targetLen,
+			OpenCol:   s.openCol,
+			CloseEnd:  s.closeEnd,
+			IsList:    s.isList,
+			N:         len(s.elts),
+			Elts:      elts,
+		}
+	}
+	lt := bytecode.ConstLitSeqLineTable(
+		seq.hasDocstring, seq.docLine, seq.docEndLine, seq.docEndCol,
+		ltStmts,
+	)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 2
+	return co, nil
 }

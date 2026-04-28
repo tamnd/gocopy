@@ -145,6 +145,27 @@ func appendValueEntry(out []byte, lineDelta int, startCol, endCol byte) []byte {
 	return out
 }
 
+// appendValueEntryN is like appendValueEntry but covers numCUs code units
+// instead of exactly one. Used when multiple consecutive instructions share
+// the same source position (e.g. BUILD_LIST + LOAD_CONST + LIST_EXTEND).
+func appendValueEntryN(out []byte, numCUs, lineDelta int, startCol, endCol byte) []byte {
+	switch lineDelta {
+	case 0:
+		out = append(out, entryHeader(codeOneLine0, numCUs), startCol, endCol)
+	case 1:
+		out = append(out, entryHeader(codeOneLine1, numCUs), startCol, endCol)
+	case 2:
+		out = append(out, entryHeader(codeOneLine2, numCUs), startCol, endCol)
+	default:
+		out = append(out, entryHeader(codeLong, numCUs))
+		out = appendSignedVarint(out, lineDelta)
+		out = append(out, 0x00) // end_line_delta = 0
+		out = appendVarint(out, uint(startCol)+1)
+		out = appendVarint(out, uint(endCol)+1)
+	}
+	return out
+}
+
 // appendShort0Entry writes one PEP 626 SHORT0 entry covering `length`
 // code units (1..8). SHORT0 carries an implicit line_delta of 0 and a
 // single-byte payload encoding (start_col, end_col) where the entry's

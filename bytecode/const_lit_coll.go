@@ -166,6 +166,70 @@ func ConstLitList1LineTable(line int, nameLen, openCol, closeEnd, elemCol, elemE
 	return out
 }
 
+// ConstLitSeqStmt describes one constLitColl statement in a multi-statement
+// sequence for linetable generation.
+type ConstLitSeqStmt struct {
+	Line      int          // 1-indexed source line of '[', '(', or value
+	CloseLine int          // 1-indexed source line of ']' (large lists only)
+	TargetLen byte         // byte length of the assignment target name
+	OpenCol   byte         // column of '[' or '('
+	CloseEnd  byte         // exclusive end column of ']' or ')'
+	IsList    bool         // true for list, false for tuple
+	N         int          // number of elements
+	Elts      []LargeListElt // non-nil only for n≥31 lists
+}
+
+// ConstLitSeqLineTable returns the PEP 626 line table for a multi-statement
+// module body consisting of an optional docstring followed by one or more
+// constant-literal collection assignments. hasDoc, docLine, docEndLine, and
+// docEndCol describe the docstring (ignored when hasDoc is false).
+func ConstLitSeqLineTable(
+	hasDoc bool, docLine, docEndLine int, docEndCol byte,
+	stmts []ConstLitSeqStmt,
+) []byte {
+	out := make([]byte, 0, 256)
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // RESUME prologue
+	prevLine := 0
+
+	if hasDoc {
+		// 2 CUs: LOAD_CONST docstring + STORE_NAME __doc__, same position [0, docEndCol).
+		out = appendNoOpEntry(out, docLine-prevLine, 2, docEndCol)
+		prevLine = docLine
+	}
+
+	for si, s := range stmts {
+		storeLen := 1
+		if si == len(stmts)-1 {
+			storeLen = 3
+		}
+
+		if s.IsList && s.N >= 31 {
+			endLineDelta := s.CloseLine - s.Line
+			// BUILD_LIST: LONG 1 CU spanning full list.
+			out = appendListSpanEntry(out, 1, s.Line-prevLine, endLineDelta, s.OpenCol, s.CloseEnd)
+			prevLine = s.Line
+			for _, elt := range s.Elts {
+				out = appendValueEntry(out, elt.Line-prevLine, elt.StartCol, elt.EndCol)
+				prevLine = elt.Line
+				out = appendListSpanEntry(out, 1, s.Line-prevLine, endLineDelta, s.OpenCol, s.CloseEnd)
+				prevLine = s.Line
+			}
+		} else if s.IsList {
+			// 3..30 elements: BUILD_LIST + LOAD_CONST + LIST_EXTEND = 3 CUs at [openCol, closeEnd).
+			out = appendValueEntryN(out, 3, s.Line-prevLine, s.OpenCol, s.CloseEnd)
+			prevLine = s.Line
+		} else {
+			// Tuple: LOAD_CONST tuple = 1 CU at [openCol, closeEnd).
+			out = appendValueEntry(out, s.Line-prevLine, s.OpenCol, s.CloseEnd)
+			prevLine = s.Line
+		}
+
+		out = appendShort0Entry(out, storeLen, 0, s.TargetLen)
+	}
+
+	return out
+}
+
 // ConstLitList2LineTable returns the PEP 626 line table for a 2-element
 // constant-literal list assignment. col0/end0 and col1/end1 are the column
 // ranges of the two element literals (including quotes). openCol/closeEnd
