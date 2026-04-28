@@ -35,6 +35,7 @@ const (
 	modGenExpr        // x = <general expression> (recursive Name/Constant/BinOp/UnaryOp)
 	modFuncBodyExpr   // def f(args...): [assigns]* return expr  (general function body)
 	modImports        // sequence of import / from-import statements
+	modConstLitColl   // x = ["a","b","c"] or x = ("a","b","c") — all-string-constant collection
 )
 
 type classification struct {
@@ -105,6 +106,8 @@ type classification struct {
 	funcBodyAsgn funcBodyInfo
 	// modImports fields:
 	imports []importEntry
+	// modConstLitColl fields:
+	constLitCollAsgn constLitCollAssign
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -161,6 +164,8 @@ type rawStmt struct {
 	funcBodyAsgn funcBodyInfo
 	// stmtImport / stmtFromImport fields:
 	importAsgn importEntry
+	// stmtConstLitColl fields:
+	constLitCollAsgn constLitCollAssign
 }
 
 type rawStmtKind uint8
@@ -191,6 +196,7 @@ const (
 	stmtFuncBodyExpr   // def f(args...): [assigns]* return expr
 	stmtImport         // import X [as Y] (one alias)
 	stmtFromImport     // from X import Y1 [as Z1], ...
+	stmtConstLitColl   // x = ["a","b"] or x = ("a","b") — all-string-constant collection
 )
 
 // importAlias is one (name, asname) pair in an import statement.
@@ -252,6 +258,26 @@ type cmpAssign struct {
 type negLiteral struct {
 	pos any
 	neg any
+}
+
+// constLitElt is one element in a constant-literal collection assignment.
+// Only string elements are supported in v0.4.2; val is always a string.
+type constLitElt struct {
+	val    string
+	col    byte // 0-indexed column of the opening quote
+	endCol byte // exclusive end col (after closing quote)
+}
+
+// constLitCollAssign holds the parsed form of a constant-literal collection
+// assignment: `x = ["a", "b", "c"]` (isList=true) or `x = ("a", "b", "c")` (false).
+type constLitCollAssign struct {
+	line      int
+	target    string
+	targetLen byte
+	openCol   byte // column of '[' or '('
+	closeEnd  byte // lineEndCol (exclusive end of the line)
+	isList    bool
+	elts      []constLitElt
 }
 
 // foldedBinOp is the value type for `name = const op const` assignments
@@ -665,6 +691,17 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		return classification{
 			kind:         modFuncBodyExpr,
 			funcBodyAsgn: first.funcBodyAsgn,
+		}, true
+	}
+	if first := stmts[0]; first.kind == stmtConstLitColl {
+		for _, s := range stmts[1:] {
+			if s.kind != stmtNoOp {
+				return classification{}, false
+			}
+		}
+		return classification{
+			kind:             modConstLitColl,
+			constLitCollAsgn: first.constLitCollAsgn,
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtBoolOp {

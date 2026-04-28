@@ -182,6 +182,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileFuncBodyExpr(opts.Filename, cls)
 	case modImports:
 		return compileImports(opts.Filename, cls.imports)
+	case modConstLitColl:
+		return compileConstLitColl(opts.Filename, cls.constLitCollAsgn)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -1018,4 +1020,64 @@ func compileClosure(filename string, cls classification) (*bytecode.CodeObject, 
 			cd.outerDefLine, cd.outerRetLine, cd.outerRetArgEnd),
 		ExcTable: []byte{},
 	}, nil
+}
+
+// compileConstLitColl lowers a constant-literal collection assignment:
+// `x = ["a","b","c"]` (list) or `x = ("a","b","c")` (tuple).
+// Only string elements are supported in v0.4.2.
+func compileConstLitColl(filename string, a constLitCollAssign) (*bytecode.CodeObject, error) {
+	n := len(a.elts)
+	if n == 0 {
+		return nil, ErrUnsupportedSource // empty handled by modCollection
+	}
+
+	names := []string{a.target}
+
+	if !a.isList {
+		// Tuple of any size: LOAD_CONST full tuple.
+		// co_consts: (first_elem, None, ConstTuple{all_elems})
+		first := a.elts[0].val
+		tup := make(bytecode.ConstTuple, n)
+		for i, e := range a.elts {
+			tup[i] = e.val
+		}
+		consts := []any{first, nil, tup}
+		bc := bytecode.ConstLitTupleBytecode()
+		lt := bytecode.ConstLitTupleLineTable(a.line, a.targetLen, a.openCol, a.closeEnd)
+		return module(filename, bc, lt, consts, names), nil
+	}
+
+	// List.
+	switch n {
+	case 1:
+		// co_consts: (elem, None)
+		consts := []any{a.elts[0].val, nil}
+		bc := bytecode.ConstLitList1Bytecode()
+		lt := bytecode.ConstLitList1LineTable(a.line, a.targetLen, a.openCol, a.closeEnd,
+			a.elts[0].col, a.elts[0].endCol)
+		return module(filename, bc, lt, consts, names), nil
+	case 2:
+		// co_consts: (elem0, elem1, None)
+		consts := []any{a.elts[0].val, a.elts[1].val, nil}
+		bc := bytecode.ConstLitList2Bytecode()
+		lt := bytecode.ConstLitList2LineTable(a.line, a.targetLen, a.openCol, a.closeEnd,
+			a.elts[0].col, a.elts[0].endCol, a.elts[1].col, a.elts[1].endCol)
+		co := module(filename, bc, lt, consts, names)
+		co.StackSize = 2
+		return co, nil
+	default:
+		// 3+ elements: BUILD_LIST 0 + LOAD_CONST tuple + LIST_EXTEND 1.
+		// co_consts: (first_elem, None, ConstTuple{all_elems})
+		first := a.elts[0].val
+		tup := make(bytecode.ConstTuple, n)
+		for i, e := range a.elts {
+			tup[i] = e.val
+		}
+		consts := []any{first, nil, tup}
+		bc := bytecode.ConstLitListExtendBytecode()
+		lt := bytecode.ConstLitListExtendLineTable(a.line, a.targetLen, a.openCol, a.closeEnd)
+		co := module(filename, bc, lt, consts, names)
+		co.StackSize = 2
+		return co, nil
+	}
 }
