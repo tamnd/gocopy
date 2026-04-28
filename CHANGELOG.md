@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.5.3](changelog/v0.5.3.md) - CALL with LFLBLFLB args, tuple and BinOp column fixes (2026-04-28)
 - [v0.5.2](changelog/v0.5.2.md) - tuple returns and BinOp column fixes (2026-04-28)
 - [v0.5.1](changelog/v0.5.1.md) - multi-funcdef modules (2026-04-28)
 - [v0.4.8](changelog/v0.4.8.md) - CPython colorsys._v compilation (2026-04-28)

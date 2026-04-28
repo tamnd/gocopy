@@ -603,36 +603,40 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 	case *parser2.Tuple:
 		nElts := len(n.Elts)
 		var firstStart, lastEnd byte
-		loaded := 0
 
-		// LFLBLFLB optimisation for first two Name elements (locals only).
-		if nElts >= 2 {
-			if ln, lok := n.Elts[0].(*parser2.Name); lok {
-				if rn, rok := n.Elts[1].(*parser2.Name); rok {
-					ls, lOK := fs.slots[ln.Id]
-					rs, rOK := fs.slots[rn.Id]
-					if lOK && rOK && ls <= 15 && rs <= 15 {
-						lsc := byte(ln.P.Col)
-						lec := lsc + byte(len(ln.Id))
-						rec := byte(rn.P.Col) + byte(len(rn.Id))
-						fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
-						fs.emit(1, lsc, lec)
-						fs.trackDepth(2)
-						firstStart = lsc
-						lastEnd = rec
-						loaded = 2
+		// Load elements left to right. Use LFLBLFLB for any consecutive pair
+		// of local Name nodes (slots 0-15). CPython applies this optimisation
+		// wherever it finds two back-to-back local loads, not only at element 0.
+		for i := 0; i < nElts; {
+			if i+1 < nElts {
+				if ln, lok := n.Elts[i].(*parser2.Name); lok {
+					if rn, rok := n.Elts[i+1].(*parser2.Name); rok {
+						ls, lOK := fs.slots[ln.Id]
+						rs, rOK := fs.slots[rn.Id]
+						if lOK && rOK && ls <= 15 && rs <= 15 {
+							lsc := byte(ln.P.Col)
+							lec := lsc + byte(len(ln.Id))
+							rec := byte(rn.P.Col) + byte(len(rn.Id))
+							fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+							fs.emit(1, lsc, lec)
+							fs.trackDepth(i + 2)
+							if i == 0 {
+								firstStart = lsc
+							}
+							lastEnd = rec
+							i += 2
+							continue
+						}
 					}
 				}
 			}
-		}
-		// Load remaining elements.
-		for i := loaded; i < nElts; i++ {
 			sc, ec, _ := fs.walkExpr(n.Elts[i])
 			if i == 0 {
 				firstStart = sc
 			}
 			lastEnd = ec
 			fs.trackDepth(i + 1)
+			i++
 		}
 		// For parenthesised tuples the parser sets n.P to the '(' position,
 		// which is one column before the first element. Extend the span to
@@ -701,6 +705,9 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		}
 		// General case: walk left then right.
 		lsc, _, ld := fs.walkExpr(n.Left)
+		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
+			lsc = fs.scanBackOpen(lsc)
+		}
 		_, rec, rd := fs.walkExpr(n.Right)
 		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
 			rec = fs.scanEndCol(rec)
@@ -881,11 +888,11 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 			fs.trackDepth(2) // NULL + func
 		}
 
-		// Emit args. Use LFLBLFLB when both are Name nodes with slots 0-15.
+		// Emit args. Use LFLBLFLB when first two args are local Names (slots 0-15).
 		// Track peak depth with ambient = 2 (NULL + func/method already on stack).
 		lastArgEnd := callFuncEnd
-		lflblflb := false
-		if nArgs == 2 {
+		startArg := 0
+		if nArgs >= 2 {
 			if ln, lok := n.Args[0].(*parser2.Name); lok {
 				if rn, rok := n.Args[1].(*parser2.Name); rok {
 					ls, lOK := fs.slots[ln.Id]
@@ -897,22 +904,22 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 						fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
 						fs.emitSame(1, lsc, lec)
 						lastArgEnd = rec
-						lflblflb = true
+						startArg = 2
 						fs.trackDepth(2 + 2)
 					}
 				}
 			}
 		}
-		if !lflblflb {
-			for i, arg := range n.Args {
-				savedMax := fs.maxDepth
-				fs.maxDepth = 0
-				_, argEnd, _ := fs.walkExpr(arg)
-				argPeak := fs.maxDepth
-				fs.maxDepth = savedMax
-				fs.trackDepth(2 + i + argPeak)
-				lastArgEnd = argEnd
-			}
+		for i := startArg; i < nArgs; i++ {
+			savedMax := fs.maxDepth
+			fs.maxDepth = 0
+			_, argEnd, _ := fs.walkExpr(n.Args[i])
+			argPeak := fs.maxDepth
+			fs.maxDepth = savedMax
+			fs.trackDepth(2 + i + argPeak)
+			lastArgEnd = argEnd
+		}
+		if startArg == 0 {
 			fs.trackDepth(2 + nArgs)
 		}
 		closeEnd := fs.scanCallEnd(lastArgEnd)
