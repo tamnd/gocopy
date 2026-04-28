@@ -1589,6 +1589,8 @@ func isFuncBodyExpr(e parser2.Expr, known map[string]bool) bool {
 			return true
 		case "float":
 			return true
+		case "str":
+			return n.P.Col <= 255
 		}
 		return false
 	case *parser2.BinOp:

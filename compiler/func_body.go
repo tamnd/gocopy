@@ -982,6 +982,8 @@ func (fs *funcState) exprEndCol(e parser2.Expr) byte {
 			return byte(n.P.Col) + 5
 		case "float":
 			return fs.scanTokenEnd(byte(n.P.Col))
+		case "str":
+			return fs.scanStringEnd(byte(n.P.Col))
 		}
 	case *parser2.BinOp:
 		return fs.exprEndCol(n.Right)
@@ -1018,6 +1020,52 @@ func (fs *funcState) exprEndCol(e parser2.Expr) byte {
 
 // scanSubscriptEnd finds the closing ']' of a subscript starting from startCol.
 func (fs *funcState) scanSubscriptEnd(startCol byte) byte { return fs.scanChar(startCol, ']') }
+
+// scanStringEnd returns the source column past the closing quote of the string
+// literal that begins at startCol on the current statement's source line.
+// Handles single-quoted and double-quoted literals, including triple-quotes and
+// backslash escape sequences. Falls back to end-of-line on any parse error.
+func (fs *funcState) scanStringEnd(startCol byte) byte {
+	if int(fs.stmtLine) < 1 || int(fs.stmtLine) > len(fs.srcLines) {
+		return startCol
+	}
+	line := fs.srcLines[fs.stmtLine-1]
+	c := int(startCol)
+	if c >= len(line) {
+		return startCol
+	}
+	q := line[c]
+	if q != '"' && q != '\'' {
+		return startCol
+	}
+	c++
+	// Triple-quoted?
+	if c+1 < len(line) && line[c] == q && line[c+1] == q {
+		c += 2
+		for c < len(line)-2 {
+			if line[c] == q && line[c+1] == q && line[c+2] == q {
+				return byte(c + 3)
+			}
+			if line[c] == '\\' {
+				c++
+			}
+			c++
+		}
+		return byte(len(line))
+	}
+	// Single-quoted.
+	for c < len(line) {
+		if line[c] == '\\' {
+			c += 2
+			continue
+		}
+		if line[c] == q {
+			return byte(c + 1)
+		}
+		c++
+	}
+	return byte(len(line))
+}
 
 // emitBinOp appends BINARY_OP + cache bytes and one linetable entry.
 func (fs *funcState) emitBinOp(oparg byte, cacheWords int, sc, ec byte) {
@@ -1095,6 +1143,11 @@ func (fs *funcState) loadConst(c *parser2.Constant) (sc, ec byte) {
 		idx := fs.constIndex(fv)
 		fs.bc = append(fs.bc, byte(bytecode.LOAD_CONST), idx)
 		ec = fs.scanTokenEnd(sc)
+	case "str":
+		sv := c.Value.(string)
+		idx := fs.constIndex(sv)
+		fs.bc = append(fs.bc, byte(bytecode.LOAD_CONST), idx)
+		ec = fs.scanStringEnd(sc)
 	}
 	fs.lastExprEnd = ec
 	return
