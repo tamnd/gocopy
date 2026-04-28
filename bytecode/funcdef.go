@@ -154,7 +154,14 @@ func MixedModuleLineTable(info MixedModuleInfo) []byte {
 
 	if info.HasCLC {
 		// BUILD_LIST 0 + LOAD_CONST tuple + LIST_EXTEND 1 = 3 CU
-		out = appendListSpanEntry(out, 3, info.CLCLine-prevLine, info.CLCCloseLine-info.CLCLine, info.CLCOpenCol, info.CLCCloseEnd)
+		// Single-line list uses compact ONE_LINE encoding; multi-line uses LONG.
+		clcLineDelta := info.CLCLine - prevLine
+		clcEndLineDelta := info.CLCCloseLine - info.CLCLine
+		if clcEndLineDelta == 0 {
+			out = appendValueEntryN(out, 3, clcLineDelta, info.CLCOpenCol, info.CLCCloseEnd)
+		} else {
+			out = appendListSpanEntry(out, 3, clcLineDelta, clcEndLineDelta, info.CLCOpenCol, info.CLCCloseEnd)
+		}
 		// STORE_NAME = 1 CU, same line, cols [0, targetLen)
 		out = appendShort0Entry(out, 1, 0, info.CLCTargetLen)
 		prevLine = info.CLCLine

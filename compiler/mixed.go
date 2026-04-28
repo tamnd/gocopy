@@ -65,11 +65,12 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 		consts = append(consts, tup)
 	}
 
-	// One folded result per assign, appended after None (and CLC tuple if present).
+	// FoldedBinOp results go to co_consts; small-int assigns use LOAD_SMALL_INT and add nothing.
 	foldedConstBase := byte(len(consts))
 	for _, a := range m.assigns {
-		fold := a.value.(foldedBinOp)
-		consts = append(consts, fold.result)
+		if fold, ok := a.value.(foldedBinOp); ok {
+			consts = append(consts, fold.result)
+		}
 	}
 
 	// Build co_names:
@@ -117,8 +118,15 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 		bc = append(bc, byte(bytecode.STORE_NAME), clcNameIdx)
 	}
 
-	for i := range nAsgns {
-		bc = append(bc, byte(bytecode.LOAD_CONST), foldedConstBase+byte(i))
+	foldedIdx := foldedConstBase
+	for i, a := range m.assigns {
+		switch v := a.value.(type) {
+		case int64:
+			bc = append(bc, byte(bytecode.LOAD_SMALL_INT), byte(v))
+		case foldedBinOp:
+			bc = append(bc, byte(bytecode.LOAD_CONST), foldedIdx)
+			foldedIdx++
+		}
 		bc = append(bc, byte(bytecode.STORE_NAME), asgnNameBase+byte(i))
 	}
 

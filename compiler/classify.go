@@ -1080,11 +1080,18 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
 			idx++
 		}
-		// Zero or more folded BinOp assignments.
+		// Zero or more constant assignments: foldedBinOp or small int (0–255).
 		for idx < len(stmts) && stmts[idx].kind == stmtAssign {
 			s := stmts[idx]
-			if _, ok := s.asgnValue.(foldedBinOp); !ok {
-				break
+			switch v := s.asgnValue.(type) {
+			case foldedBinOp:
+				// accepted
+			case int64:
+				if v < 0 || v > 255 {
+					goto doneAssigns
+				}
+			default:
+				goto doneAssigns
 			}
 			m.assigns = append(m.assigns, asgn{
 				name:     s.text,
@@ -1099,6 +1106,7 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 				idx++
 			}
 		}
+	doneAssigns:
 		// One or more funcBodyExpr definitions.
 		for idx < len(stmts) && stmts[idx].kind == stmtFuncBodyExpr {
 			m.funcs = append(m.funcs, stmts[idx].funcBodyAsgn)
