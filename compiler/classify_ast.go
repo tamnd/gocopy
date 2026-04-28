@@ -51,14 +51,20 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			switch c.Kind {
 			case "str":
 				v := c.Value.(string)
-				N := strings.Count(v, "\n")
-				endLine := line + N
-				if endLine > len(lines) {
-					return classification{}, false
-				}
-				ec2, ok2 := lineEndCol(endLine)
-				if !ok2 {
-					return classification{}, false
+				// Find the actual closing triple-quote position in source
+				// (value's \n count is reduced by \<newline> escapes).
+				endLine, ec2, tripleOK := findTripleQuoteEnd(lines, line)
+				if !tripleOK {
+					N := strings.Count(v, "\n")
+					endLine = line + N
+					if endLine > len(lines) {
+						return classification{}, false
+					}
+					var ok3 bool
+					ec2, ok3 = lineEndCol(endLine)
+					if !ok3 {
+						return classification{}, false
+					}
 				}
 				for _, seg := range strings.Split(v, "\n") {
 					if !isPlainAscii([]byte(seg), 0) {
@@ -1400,6 +1406,18 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 		return extractLargeStringList(line, target, openCol, eltsExprs, lines)
 	}
 
+	// For lists where elements are not on the opening bracket's line,
+	// delegate to extractLargeStringList (handles closeLine detection).
+	// If that fails (e.g. multiple elements per line), try extractMultiLineSmallList.
+	if isList && n > 0 {
+		if c0, isConst := eltsExprs[0].(*parser2.Constant); isConst && c0.P.Line != line {
+			if s, ok := extractLargeStringList(line, target, openCol, eltsExprs, lines); ok {
+				return s, true
+			}
+			return extractMultiLineSmallList(line, target, openCol, eltsExprs, lines)
+		}
+	}
+
 	ln := trimRight(stripLineComment(lines[line-1]))
 	if len(ln) > 255 {
 		return rawStmt{}, false
@@ -1486,6 +1504,71 @@ func extractLargeStringList(line int, target *parser2.Name, openCol byte, eltsEx
 			ch := b[j]
 			if ch == ']' {
 				closeLine = i + 1 // 1-indexed
+				closeEndCol = byte(j + 1)
+				break
+			} else if ch != ' ' && ch != '\t' {
+				break
+			}
+		}
+		if closeLine != -1 {
+			break
+		}
+	}
+	if closeLine == -1 {
+		return rawStmt{}, false
+	}
+	return rawStmt{
+		line:    line,
+		endLine: closeLine,
+		kind:    stmtConstLitColl,
+		constLitCollAsgn: constLitCollAssign{
+			line:      line,
+			target:    target.Id,
+			targetLen: byte(len(target.Id)),
+			openCol:   openCol,
+			closeEnd:  closeEndCol,
+			closeLine: closeLine,
+			isList:    true,
+			elts:      elts,
+		},
+	}, true
+}
+
+// extractMultiLineSmallList handles all-string-constant list literals with
+// n < 31 elements that may span multiple source lines with multiple elements
+// per line. It validates all elements, finds the closing ']' by scanning
+// forward from the last element's line, and returns a constLitCollAssign with
+// closeLine set for use in multi-line LONG linetable entries.
+func extractMultiLineSmallList(line int, target *parser2.Name, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+	n := len(eltsExprs)
+	elts := make([]constLitElt, n)
+	lastLine := 0
+	for i, expr := range eltsExprs {
+		c, isConst := expr.(*parser2.Constant)
+		if !isConst || c.Kind != "str" || c.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		sv, ok := c.Value.(string)
+		if !ok || strings.Contains(sv, "\n") || !isPlainAscii([]byte(sv), 0) {
+			return rawStmt{}, false
+		}
+		col := byte(c.P.Col)
+		endCol := col + 2 + byte(len(sv))
+		elts[i] = constLitElt{val: sv, line: c.P.Line, col: col, endCol: endCol}
+		if c.P.Line > lastLine {
+			lastLine = c.P.Line
+		}
+	}
+	if lastLine < line {
+		return rawStmt{}, false
+	}
+	closeLine := -1
+	closeEndCol := byte(0)
+	for i := lastLine; i < len(lines); i++ { // i is 0-indexed
+		b := lines[i]
+		for j, ch := range b {
+			if ch == ']' {
+				closeLine = i + 1
 				closeEndCol = byte(j + 1)
 				break
 			} else if ch != ' ' && ch != '\t' {
@@ -1994,6 +2077,56 @@ func augOpargFromOp(op string) (byte, bool) {
 		return bytecode.NbInplaceRshift, true
 	}
 	return 0, false
+}
+
+// findTripleQuoteEnd scans raw source lines for the closing triple-quote of a
+// string literal that opens on startLine (1-indexed). Handles backslash-escaped
+// characters including \<newline> continuations. Returns the 1-indexed end line
+// and exclusive end column of the closing delimiter, or (0,0,false).
+func findTripleQuoteEnd(lines [][]byte, startLine int) (endLine int, endCol byte, ok bool) {
+	if startLine < 1 || startLine > len(lines) {
+		return 0, 0, false
+	}
+	ln := lines[startLine-1]
+	var q byte
+	scanCol := -1
+	for i := 0; i+2 < len(ln); i++ {
+		if (ln[i] == '"' || ln[i] == '\'') && ln[i] == ln[i+1] && ln[i] == ln[i+2] {
+			q = ln[i]
+			scanCol = i + 3
+			break
+		}
+	}
+	if scanCol < 0 {
+		return 0, 0, false
+	}
+	curLine := startLine
+	col := scanCol
+	for curLine <= len(lines) {
+		b := lines[curLine-1]
+		for col < len(b) {
+			ch := b[col]
+			if ch == '\\' {
+				if col+1 < len(b) {
+					col += 2
+				} else {
+					col = len(b) // \<newline> continuation: advance to next line
+				}
+				continue
+			}
+			if col+2 < len(b) && b[col] == q && b[col+1] == q && b[col+2] == q {
+				end := col + 3
+				if end > 255 {
+					return 0, 0, false
+				}
+				return curLine, byte(end), true
+			}
+			col++
+		}
+		curLine++
+		col = 0
+	}
+	return 0, 0, false
 }
 
 // extractFrozenSetContains handles `target = frozenset(arg).__contains__`

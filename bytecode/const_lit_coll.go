@@ -179,27 +179,45 @@ type ConstLitSeqStmt struct {
 	Elts      []LargeListElt // non-nil only for n≥31 lists
 }
 
+// FrozenSetSeqStmt describes one frozenset(arg).__contains__ statement in a
+// multi-statement sequence for linetable generation.
+type FrozenSetSeqStmt struct {
+	Line         int  // 1-indexed source line
+	TargetLen    byte // byte length of the assignment target name
+	FrozensetCol byte // column of 'f' in 'frozenset'
+	ArgCol       byte // column of first char of the arg name
+	ArgLen       byte // byte length of the arg name
+}
+
 // ConstLitSeqLineTable returns the PEP 626 line table for a multi-statement
-// module body consisting of an optional docstring followed by one or more
-// constant-literal collection assignments. hasDoc, docLine, docEndLine, and
-// docEndCol describe the docstring (ignored when hasDoc is false).
+// module body consisting of an optional docstring, zero or more
+// constant-literal collection assignments, and zero or more
+// frozenset(arg).__contains__ assignments. hasDoc, docLine, docEndLine, and
+// docEndCol describe the docstring (ignored when hasDoc is false). Multi-line
+// docstrings (docEndLine > docLine) emit a LONG entry automatically.
 func ConstLitSeqLineTable(
 	hasDoc bool, docLine, docEndLine int, docEndCol byte,
 	stmts []ConstLitSeqStmt,
+	frozenSetStmts []FrozenSetSeqStmt,
 ) []byte {
 	out := make([]byte, 0, 256)
 	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // RESUME prologue
 	prevLine := 0
 
 	if hasDoc {
-		// 2 CUs: LOAD_CONST docstring + STORE_NAME __doc__, same position [0, docEndCol).
-		out = appendNoOpEntry(out, docLine-prevLine, 2, docEndCol)
+		// 2 CUs: LOAD_CONST docstring + STORE_NAME __doc__.
+		if docEndLine == docLine {
+			out = appendNoOpEntry(out, docLine-prevLine, 2, docEndCol)
+		} else {
+			out = appendDocstringLong(out, docLine-prevLine, docEndLine-docLine, 2, docEndCol)
+		}
 		prevLine = docLine
 	}
 
+	// Determine storeLen for each CLC stmt: last CLC uses 3 only if no frozenset stmts follow.
 	for si, s := range stmts {
 		storeLen := 1
-		if si == len(stmts)-1 {
+		if si == len(stmts)-1 && len(frozenSetStmts) == 0 {
 			storeLen = 3
 		}
 
@@ -215,8 +233,13 @@ func ConstLitSeqLineTable(
 				prevLine = s.Line
 			}
 		} else if s.IsList {
-			// 3..30 elements: BUILD_LIST + LOAD_CONST + LIST_EXTEND = 3 CUs at [openCol, closeEnd).
-			out = appendValueEntryN(out, 3, s.Line-prevLine, s.OpenCol, s.CloseEnd)
+			if s.CloseLine > s.Line {
+				// Multi-line small list: LONG entry spanning [openLine, closeLine).
+				out = appendListSpanEntry(out, 3, s.Line-prevLine, s.CloseLine-s.Line, s.OpenCol, s.CloseEnd)
+			} else {
+				// 3..30 elements on same line: BUILD_LIST + LOAD_CONST + LIST_EXTEND = 3 CUs.
+				out = appendValueEntryN(out, 3, s.Line-prevLine, s.OpenCol, s.CloseEnd)
+			}
 			prevLine = s.Line
 		} else {
 			// Tuple: LOAD_CONST tuple = 1 CU at [openCol, closeEnd).
@@ -225,6 +248,32 @@ func ConstLitSeqLineTable(
 		}
 
 		out = appendShort0Entry(out, storeLen, 0, s.TargetLen)
+	}
+
+	// Frozenset stmts: each emits 2+1+4+8+2 CUs for the expression, then
+	// 1 CU STORE_NAME (non-last) or 3 CUs (last, absorbs LOAD_CONST None + RETURN_VALUE).
+	for fi, fs := range frozenSetStmts {
+		frozensetEnd := fs.FrozensetCol + 9  // len("frozenset") = 9
+		argEnd := fs.ArgCol + fs.ArgLen
+		callEnd := argEnd + 1                // end of ')'
+		attrEnd := callEnd + 13              // len(".__contains__") = 13
+
+		// LOAD_NAME frozenset + PUSH_NULL: 2 CUs.
+		out = appendValueEntryN(out, 2, fs.Line-prevLine, fs.FrozensetCol, frozensetEnd)
+		prevLine = fs.Line
+		// LOAD_NAME arg: 1 CU.
+		out = appendSameLine(out, 1, fs.ArgCol, argEnd)
+		// CALL + 3 cache words: 4 CUs.
+		out = appendSameLine(out, 4, fs.FrozensetCol, callEnd)
+		// LOAD_ATTR + 9 cache words: 10 CUs split 8+2.
+		out = appendSameLine(out, 8, fs.FrozensetCol, attrEnd)
+		out = appendSameLine(out, 2, fs.FrozensetCol, attrEnd)
+		// STORE_NAME: 1 CU (non-last) or 3 CUs (last).
+		storeLen := 1
+		if fi == len(frozenSetStmts)-1 {
+			storeLen = 3
+		}
+		out = appendShort0Entry(out, storeLen, 0, fs.TargetLen)
 	}
 
 	return out

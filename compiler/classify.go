@@ -270,7 +270,8 @@ type negLiteral struct {
 }
 
 // constLitSeqClassify describes a multi-statement module body: an optional
-// docstring followed by one or more constant-literal collection assignments.
+// docstring followed by zero or more constant-literal collection assignments
+// and zero or more frozenset(name).__contains__ assignments.
 type constLitSeqClassify struct {
 	hasDocstring bool
 	docLine      int    // 1-indexed start line of docstring
@@ -278,6 +279,7 @@ type constLitSeqClassify struct {
 	docEndCol    byte   // exclusive end column of docstring on docEndLine
 	docText      string // the docstring value
 	stmts        []constLitCollAssign
+	frozensetStmts []frozenSetContainsAssign
 }
 
 // frozenSetContainsAssign holds the parsed form of `target = frozenset(arg).__contains__`.
@@ -737,22 +739,36 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			constLitCollAsgn: first.constLitCollAsgn,
 		}, true
 	}
-	// modConstLitSeq: [docstring] + (≥1 constLitColl with docstring, or ≥2 without)
+	// modConstLitSeq: [docstring] + constLitColl* + frozenSetContains*
+	// Eligible when (hasdoc || numCLC≥1) and total non-doc stmts ≥ 2 (or hasdoc && ≥1).
 	{
 		hasdoc := len(stmts) > 0 && stmts[0].kind == stmtString
 		start := 0
 		if hasdoc {
 			start = 1
 		}
-		allCLC := start < len(stmts)
-		for i := start; i < len(stmts); i++ {
-			if stmts[i].kind != stmtConstLitColl {
-				allCLC = false
+		// Count constLitColl stmts.
+		clcEnd := start
+		for clcEnd < len(stmts) && stmts[clcEnd].kind == stmtConstLitColl {
+			clcEnd++
+		}
+		// Count trailing frozenset stmts.
+		fsEnd := clcEnd
+		for fsEnd < len(stmts) && stmts[fsEnd].kind == stmtFrozenSetContains {
+			fsEnd++
+		}
+		// Rest must be no-ops.
+		tailOK := true
+		for _, s := range stmts[fsEnd:] {
+			if s.kind != stmtNoOp {
+				tailOK = false
 				break
 			}
 		}
-		numCLC := len(stmts) - start
-		if allCLC && (numCLC >= 2 || (hasdoc && numCLC >= 1)) {
+		numCLC := clcEnd - start
+		numFS := fsEnd - clcEnd
+		total := numCLC + numFS
+		if tailOK && (numCLC > 0 || hasdoc) && (total >= 2 || (hasdoc && total >= 1)) {
 			seq := constLitSeqClassify{hasDocstring: hasdoc}
 			if hasdoc {
 				seq.docLine = stmts[0].line
@@ -764,8 +780,12 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			for i := range numCLC {
 				seq.stmts[i] = stmts[start+i].constLitCollAsgn
 			}
+			seq.frozensetStmts = make([]frozenSetContainsAssign, numFS)
+			for i := range numFS {
+				seq.frozensetStmts[i] = stmts[clcEnd+i].frozensetAsgn
+			}
 			return classification{
-				kind:           modConstLitSeq,
+				kind:            modConstLitSeq,
 				constLitSeqAsgn: seq,
 			}, true
 		}
