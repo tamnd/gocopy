@@ -194,6 +194,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileAssignsThenFuncDef(opts.Filename, cls)
 	case modMultiFuncDef:
 		return compileMultiFuncDef(opts.Filename, cls)
+	case modMixed:
+		return compileMixed(opts.Filename, cls)
 	}
 	return nil, ErrUnsupportedSource
 }

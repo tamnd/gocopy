@@ -41,6 +41,7 @@ const (
 	modClcThenImports      // x = [list] + from-imports
 	modAssignsThenFuncDef  // N foldedBinOp assigns + funcbody def
 	modMultiFuncDef        // 2+ funcbody defs with no other statements
+	modMixed               // [docstring?] [constLitColl?] [foldedBinOp assigns*] [funcBodyExprs+]
 )
 
 type classification struct {
@@ -123,6 +124,25 @@ type classification struct {
 	assignsThenFuncDefAsgn assignsThenFuncDefClassify
 	// modMultiFuncDef fields:
 	multiFuncDefAsgns []funcBodyInfo
+	// modMixed fields:
+	mixedModuleAsgn mixedModuleClassify
+}
+
+// mixedModuleClassify holds the parsed form of a module body that combines
+// an optional docstring, an optional constant-literal list (__all__), N >= 0
+// folded BinOp assignments, and M >= 1 function-body definitions.
+type mixedModuleClassify struct {
+	hasDocstring bool
+	docLine      int
+	docEndLine   int
+	docEndCol    byte
+	docText      string
+
+	hasCLC      bool
+	clc         constLitCollAssign
+
+	assigns []asgn
+	funcs   []funcBodyInfo
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -1020,6 +1040,77 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			chainValue:    first.asgnValue,
 		}, true
 	}
+	// modMixed: [docstring?] [constLitColl?] [foldedBinOp assigns*] [funcBodyExprs+] [noops*]
+	// Requires at least one funcBodyExpr AND at least one of: docstring, CLC, 2+ funcs.
+	// Must appear before the stmtString early-return so that a leading docstring followed
+	// by non-no-op statements reaches this block rather than returning false.
+	{
+		idx := 0
+		var m mixedModuleClassify
+
+		// Optional leading docstring.
+		if idx < len(stmts) && stmts[idx].kind == stmtString {
+			m.hasDocstring = true
+			m.docLine = stmts[idx].line
+			m.docEndLine = stmts[idx].endLine
+			m.docEndCol = stmts[idx].endCol
+			m.docText = stmts[idx].text
+			idx++
+		}
+		// Skip interspersed no-ops.
+		for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
+			idx++
+		}
+		// Optional single constLitColl (e.g. __all__ = [...]).
+		if idx < len(stmts) && stmts[idx].kind == stmtConstLitColl {
+			m.hasCLC = true
+			m.clc = stmts[idx].constLitCollAsgn
+			idx++
+		}
+		// Skip no-ops.
+		for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
+			idx++
+		}
+		// Zero or more folded BinOp assignments.
+		for idx < len(stmts) && stmts[idx].kind == stmtAssign {
+			s := stmts[idx]
+			if _, ok := s.asgnValue.(foldedBinOp); !ok {
+				break
+			}
+			m.assigns = append(m.assigns, asgn{
+				name:     s.text,
+				nameLen:  s.asgnNameLen,
+				valStart: s.asgnValStart,
+				valEnd:   s.asgnValEnd,
+				value:    s.asgnValue,
+				line:     s.line,
+			})
+			idx++
+			for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
+				idx++
+			}
+		}
+		// One or more funcBodyExpr definitions.
+		for idx < len(stmts) && stmts[idx].kind == stmtFuncBodyExpr {
+			m.funcs = append(m.funcs, stmts[idx].funcBodyAsgn)
+			idx++
+			for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
+				idx++
+			}
+		}
+		// Remaining must be no-ops.
+		ok := true
+		for ; idx < len(stmts); idx++ {
+			if stmts[idx].kind != stmtNoOp {
+				ok = false
+				break
+			}
+		}
+		if ok && len(m.funcs) >= 1 && (m.hasDocstring || m.hasCLC || len(m.funcs) >= 2) {
+			return classification{kind: modMixed, mixedModuleAsgn: m}, true
+		}
+	}
+
 	if first := stmts[0]; first.kind == stmtString {
 		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
 		for _, s := range stmts[1:] {

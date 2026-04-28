@@ -609,8 +609,16 @@ func compileFuncBodyCore(filename string, cls classification) (innerCode *byteco
 	}
 	// skip startCol+1 (always 1, one byte)
 	pos++
-	// read endCol+1 (unsigned varint, always fits in one byte for col < 64)
-	endCol1 := int(lt[pos] & 0x3f)
+	// read endCol+1 (unsigned varint; may span two bytes when endCol >= 63)
+	endCol1 := 0
+	for shift := 0; ; shift += 6 {
+		b := lt[pos]
+		pos++
+		endCol1 |= int(b&0x3f) << shift
+		if b < 0x40 {
+			break
+		}
+	}
 	defLine := int(outerMod.FirstLineNo)
 	return inner, defLine + endLineDelta, byte(endCol1 - 1), nil
 }

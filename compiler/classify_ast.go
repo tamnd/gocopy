@@ -1502,8 +1502,17 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 	// For lists where elements are not on the opening bracket's line,
 	// delegate to extractLargeStringList (handles closeLine detection).
 	// If that fails (e.g. multiple elements per line), try extractMultiLineSmallList.
+	// Check any element (not just the first) — handles lists like __all__ where
+	// elements start on the opening-bracket line but overflow to the next line.
 	if isList && n > 0 {
-		if c0, isConst := eltsExprs[0].(*parser2.Constant); isConst && c0.P.Line != line {
+		spansLines := false
+		for _, expr := range eltsExprs {
+			if c, isConst := expr.(*parser2.Constant); isConst && c.P.Line != line {
+				spansLines = true
+				break
+			}
+		}
+		if spansLines {
 			if s, ok := extractLargeStringList(line, target, openCol, eltsExprs, lines); ok {
 				return s, true
 			}
@@ -1655,16 +1664,18 @@ func extractMultiLineSmallList(line int, target *parser2.Name, openCol byte, elt
 	if lastLine < line {
 		return rawStmt{}, false
 	}
+	// Scan for closing ']' starting from lastLine's row in the 0-indexed slice.
+	// lastLine is 1-indexed, so lines[lastLine-1] is the last element's line.
+	// The ']' may be on the same line as the last element or on a later line.
 	closeLine := -1
 	closeEndCol := byte(0)
-	for i := lastLine; i < len(lines); i++ { // i is 0-indexed
+	for i := lastLine - 1; i < len(lines); i++ { // i is 0-indexed
 		b := lines[i]
-		for j, ch := range b {
-			if ch == ']' {
+		// Skip characters until we find ']'; allow content before ']' on same line.
+		for j := len(b) - 1; j >= 0; j-- {
+			if b[j] == ']' {
 				closeLine = i + 1
 				closeEndCol = byte(j + 1)
-				break
-			} else if ch != ' ' && ch != '\t' {
 				break
 			}
 		}

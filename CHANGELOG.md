@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.5.7](changelog/v0.5.7.md) - mixed module (colorsys.py) (2026-04-28)
 - [v0.5.6](changelog/v0.5.6.md) - implicit None return, scanEndCol rsc fix, int-const guard (2026-04-28)
 - [v0.5.5](changelog/v0.5.5.md) - scanBackOpen guard, tuple depth fix, colorsys YIQ/HLS (2026-04-28)
 - [v0.5.4](changelog/v0.5.4.md) - if-elif-else assign chains with JUMP_FORWARD (2026-04-28)

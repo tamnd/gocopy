@@ -97,6 +97,69 @@ func MultiFuncDefLineTable(entries []MultiFuncDefEntry) []byte {
 	return out
 }
 
+// MixedModuleInfo describes a mixed module: optional docstring, optional
+// constLitColl (__all__), folded BinOp assignments, and function definitions.
+type MixedModuleInfo struct {
+	HasDocstring bool
+	DocLine      int
+	DocEndLine   int
+	DocEndCol    byte
+
+	HasCLC       bool
+	CLCLine      int
+	CLCCloseLine int
+	CLCOpenCol   byte
+	CLCCloseEnd  byte
+	CLCTargetLen byte
+
+	Assigns []AssignInfo
+	Funcs   []MultiFuncDefEntry
+}
+
+// MixedModuleLineTable generates the PEP 626 module-level line table for a
+// mixed module with the structure:
+//
+//	[docstring?] [constLitColl?] [foldedBinOp assigns*] [funcBodyExprs+]
+func MixedModuleLineTable(info MixedModuleInfo) []byte {
+	out := []byte{0xf0, 0x03, 0x01, 0x01, 0x01} // prologue
+	prevLine := 0
+
+	if info.HasDocstring {
+		// LOAD_CONST docstring + STORE_NAME __doc__ = 2 CU, multi-line span.
+		out = appendListSpanEntry(out, 2, info.DocLine-prevLine, info.DocEndLine-info.DocLine, 0, info.DocEndCol)
+		prevLine = info.DocLine
+	}
+
+	if info.HasCLC {
+		// BUILD_LIST 0 + LOAD_CONST tuple + LIST_EXTEND 1 = 3 CU
+		out = appendListSpanEntry(out, 3, info.CLCLine-prevLine, info.CLCCloseLine-info.CLCLine, info.CLCOpenCol, info.CLCCloseEnd)
+		// STORE_NAME = 1 CU, same line, cols [0, targetLen)
+		out = appendShort0Entry(out, 1, 0, info.CLCTargetLen)
+		prevLine = info.CLCLine
+	}
+
+	for _, a := range info.Assigns {
+		out = appendValueEntry(out, a.Line-prevLine, a.ValStart, a.ValEnd)
+		out = appendShort0Entry(out, 1, 0, a.NameLen)
+		prevLine = a.Line
+	}
+
+	n := len(info.Funcs)
+	for i, f := range info.Funcs {
+		cuCount := 3
+		if i == n-1 {
+			cuCount = 5
+		}
+		out = append(out, entryHeader(codeLong, cuCount))
+		out = appendSignedVarint(out, f.DefLine-prevLine)
+		out = appendVarint(out, uint(f.BodyEndLine-f.DefLine))
+		out = appendVarint(out, 1)
+		out = appendVarint(out, uint(f.BodyEndCol)+1)
+		prevLine = f.DefLine
+	}
+	return out
+}
+
 // FuncReturnArgBytecode returns the instruction stream for a function whose
 // single body statement is `return arg` where arg is at argIdx in
 // co_localsplusnames.
