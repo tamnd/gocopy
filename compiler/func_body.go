@@ -735,12 +735,21 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 					}
 				}
 			}
+			// Save/restore maxDepth so the internal trackDepth calls inside
+			// walkExpr are offset by i (already-loaded elements on the stack).
+			savedMax := fs.maxDepth
+			fs.maxDepth = 0
 			sc, ec, _ := fs.walkExpr(n.Elts[i])
+			elemPeak := fs.maxDepth
+			if savedMax > i+elemPeak {
+				fs.maxDepth = savedMax
+			} else {
+				fs.maxDepth = i + elemPeak
+			}
 			if i == 0 {
 				firstStart = sc
 			}
 			lastEnd = ec
-			fs.trackDepth(i + 1)
 			i++
 		}
 		// For parenthesised tuples the parser sets n.P to the '(' position,
@@ -811,7 +820,16 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 		// General case: walk left then right.
 		lsc, _, ld := fs.walkExpr(n.Left)
 		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
-			lsc = fs.scanBackOpen(lsc)
+			// Only include the '(' if it wraps just the left child, not the
+			// entire expression. Verify by checking that the matching ')' closes
+			// before the right child's column.
+			candidate := fs.scanBackOpen(lsc)
+			if candidate < lsc {
+				closeCol := fs.scanMatchingClose(candidate)
+				if closeCol <= exprCol(n.Right) {
+					lsc = candidate
+				}
+			}
 		}
 		_, rec, rd := fs.walkExpr(n.Right)
 		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
@@ -1112,6 +1130,53 @@ func (fs *funcState) scanBackOpen(col byte) byte {
 	return col
 }
 
+// scanMatchingClose finds the closing ')' that matches the '(' at openCol.
+// Returns the column just past the ')'. If no match is found, returns openCol.
+func (fs *funcState) scanMatchingClose(openCol byte) byte {
+	if int(fs.stmtLine) < 1 || int(fs.stmtLine) > len(fs.srcLines) {
+		return openCol
+	}
+	line := fs.srcLines[fs.stmtLine-1]
+	depth := 0
+	for c := int(openCol); c < len(line); c++ {
+		switch line[c] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return byte(c + 1)
+			}
+		}
+	}
+	return openCol
+}
+
+// exprCol returns the start column of an expression node.
+func exprCol(e parser2.Expr) byte {
+	switch n := e.(type) {
+	case *parser2.Name:
+		return byte(n.P.Col)
+	case *parser2.Constant:
+		return byte(n.P.Col)
+	case *parser2.BinOp:
+		return byte(n.P.Col)
+	case *parser2.UnaryOp:
+		return byte(n.P.Col)
+	case *parser2.Compare:
+		return byte(n.P.Col)
+	case *parser2.Call:
+		return byte(n.P.Col)
+	case *parser2.Attribute:
+		return byte(n.P.Col)
+	case *parser2.Subscript:
+		return byte(n.P.Col)
+	case *parser2.Tuple:
+		return byte(n.P.Col)
+	}
+	return 0
+}
+
 // scanTokenEnd scans forward from startCol on the current statement's source
 // line, consuming numeric literal characters (digits, '.', '_', 'e', 'E',
 // '+', '-'). Returns the column past the last consumed character.
@@ -1285,9 +1350,17 @@ func (fs *funcState) walkExprSkipFirstLocal(e parser2.Expr) (startCol, endCol by
 	case *parser2.BinOp:
 		lsc, _, ld := fs.walkExprSkipFirstLocal(n.Left)
 		// Extend lsc backward to include the opening '(' when the left
-		// sub-expression is itself a BinOp (i.e. was parenthesized in source).
+		// sub-expression is itself a BinOp that was parenthesized in source.
+		// Guard: verify the matching ')' closes before the right child, so we
+		// don't grab a paren that wraps the entire expression.
 		if _, isBinOp := n.Left.(*parser2.BinOp); isBinOp {
-			lsc = fs.scanBackOpen(lsc)
+			candidate := fs.scanBackOpen(lsc)
+			if candidate < lsc {
+				closeCol := fs.scanMatchingClose(candidate)
+				if closeCol <= exprCol(n.Right) {
+					lsc = candidate
+				}
+			}
 		}
 		_, rec, rd := fs.walkExpr(n.Right)
 		// Extend rec forward to include the closing ')' when the right
