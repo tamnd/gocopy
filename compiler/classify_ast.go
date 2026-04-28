@@ -236,6 +236,53 @@ func classifyAST(src []byte, mod *parser2.Module) (classification, bool) {
 			}
 			stmts = append(stmts, rs)
 
+		case *parser2.Import:
+			line := s.P.Line
+			ec, ok := lineEndCol(line)
+			if !ok {
+				return classification{}, false
+			}
+			for _, alias := range s.Names {
+				// Reject dotted alias (import X.Y as Z) — different bytecode.
+				if alias.Asname != "" && strings.Contains(alias.Name, ".") {
+					return classification{}, false
+				}
+				stmts = append(stmts, rawStmt{
+					line: line, endLine: line, endCol: ec,
+					kind: stmtImport,
+					importAsgn: importEntry{
+						Line:   line,
+						EndCol: ec,
+						IsFrom: false,
+						Module: alias.Name,
+						Asname: alias.Asname,
+					},
+				})
+			}
+
+		case *parser2.ImportFrom:
+			line := s.P.Line
+			ec, ok := lineEndCol(line)
+			if !ok {
+				return classification{}, false
+			}
+			aliases := make([]importAlias, len(s.Names))
+			for i, a := range s.Names {
+				aliases[i] = importAlias{Name: a.Name, Asname: a.Asname}
+			}
+			stmts = append(stmts, rawStmt{
+				line: line, endLine: line, endCol: ec,
+				kind: stmtFromImport,
+				importAsgn: importEntry{
+					Line:    line,
+					EndCol:  ec,
+					IsFrom:  true,
+					FromMod: s.Module,
+					Level:   s.Level,
+					Aliases: aliases,
+				},
+			})
+
 		default:
 			return classification{}, false
 		}

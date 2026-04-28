@@ -27,6 +27,7 @@ package compiler
 import (
 	"bytes"
 	"errors"
+	"strings"
 
 	parser2 "github.com/tamnd/gopapy/parser"
 
@@ -159,8 +160,143 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileGenExpr(opts.Filename, cls)
 	case modFuncBodyExpr:
 		return compileFuncBodyExpr(opts.Filename, cls)
+	case modImports:
+		return compileImports(opts.Filename, cls.imports)
 	}
 	return nil, ErrUnsupportedSource
+}
+
+// compileImports lowers a module whose body is only import/from-import statements.
+func compileImports(filename string, entries []importEntry) (*bytecode.CodeObject, error) {
+	if len(entries) == 0 {
+		return nil, ErrUnsupportedSource
+	}
+
+	// Build co_consts and co_names in first-seen order.
+	// co_consts[0] = level (int64); then fromlist tuples; then None.
+	// co_names: module names, store names, attribute names in encounter order.
+
+	level := int64(entries[0].Level)
+	consts := []any{level}
+	noneIdx := byte(0)
+	noneAdded := false
+
+	addNone := func() byte {
+		if !noneAdded {
+			noneIdx = byte(len(consts))
+			consts = append(consts, nil)
+			noneAdded = true
+		}
+		return noneIdx
+	}
+
+	names := []string{}
+	nameMap := map[string]byte{}
+	addName := func(n string) byte {
+		if i, ok := nameMap[n]; ok {
+			return i
+		}
+		i := byte(len(names))
+		names = append(names, n)
+		nameMap[n] = i
+		return i
+	}
+
+	// importLocalName returns the local binding name for a simple import entry.
+	importLocalName := func(e importEntry) string {
+		if e.Asname != "" {
+			return e.Asname
+		}
+		if i := strings.Index(e.Module, "."); i >= 0 {
+			return e.Module[:i]
+		}
+		return e.Module
+	}
+
+	type entryCompiled struct {
+		constIdx byte
+		ref      bytecode.ImportNameRef
+	}
+	compiled := make([]entryCompiled, len(entries))
+
+	for i, e := range entries {
+		var ec entryCompiled
+		if !e.IsFrom {
+			ec.constIdx = addNone()
+			modIdx := addName(e.Module)
+			localName := importLocalName(e)
+			var storeIdx byte
+			if localName == e.Module {
+				storeIdx = modIdx
+			} else {
+				storeIdx = addName(localName)
+			}
+			ec.ref = bytecode.ImportNameRef{ModuleIdx: modIdx, StoreIdx: storeIdx}
+		} else {
+			// from-import: fromlist tuple (must be bytecode.ConstTuple)
+			fromlist := make(bytecode.ConstTuple, len(e.Aliases))
+			for j, a := range e.Aliases {
+				fromlist[j] = a.Name
+			}
+			ec.constIdx = byte(len(consts))
+			consts = append(consts, fromlist)
+
+			modIdx := addName(e.FromMod)
+			aliasRefs := make([]bytecode.AliasNameRef, len(e.Aliases))
+			for j, a := range e.Aliases {
+				ni := addName(a.Name)
+				var si byte
+				if a.Asname == "" {
+					si = ni
+				} else {
+					si = addName(a.Asname)
+				}
+				aliasRefs[j] = bytecode.AliasNameRef{NameIdx: ni, StoreIdx: si}
+			}
+			ec.ref = bytecode.ImportNameRef{ModuleIdx: modIdx, AliasIdxs: aliasRefs}
+		}
+		compiled[i] = ec
+	}
+
+	finalNone := addNone()
+
+	// Assemble bytecode and linetable entries.
+	constIdxs := make([]byte, len(entries)+1)
+	for i, ec := range compiled {
+		constIdxs[i] = ec.constIdx
+	}
+	constIdxs[len(entries)] = finalNone
+
+	refs := make([]bytecode.ImportNameRef, len(entries))
+	for i, ec := range compiled {
+		refs[i] = ec.ref
+	}
+
+	bcEntries := make([]bytecode.ImportEntry, len(entries))
+	isLast := make([]bool, len(entries))
+	for i, e := range entries {
+		bcEntries[i] = bytecode.ImportEntry{
+			Line:    e.Line,
+			EndCol:  e.EndCol,
+			IsFrom:  e.IsFrom,
+			Module:  e.Module,
+			Asname:  e.Asname,
+			FromMod: e.FromMod,
+			Level:   e.Level,
+			Aliases: make([]bytecode.ImportAlias, len(e.Aliases)),
+		}
+		for j, a := range e.Aliases {
+			bcEntries[i].Aliases[j] = bytecode.ImportAlias{Name: a.Name, Asname: a.Asname}
+		}
+		isLast[i] = (i == len(entries)-1)
+	}
+
+	bc := bytecode.ImportBytecode(bcEntries, constIdxs, refs)
+	lt := bytecode.ImportLineTable(bcEntries, isLast)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 2 // LOAD_SMALL_INT + LOAD_CONST are both on the stack at IMPORT_NAME
+	return co, nil
 }
 
 // compileAugAssign lowers `name = initVal\nname += augVal\n` at module scope.

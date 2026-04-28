@@ -41,6 +41,8 @@ const (
 	COPY_FREE_VARS    Opcode = 60
 	COPY              Opcode = 59
 	FOR_ITER          Opcode = 70
+	IMPORT_FROM       Opcode = 72
+	IMPORT_NAME       Opcode = 73
 	IS_OP             Opcode = 74
 	JUMP_BACKWARD     Opcode = 75
 	JUMP_FORWARD      Opcode = 77

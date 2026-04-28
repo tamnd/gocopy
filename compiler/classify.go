@@ -34,6 +34,7 @@ const (
 	modClosureDef     // def f(x): def g(): return x; return g  (simple one-free-var closure)
 	modGenExpr        // x = <general expression> (recursive Name/Constant/BinOp/UnaryOp)
 	modFuncBodyExpr   // def f(args...): [assigns]* return expr  (general function body)
+	modImports        // sequence of import / from-import statements
 )
 
 type classification struct {
@@ -102,6 +103,8 @@ type classification struct {
 	genExprAsgn genExprInfo
 	// modFuncBodyExpr fields:
 	funcBodyAsgn funcBodyInfo
+	// modImports fields:
+	imports []importEntry
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -156,6 +159,8 @@ type rawStmt struct {
 	genExprAsgn genExprInfo
 	// stmtFuncBodyExpr fields:
 	funcBodyAsgn funcBodyInfo
+	// stmtImport / stmtFromImport fields:
+	importAsgn importEntry
 }
 
 type rawStmtKind uint8
@@ -184,7 +189,29 @@ const (
 	stmtClosureDef     // def f(x): def g(): return x; return g  (simple closure)
 	stmtGenExpr        // x = <general expression>
 	stmtFuncBodyExpr   // def f(args...): [assigns]* return expr
+	stmtImport         // import X [as Y] (one alias)
+	stmtFromImport     // from X import Y1 [as Z1], ...
 )
+
+// importAlias is one (name, asname) pair in an import statement.
+type importAlias struct {
+	Name   string
+	Asname string // empty = same as Name
+}
+
+// importEntry is one import or from-import statement.
+type importEntry struct {
+	Line    int
+	EndCol  byte
+	IsFrom  bool
+	// IsFrom=false: simple import
+	Module  string
+	Asname  string // empty = top-level component of Module
+	// IsFrom=true: from-import
+	FromMod string
+	Level   int
+	Aliases []importAlias
+}
 
 // asgn is the parsed form of a single `name = literal` assignment.
 type asgn struct {
@@ -817,6 +844,32 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		}
 		return classification{kind: modMultiAssign, stmts: tail, asgns: as}, true
 	}
+	// Check if all non-no-op stmts are imports.
+	{
+		hasImport := false
+		for _, s := range stmts {
+			if s.kind == stmtImport || s.kind == stmtFromImport {
+				hasImport = true
+				break
+			}
+		}
+		if hasImport {
+			var imports []importEntry
+			for _, s := range stmts {
+				switch s.kind {
+				case stmtNoOp, stmtString:
+					// no-op: only contributes to line numbering
+				case stmtImport, stmtFromImport:
+					imports = append(imports, s.importAsgn)
+				default:
+					goto notImports
+				}
+			}
+			return classification{kind: modImports, imports: imports}, true
+		notImports:
+		}
+	}
+
 	out := make([]bytecode.NoOpStmt, 0, len(stmts))
 	for _, s := range stmts {
 		// stmtString is a no-op when it is not the first statement (the
