@@ -1103,17 +1103,41 @@ func compileConstLitColl(filename string, a constLitCollAssign) (*bytecode.CodeO
 }
 
 // compileConstLitSeq lowers a multi-statement module body consisting of an
-// optional docstring followed by one or more constant-literal collection
-// assignments. Only list statements with n≥3 (LIST_EXTEND) or n≥31 (large
-// list) are supported; tuple statements are also supported.
+// optional docstring, zero or more constant-literal collection assignments,
+// and zero or more frozenset(arg).__contains__ assignments.
 func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.CodeObject, error) {
-	// Build co_names: __doc__ (if docstring), then each target in source order.
-	names := make([]string, 0, 1+len(seq.stmts))
+	// Build co_names:
+	//   __doc__ (if docstring)
+	//   CLC targets in source order
+	//   "frozenset", "__contains__" (if any frozenset stmts)
+	//   frozenset targets in source order
+	names := make([]string, 0, 1+len(seq.stmts)+2+len(seq.frozensetStmts))
 	if seq.hasDocstring {
 		names = append(names, "__doc__")
 	}
 	for _, s := range seq.stmts {
 		names = append(names, s.target)
+	}
+
+	frozensetNameIdx := -1
+	containsNameIdx := -1
+	if len(seq.frozensetStmts) > 0 {
+		frozensetNameIdx = len(names)
+		names = append(names, "frozenset")
+		containsNameIdx = len(names)
+		names = append(names, "__contains__")
+	}
+
+	fsTargetStart := len(names)
+	for _, fs := range seq.frozensetStmts {
+		names = append(names, fs.target)
+	}
+	_ = fsTargetStart
+
+	// Build a name→index map for arg lookup.
+	nameIdxMap := make(map[string]byte, len(names))
+	for i, n := range names {
+		nameIdxMap[n] = byte(i)
 	}
 
 	// Build co_consts in three phases.
@@ -1185,6 +1209,27 @@ func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.Cod
 		}
 		nameIdx++
 	}
+
+	// Frozenset stmts: LOAD_NAME frozenset + PUSH_NULL + LOAD_NAME arg +
+	// CALL 1 [+3 cache] + LOAD_ATTR containsIdx*2 [+9 cache] + STORE_NAME target.
+	for fi, fs := range seq.frozensetStmts {
+		argIdx, ok := nameIdxMap[fs.argName]
+		if !ok {
+			return nil, ErrUnsupportedSource
+		}
+		targetIdx := byte(frozensetNameIdx + 2 + fi) // frozenset+__contains__ + position in targets
+		bc = append(bc,
+			byte(bytecode.LOAD_NAME), byte(frozensetNameIdx),
+			byte(bytecode.PUSH_NULL), 0,
+			byte(bytecode.LOAD_NAME), argIdx,
+			byte(bytecode.CALL), 1,
+			0, 0, 0, 0, 0, 0, // 3 inline-cache words
+			byte(bytecode.LOAD_ATTR), byte(containsNameIdx*2),
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 9 inline-cache words
+			byte(bytecode.STORE_NAME), targetIdx,
+		)
+	}
+
 	bc = append(bc, byte(bytecode.LOAD_CONST), byte(noneIdx), byte(bytecode.RETURN_VALUE), 0)
 
 	// Build linetable.
@@ -1208,13 +1253,28 @@ func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.Cod
 			Elts:      elts,
 		}
 	}
+	ltFrozenSets := make([]bytecode.FrozenSetSeqStmt, len(seq.frozensetStmts))
+	for i, fs := range seq.frozensetStmts {
+		ltFrozenSets[i] = bytecode.FrozenSetSeqStmt{
+			Line:         fs.line,
+			TargetLen:    fs.targetLen,
+			FrozensetCol: fs.frozensetCol,
+			ArgCol:       fs.argCol,
+			ArgLen:       fs.argLen,
+		}
+	}
 	lt := bytecode.ConstLitSeqLineTable(
 		seq.hasDocstring, seq.docLine, seq.docEndLine, seq.docEndCol,
 		ltStmts,
+		ltFrozenSets,
 	)
 
 	co := module(filename, bc, lt, consts, names)
-	co.StackSize = 2
+	if len(seq.frozensetStmts) > 0 {
+		co.StackSize = 3
+	} else {
+		co.StackSize = 2
+	}
 	return co, nil
 }
 

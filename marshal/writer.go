@@ -224,13 +224,35 @@ func (w *writer) stringTuple(items []string) {
 	}
 }
 
+// longAscii emits a TYPE_ASCII string for strings longer than 255 bytes.
+// FLAG_REF only if seen more than once.
+func (w *writer) longAscii(s string) {
+	for i := range len(s) {
+		if s[i] > 0x7f {
+			w.err = fmt.Errorf("marshal: string const not ASCII (len %d)", len(s))
+			return
+		}
+	}
+	key := saKey{s: s, interned: false}
+	if w.emitRef(key) {
+		return
+	}
+	flag := byte(0)
+	if w.counts[key] > 1 {
+		flag = w.reserveKey(key)
+	}
+	w.buf = append(w.buf, TYPE_ASCII|flag)
+	w.writeU32(uint32(len(s)))
+	w.buf = append(w.buf, s...)
+}
+
 // emitObject dispatches on the dynamic type of a constant value.
 // String consts are emitted as TYPE_SHORT_ASCII_INTERNED when every
 // byte is a name char (alphanumeric or underscore) — the rule CPython's
 // `all_name_chars` applies in `intern_string_constants`. Anything else
-// (spaces, newlines, punctuation) is plain TYPE_SHORT_ASCII. Bytes
-// consts route through the same TYPE_STRING bytestring path used by
-// linetable/exctable, which handles the empty-bytes singleton rule.
+// (spaces, newlines, punctuation) is plain TYPE_SHORT_ASCII. Strings
+// longer than 255 bytes use TYPE_ASCII. Bytes consts route through the
+// same TYPE_STRING bytestring path used by linetable/exctable.
 // Ellipsis emits as a single TYPE_ELLIPSIS byte with no FLAG_REF.
 func (w *writer) emitObject(v any) {
 	switch x := v.(type) {
@@ -243,11 +265,15 @@ func (w *writer) emitObject(v any) {
 			w.buf = append(w.buf, TYPE_FALSE)
 		}
 	case string:
+		if len(x) > 255 {
+			w.longAscii(x)
+			return
+		}
 		if !isShortAscii(x) {
 			w.err = fmt.Errorf("marshal: string const not short-ASCII (len %d)", len(x))
 			return
 		}
-		w.shortAscii(x, isAllNameChars(x))
+		w.shortAscii(x, isInterned(x))
 	case []byte:
 		w.bytestring(x)
 	case bytecode.EllipsisType:
@@ -326,14 +352,13 @@ func isShortAscii(s string) bool {
 	return true
 }
 
-// isAllNameChars mirrors CPython's all_name_chars: every byte must be
-// ASCII alphanumeric or underscore. The empty string returns false to
-// match CPython (empty strings aren't interned via this path).
+// isAllNameChars mirrors CPython's all_name_chars: every byte must be ASCII
+// alphanumeric or underscore. The empty string returns false.
 func isAllNameChars(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	for i := range len(s) {
+	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
 		case c >= 'a' && c <= 'z':
@@ -345,6 +370,19 @@ func isAllNameChars(s string) bool {
 		}
 	}
 	return true
+}
+
+// isInterned reports whether CPython would emit this string as
+// TYPE_SHORT_ASCII_INTERNED. Strings with all-name chars are interned by
+// intern_string_constants in compile.c. A handful of other strings are
+// pre-interned by the CPython runtime at startup (e.g. "*" for wildcard
+// imports) and therefore also appear as interned at marshal time.
+func isInterned(s string) bool {
+	if isAllNameChars(s) {
+		return true
+	}
+	// CPython pre-interns "*" via importlib bootstrap.
+	return s == "*"
 }
 
 // --- ref-key helpers ----------------------------------------------------
@@ -479,7 +517,11 @@ func (rc *refCounter) tuple(items []any) {
 		case *bytecode.CodeObject:
 			rc.code(x, false)
 		case string:
-			rc.shortAscii(x, isAllNameChars(x))
+			if len(x) > 255 {
+				rc.bump(saKey{s: x, interned: false})
+			} else {
+				rc.shortAscii(x, isInterned(x))
+			}
 		case []byte:
 			rc.bytestring(x)
 		case int64:
