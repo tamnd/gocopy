@@ -352,18 +352,13 @@ func isShortAscii(s string) bool {
 	return true
 }
 
-// isAllNameChars mirrors CPython's all_name_chars: first byte must be
-// ASCII alpha or underscore; remaining bytes must be ASCII alphanumeric
-// or underscore. The empty string returns false.
+// isAllNameChars mirrors CPython's all_name_chars: every byte must be ASCII
+// alphanumeric or underscore. The empty string returns false.
 func isAllNameChars(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	c0 := s[0]
-	if !((c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') || c0 == '_') {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
+	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
 		case c >= 'a' && c <= 'z':
