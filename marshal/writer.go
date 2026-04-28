@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 )
 
 // Marshal encodes c as a CPython 3.14 marshal stream (no .pyc header).

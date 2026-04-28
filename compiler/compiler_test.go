@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 )
 
 func TestEmptyModule(t *testing.T) {

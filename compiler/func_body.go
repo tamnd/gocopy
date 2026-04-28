@@ -3,7 +3,7 @@ package compiler
 import (
 	"strconv"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 	parser2 "github.com/tamnd/gopapy/parser"
 )
 

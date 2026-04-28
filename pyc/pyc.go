@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
-	"github.com/tamnd/gocopy/v1/marshal"
+	"github.com/tamnd/gocopy/bytecode"
+	"github.com/tamnd/gocopy/marshal"
 )
 
 // WriteOptions configures pyc.WriteFile.

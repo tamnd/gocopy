@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 )
 
 // TestEmptyModuleGolden locks the marshal stream of the canonical empty

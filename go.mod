@@ -1,4 +1,4 @@
-module github.com/tamnd/gocopy/v1
+module github.com/tamnd/gocopy
 
 go 1.26
 

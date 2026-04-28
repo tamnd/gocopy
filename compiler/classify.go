@@ -1,7 +1,7 @@
 package compiler
 
 import (
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 	parser2 "github.com/tamnd/gopapy/parser"
 )
 

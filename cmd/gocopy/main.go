@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/tamnd/gocopy/v1/compiler"
-	"github.com/tamnd/gocopy/v1/pyc"
+	"github.com/tamnd/gocopy/compiler"
+	"github.com/tamnd/gocopy/pyc"
 )
 
 const version = "0.1.11"

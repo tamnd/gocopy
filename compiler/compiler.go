@@ -31,7 +31,7 @@ import (
 
 	parser2 "github.com/tamnd/gopapy/parser"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 )
 
 // ErrUnsupportedSource is returned for any module body the v0.0.x

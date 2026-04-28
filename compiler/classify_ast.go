@@ -7,7 +7,7 @@ import (
 
 	parser2 "github.com/tamnd/gopapy/parser"
 
-	"github.com/tamnd/gocopy/v1/bytecode"
+	"github.com/tamnd/gocopy/bytecode"
 )
 
 // classifyAST walks a gopapy v2 Module and returns the classification
