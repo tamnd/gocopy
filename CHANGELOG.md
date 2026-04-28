@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.3.8.1](changelog/v0.3.8.1.md) - upgrade to gopapy v0.4.1 (2026-04-28)
 - [v0.3.8](changelog/v0.3.8.md) - LOAD_GLOBAL reads in function bodies (2026-04-28)
 - [v0.3.7](changelog/v0.3.7.md) - float constants in function bodies (2026-04-28)
 - [v0.3.6](changelog/v0.3.6.md) - is-None conditions in function bodies (2026-04-28)
