@@ -254,6 +254,15 @@ type negLiteral struct {
 	neg any
 }
 
+// foldedBinOp is the value type for `name = const op const` assignments
+// where both operands are numeric constants. CPython folds these at compile
+// time. leftVal is the left operand (stored at co_consts[0] for the first
+// assignment in a sequence); result is the folded value.
+type foldedBinOp struct {
+	leftVal any // int64 or float64
+	result  any // int64 or float64
+}
+
 // binOpAssign holds the parsed form of `target = left op right`
 // where both operands are names.
 type binOpAssign struct {

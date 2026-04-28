@@ -94,6 +94,26 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 				[]string{cls.asgnName},
 			), nil
 		}
+		// Constant-folded BinOp: consts = (leftVal, None[, result]).
+		// CPython stores leftVal at [0], None at [1], and the folded result
+		// at [2] when it doesn't fit LOAD_SMALL_INT.
+		if fb, ok := cls.asgnValue.(foldedBinOp); ok {
+			lt := bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts)
+			if iv, isInt := fb.result.(int64); isInt && iv >= 0 && iv <= 255 {
+				return module(opts.Filename,
+					bytecode.AssignSmallIntBytecode(byte(iv), len(cls.stmts)),
+					lt,
+					[]any{fb.leftVal, nil},
+					[]string{cls.asgnName},
+				), nil
+			}
+			return module(opts.Filename,
+				bytecode.AssignBytecodeAt(2, 1, len(cls.stmts)),
+				lt,
+				[]any{fb.leftVal, nil, fb.result},
+				[]string{cls.asgnName},
+			), nil
+		}
 		// Negative literal: consts = (pos, None, neg), LOAD_CONST 2.
 		// CPython's constant folder keeps the original positive literal at
 		// index 0, None at index 1, and the folded negative at index 2.
@@ -549,7 +569,13 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 	consts := []any{}
 	loadSmall := make([]bool, len(asgns))
 	loadIdx := make([]byte, len(asgns))
-	var pendingNegs []any // negative values appended after None
+	// Values that must go into co_consts AFTER None (negLiteral.neg and
+	// foldedBinOp.result that don't fit LOAD_SMALL_INT).
+	type deferredEntry struct {
+		asgnIdx int
+		val     any
+	}
+	var deferred []deferredEntry
 
 	// constIdx returns the index of v in consts, or -1.
 	constIdx := func(v any) int {
@@ -577,30 +603,62 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 		return idx
 	}
 
+	// Check if any assignment uses constant folding; if so, all must.
+	hasFolded := false
+	for _, a := range asgns {
+		if _, ok := a.value.(foldedBinOp); ok {
+			hasFolded = true
+			break
+		}
+	}
+	if hasFolded {
+		for _, a := range asgns {
+			if _, ok := a.value.(foldedBinOp); !ok {
+				return nil, ErrUnsupportedSource
+			}
+		}
+	}
+
+	// resultValues holds the actual value to emit for each assignment.
+	resultValues := make([]any, len(asgns))
+
 	for i, a := range asgns {
 		v := a.value
 		switch tv := v.(type) {
+		case foldedBinOp:
+			resultValues[i] = tv.result
+			if i == 0 {
+				addConst(tv.leftVal) // phantom slot at co_consts[0] for first assignment
+			}
+			if iv, isInt := tv.result.(int64); isInt && iv >= 0 && iv <= 255 {
+				loadSmall[i] = true
+			} else {
+				// Defer until after None so result lands after None in co_consts.
+				deferred = append(deferred, deferredEntry{i, tv.result})
+				loadIdx[i] = 0 // will be overwritten
+			}
 		case int64:
+			resultValues[i] = tv
 			if tv >= 0 && tv <= 255 {
 				loadSmall[i] = true
 				if i == 0 {
-					// First assignment: add the value as a phantom slot.
-					addConst(tv)
+					addConst(tv) // phantom slot
 				}
 			} else {
 				loadIdx[i] = addConst(tv)
 			}
 		case negLiteral:
+			resultValues[i] = tv.neg
 			if i == 0 {
-				// First assignment: add pos as phantom slot.
-				addConst(tv.pos)
+				addConst(tv.pos) // phantom slot
 			}
-			// neg value goes after None; record position later.
-			pendingNegs = append(pendingNegs, tv.neg)
-			loadIdx[i] = 0 // will be overwritten after None is inserted
+			deferred = append(deferred, deferredEntry{i, tv.neg})
+			loadIdx[i] = 0 // will be overwritten
 		case nil:
+			resultValues[i] = nil
 			loadIdx[i] = addConst(nil)
 		default:
+			resultValues[i] = v
 			loadIdx[i] = addConst(v)
 		}
 	}
@@ -608,23 +666,15 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 	// Add None if not present; record noneIdx.
 	noneIdx := addConst(nil)
 
-	// Resolve pending negatives.
-	negStart := byte(len(consts))
-	negIdx := make(map[any]byte)
-	for _, neg := range pendingNegs {
-		if _, ok := negIdx[neg]; !ok {
-			negIdx[neg] = negStart + byte(len(negIdx))
-			consts = append(consts, neg)
+	// Resolve deferred values (foldedBinOp results and negLiteral.neg),
+	// adding them to co_consts after None in encounter order.
+	deferredIdx := map[any]byte{}
+	for _, d := range deferred {
+		if _, ok := deferredIdx[d.val]; !ok {
+			deferredIdx[d.val] = byte(len(consts))
+			consts = append(consts, d.val)
 		}
-	}
-	// Assign resolved indices to negative assignments.
-	negI := 0
-	for i, a := range asgns {
-		if _, ok := a.value.(negLiteral); ok {
-			neg := a.value.(negLiteral).neg
-			loadIdx[i] = negIdx[neg]
-			negI++
-		}
+		loadIdx[d.asgnIdx] = deferredIdx[d.val]
 	}
 
 	// Build bytecode: RESUME + [LOAD, STORE_NAME]×N + NOPs + LOAD_CONST None + RV.
@@ -634,9 +684,9 @@ func compileMultiAssign(filename string, asgns []asgn, tail []bytecode.NoOpStmt)
 	}
 	bc := make([]byte, 0, 2+4*len(asgns)+2*nops+4)
 	bc = append(bc, byte(bytecode.RESUME), 0)
-	for i, a := range asgns {
+	for i := range asgns {
 		if loadSmall[i] {
-			bc = append(bc, byte(bytecode.LOAD_SMALL_INT), byte(a.value.(int64)))
+			bc = append(bc, byte(bytecode.LOAD_SMALL_INT), byte(resultValues[i].(int64)))
 		} else {
 			bc = append(bc, byte(bytecode.LOAD_CONST), loadIdx[i])
 		}

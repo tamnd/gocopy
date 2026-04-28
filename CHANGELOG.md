@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.4.1](changelog/v0.4.1.md) - constant folding for module-level BinOp(Constant, op, Constant) (2026-04-28)
 - [v0.4.0](changelog/v0.4.0.md) - module-level import statements (2026-04-28)
 - [v0.3.9](changelog/v0.3.9.md) - string constants in function bodies (2026-04-28)
 - [v0.3.8.1](changelog/v0.3.8.1.md) - upgrade to gopapy v0.4.1 (2026-04-28)
