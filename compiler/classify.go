@@ -603,18 +603,30 @@ type fbParam struct {
 
 // fbStmt is one statement in a funcBodyInfo body.
 type fbStmt struct {
-	isReturn    bool   // true for the return statement, false for assignments
-	isAugAssign bool   // true for augmented assignments (target op= rhs)
-	isIfReturn  bool   // true for `if cond: return expr` (early-return if)
-	isIfAssign  bool   // true for `if cond: target = expr` (conditional assignment, no else)
-	augOp       byte   // NbInplace* oparg, only meaningful when isAugAssign
-	line        int    // source line (1-indexed)
-	thenLine    int    // line of the then-branch (for isIfReturn / isIfAssign)
-	targetName  string // assignment target (for !isReturn; also then-body target for isIfAssign)
-	targetCol   byte   // column of the assignment target name
-	retKwCol    byte   // column of the `return` keyword (for isReturn / then-return of isIfReturn)
-	condExpr    parser2.Expr // condition expression (for isIfReturn / isIfAssign)
-	expr        parser2.Expr // return value or assignment RHS
+	isReturn        bool   // true for the return statement, false for assignments
+	isAugAssign     bool   // true for augmented assignments (target op= rhs)
+	isIfReturn      bool   // true for `if cond: return expr` (early-return if)
+	isIfAssign      bool   // true for `if cond: target = expr` (conditional assignment, no else)
+	isIfElseAssign  bool   // true for `if cond: t=e [elif cond: t=e ...] else: t=e`
+	augOp           byte   // NbInplace* oparg, only meaningful when isAugAssign
+	line            int    // source line (1-indexed)
+	thenLine        int    // line of the then-branch (for isIfReturn / isIfAssign)
+	targetName      string // assignment target (for !isReturn; also then-body target for isIfAssign / isIfElseAssign)
+	targetCol       byte   // column of the assignment target name
+	retKwCol        byte   // column of the `return` keyword (for isReturn / then-return of isIfReturn)
+	condExpr        parser2.Expr   // condition expression (for isIfReturn / isIfAssign)
+	expr            parser2.Expr   // return value or assignment RHS
+	ifElseBranches  []ifElseExprBranch // branches for isIfElseAssign
+}
+
+// ifElseExprBranch describes one arm of an if/elif/else assign chain
+// where each body is an arbitrary expression (not a small-int constant).
+// The else arm has condExpr == nil.
+type ifElseExprBranch struct {
+	condExpr parser2.Expr // nil for the else branch
+	condLine int          // source line of `if`/`elif` keyword
+	bodyLine int          // source line of the assignment
+	expr     parser2.Expr // RHS of the assignment
 }
 
 // whileAssign holds the parsed form of `while cond: name = val` where

@@ -1004,6 +1004,99 @@ func binOpargFromOp(op string) (byte, bool) {
 	return 0, false
 }
 
+// extractIfElseAssignChain extracts an if/elif/else chain where each branch
+// body is `name = <funcBodyExpr>` and all branches assign to the SAME name.
+// The chain must have an else branch (no dangling elif). Returns an fbStmt
+// with isIfElseAssign=true on success.
+func extractIfElseAssignChain(first *parser2.If, knownNames map[string]bool) (fbStmt, bool) {
+	var branches []ifElseExprBranch
+	var targetName string
+	var targetCol byte
+
+	cur := first
+	for cur != nil {
+		// Body must be a single Assign.
+		if len(cur.Body) != 1 {
+			return fbStmt{}, false
+		}
+		assignNode, isAssign := cur.Body[0].(*parser2.Assign)
+		if !isAssign || len(assignNode.Targets) != 1 {
+			return fbStmt{}, false
+		}
+		tgtName, isNameTgt := assignNode.Targets[0].(*parser2.Name)
+		if !isNameTgt || tgtName.P.Col > 255 {
+			return fbStmt{}, false
+		}
+		// All branches must assign to the same variable (may be new or existing).
+		if targetName == "" {
+			targetName = tgtName.Id
+			targetCol = byte(tgtName.P.Col)
+		} else if tgtName.Id != targetName {
+			return fbStmt{}, false
+		}
+		if !isFuncBodyExpr(assignNode.Value, knownNames) {
+			return fbStmt{}, false
+		}
+		// Condition must be a supported Compare.
+		cmpNode, isCmp := cur.Test.(*parser2.Compare)
+		if !isCmp || len(cmpNode.Ops) != 1 || len(cmpNode.Comparators) != 1 {
+			return fbStmt{}, false
+		}
+		op, _, ok := cmpOpFromOp(cmpNode.Ops[0])
+		if !ok || op == bytecode.IS_OP {
+			return fbStmt{}, false
+		}
+		if !isFuncBodyExpr(cmpNode.Left, knownNames) || !isFuncBodyExpr(cmpNode.Comparators[0], knownNames) {
+			return fbStmt{}, false
+		}
+		branches = append(branches, ifElseExprBranch{
+			condExpr: cur.Test,
+			condLine: cur.P.Line,
+			bodyLine: assignNode.P.Line,
+			expr:     assignNode.Value,
+		})
+		if len(cur.Orelse) == 0 {
+			return fbStmt{}, false // no else → not a complete if/elif/else chain
+		}
+		if len(cur.Orelse) == 1 {
+			if elif, isElif := cur.Orelse[0].(*parser2.If); isElif {
+				cur = elif
+				continue
+			}
+			// else branch: must be a single assign to the same variable
+			elseAssign, isElseAssign := cur.Orelse[0].(*parser2.Assign)
+			if !isElseAssign || len(elseAssign.Targets) != 1 {
+				return fbStmt{}, false
+			}
+			elseTgt, isElseName := elseAssign.Targets[0].(*parser2.Name)
+			if !isElseName || elseTgt.Id != targetName {
+				return fbStmt{}, false
+			}
+			if !isFuncBodyExpr(elseAssign.Value, knownNames) {
+				return fbStmt{}, false
+			}
+			branches = append(branches, ifElseExprBranch{
+				condExpr: nil,
+				condLine: 0,
+				bodyLine: elseAssign.P.Line,
+				expr:     elseAssign.Value,
+			})
+			break
+		}
+		return fbStmt{}, false
+	}
+	if len(branches) < 2 {
+		return fbStmt{}, false
+	}
+	return fbStmt{
+		isIfElseAssign: true,
+		line:           first.P.Line,
+		targetName:     targetName,
+		targetCol:      targetCol,
+		ifElseBranches: branches,
+	}, true
+}
+
 // extractIfElse extracts an if/elif/else chain where each branch body is
 // `name = small_int` (0-255). Returns stmtIfElse on success.
 func extractIfElse(s *parser2.If, lines [][]byte) (rawStmt, bool) {
@@ -1811,6 +1904,18 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 				if len(node.Body) != 1 {
 					return rawStmt{}, false
 				}
+				// isIfElseAssign: if/elif/else chain where every branch assigns to
+				// the same known variable. Must not be the last statement.
+				if _, ok2 := node.Body[0].(*parser2.Assign); ok2 {
+					if !isLast && len(node.Orelse) != 0 {
+						if rs, ok3 := extractIfElseAssignChain(node, knownNames); ok3 {
+							fbStmts = append(fbStmts, rs)
+							prevLine = node.P.Line
+							knownNames[rs.targetName] = true
+							break
+						}
+					}
+				}
 				// isIfAssign: body is a single Assign to an already-known Name.
 				if assignNode, ok2 := node.Body[0].(*parser2.Assign); ok2 {
 					if isLast || len(node.Orelse) != 0 {
@@ -1936,7 +2041,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	// Ensure total ≤ 15 so LFLBLFLB opargs fit in a nibble.
 	nLocals := 0
 	for _, st := range fbStmts {
-		if !st.isReturn && !st.isIfReturn && !st.isIfAssign {
+		if !st.isReturn && !st.isIfReturn && !st.isIfAssign && !st.isIfElseAssign {
 			nLocals++
 		}
 	}

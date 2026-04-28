@@ -30,6 +30,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		if st.isReturn || st.isIfReturn || st.isIfAssign {
 			continue
 		}
+		// isIfElseAssign may introduce a new local (all paths guarantee assignment).
 		if _, ok := slots[st.targetName]; !ok {
 			slots[st.targetName] = nextSlot
 			localsPlusNames = append(localsPlusNames, st.targetName)
@@ -356,6 +357,110 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 			pjifCU := (pjifPos - 1) / 2
 			targetCU := len(fs.bc) / 2
 			fs.bc[pjifPos] = byte(targetCU - (pjifCU + 1 + pjifCacheWords))
+
+		} else if st.isIfElseAssign {
+			// if/elif/else assign chain: each branch assigns to the same variable.
+			// Emit: for each if/elif: condition + PJIF + NOT_TAKEN + body + STORE_FAST + JUMP_FORWARD
+			//       for else: body + STORE_FAST
+			// Backpatch: PJIF[i] → start of branch i+1; JUMP_FORWARD[i] → end of chain.
+			thenSlot := fs.slots[st.targetName]
+			tsc := st.targetCol
+			tec := tsc + byte(len(st.targetName))
+
+			pjifCacheWords := int(bytecode.CacheSize[bytecode.POP_JUMP_IF_FALSE])
+			cmpCacheWords := int(bytecode.CacheSize[bytecode.COMPARE_OP])
+			jfCacheWords := int(bytecode.CacheSize[bytecode.JUMP_FORWARD])
+
+			type pjifSite struct{ pos, cu int }
+			type jfSite struct{ pos, cu int }
+			pjifSites := make([]pjifSite, 0, len(st.ifElseBranches)-1)
+			jfSites := make([]jfSite, 0, len(st.ifElseBranches)-1)
+			branchStartCUs := make([]int, len(st.ifElseBranches))
+
+			for bi, br := range st.ifElseBranches {
+				branchStartCUs[bi] = len(fs.bc) / 2
+				isElse := br.condExpr == nil
+
+				if !isElse {
+					// Start of condition: update statement line to the if/elif line.
+					fs.newStmt(br.condLine)
+					// Condition.
+					cmpNode := br.condExpr.(*parser2.Compare)
+					_, base, _ := cmpOpFromOp(cmpNode.Ops[0])
+					cmpOparg := base + 16
+					leftExpr := cmpNode.Left
+					rightExpr := cmpNode.Comparators[0]
+
+					var condStart, condEnd byte
+					lflblflb := false
+					if ln, lok := leftExpr.(*parser2.Name); lok {
+						if rn, rok := rightExpr.(*parser2.Name); rok {
+							ls := fs.slots[ln.Id]
+							rs := fs.slots[rn.Id]
+							if ls <= 15 && rs <= 15 {
+								lsc := byte(ln.P.Col)
+								lec := lsc + byte(len(ln.Id))
+								rec := byte(rn.P.Col) + byte(len(rn.Id))
+								fs.bc = append(fs.bc, byte(bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW), (ls<<4)|rs)
+								fs.emit(1, lsc, lec)
+								fs.trackDepth(2)
+								condStart, condEnd = lsc, rec
+								lflblflb = true
+							}
+						}
+					}
+					if !lflblflb {
+						cs, _, _ := fs.walkExpr(leftExpr)
+						_, ce, _ := fs.walkExpr(rightExpr)
+						fs.trackDepth(2)
+						condStart, condEnd = cs, ce
+					}
+					fs.bc = append(fs.bc, byte(bytecode.COMPARE_OP), cmpOparg)
+					for range cmpCacheWords {
+						fs.bc = append(fs.bc, 0, 0)
+					}
+					pjifPos := len(fs.bc) + 1
+					pjifCU := len(fs.bc) / 2
+					fs.bc = append(fs.bc, byte(bytecode.POP_JUMP_IF_FALSE), 0)
+					for range pjifCacheWords {
+						fs.bc = append(fs.bc, 0, 0)
+					}
+					fs.bc = append(fs.bc, byte(bytecode.NOT_TAKEN), 0)
+					fs.emitSame(1+cmpCacheWords+1+pjifCacheWords+1, condStart, condEnd)
+					pjifSites = append(pjifSites, pjifSite{pjifPos, pjifCU})
+				}
+
+				// Body.
+				fs.newStmt(br.bodyLine)
+				fs.walkExpr(br.expr) //nolint:unused
+				fs.bc = append(fs.bc, byte(bytecode.STORE_FAST), byte(thenSlot))
+
+				if !isElse {
+					// JUMP_FORWARD to end. Patched after all branches are emitted.
+					jfPos := len(fs.bc) + 1
+					jfCU := len(fs.bc) / 2
+					fs.bc = append(fs.bc, byte(bytecode.JUMP_FORWARD), 0)
+					for range jfCacheWords {
+						fs.bc = append(fs.bc, 0, 0)
+					}
+					// Combine STORE_FAST + JUMP_FORWARD into one linetable entry.
+					fs.emitSame(1+1+jfCacheWords, tsc, tec)
+					jfSites = append(jfSites, jfSite{jfPos, jfCU})
+				} else {
+					fs.emitSame(1, tsc, tec)
+				}
+			}
+
+			// Backpatch PJIF[i] → branchStartCUs[i+1].
+			for i, ps := range pjifSites {
+				nextBranchCU := branchStartCUs[i+1]
+				fs.bc[ps.pos] = byte(nextBranchCU - (ps.cu + 1 + pjifCacheWords))
+			}
+			// Backpatch all JUMP_FORWARD → end of chain.
+			endCU := len(fs.bc) / 2
+			for _, js := range jfSites {
+				fs.bc[js.pos] = byte(endCU - (js.cu + 1 + jfCacheWords))
+			}
 
 		} else if st.isAugAssign {
 			slot := slots[st.targetName]
@@ -1019,8 +1124,10 @@ func (fs *funcState) scanTokenEnd(startCol byte) byte {
 	c := int(startCol)
 	for c < len(line) {
 		ch := line[c]
-		if (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' ||
-			ch == 'e' || ch == 'E' || ch == '+' || ch == '-' {
+		if (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == 'e' || ch == 'E' {
+			c++
+		} else if (ch == '+' || ch == '-') && c > 0 && (line[c-1] == 'e' || line[c-1] == 'E') {
+			// '+'/'-' only valid in scientific notation exponent (after 'e'/'E')
 			c++
 		} else {
 			break
