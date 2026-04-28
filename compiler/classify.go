@@ -38,6 +38,7 @@ const (
 	modConstLitColl   // x = ["a","b","c"] or x = ("a","b","c") — all-string-constant collection
 	modConstLitSeq         // [docstring +] 2+ constLitColl assignments in sequence
 	modFrozenSetContains   // x = frozenset(name).__contains__
+	modClcThenImports      // x = [list] + from-imports
 )
 
 type classification struct {
@@ -114,6 +115,8 @@ type classification struct {
 	constLitSeqAsgn constLitSeqClassify
 	// modFrozenSetContains fields:
 	frozensetAsgn frozenSetContainsAssign
+	// modClcThenImports fields:
+	clcThenImportsAsgn clcThenImportsClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -313,6 +316,14 @@ type constLitCollAssign struct {
 	closeLine int  // source line of the closing bracket (= line for single-line; > line for multi-line)
 	isList    bool
 	elts      []constLitElt
+}
+
+// clcThenImportsClassify holds the parsed form of a module body that starts
+// with one constant-literal list assignment followed by one or more
+// from-import/import statements.
+type clcThenImportsClassify struct {
+	clcAssign constLitCollAssign
+	imports   []importEntry
 }
 
 // foldedBinOp is the value type for `name = const op const` assignments
@@ -729,6 +740,29 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		}, true
 	}
 	if first := stmts[0]; first.kind == stmtConstLitColl {
+		// Check for CLC + imports (modClcThenImports).
+		if len(stmts) >= 2 {
+			allImports := true
+			for _, s := range stmts[1:] {
+				if s.kind != stmtFromImport && s.kind != stmtImport {
+					allImports = false
+					break
+				}
+			}
+			if allImports {
+				imports := make([]importEntry, len(stmts)-1)
+				for i, s := range stmts[1:] {
+					imports[i] = s.importAsgn
+				}
+				return classification{
+					kind: modClcThenImports,
+					clcThenImportsAsgn: clcThenImportsClassify{
+						clcAssign: first.constLitCollAsgn,
+						imports:   imports,
+					},
+				}, true
+			}
+		}
 		for _, s := range stmts[1:] {
 			if s.kind != stmtNoOp {
 				return classification{}, false
