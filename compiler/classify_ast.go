@@ -1791,6 +1791,7 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	stmtNodes := s.Body
 	fbStmts := make([]fbStmt, 0, len(stmtNodes))
 	prevLine := s.P.Line // def line; each body stmt must be on a later line
+	implicitNoneReturn := false
 
 	for i, node := range stmtNodes {
 		isLast := i == len(stmtNodes)-1
@@ -2002,9 +2003,13 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 				})
 				prevLine = node.P.Line
 				if len(node.Orelse) == 0 {
-					// Plain if with no else: only valid as non-last statement.
+					// Plain if with no else: valid as non-last, OR as the last
+					// statement when the function has an implicit None return.
 					if isLast {
-						return rawStmt{}, false
+						// Mark the function body as requiring an implicit None return.
+						// The compiler will emit LOAD_CONST None + RETURN_VALUE after
+						// all statements, attributed to the last if condition's line.
+						implicitNoneReturn = true
 					}
 					break
 				}
@@ -2052,17 +2057,24 @@ func extractFuncBodyExpr(s *parser2.FunctionDef, srcLines [][]byte) (rawStmt, bo
 	defLine := s.P.Line
 	lastStmt := fbStmts[len(fbStmts)-1]
 
+	// The last statement must be an explicit return or the function must end
+	// with an implicit None return (last stmt is isIfReturn with no else).
+	if !lastStmt.isReturn && !implicitNoneReturn {
+		return rawStmt{}, false
+	}
+
 	return rawStmt{
 		line:    defLine,
 		endLine: lastStmt.line,
 		kind:    stmtFuncBodyExpr,
 		funcBodyAsgn: funcBodyInfo{
-			funcName:    s.Name,
-			funcNameLen: byte(len(s.Name)),
-			defLine:     defLine,
-			params:      params,
-			stmts:       fbStmts,
-			srcLines:    srcLines,
+			funcName:              s.Name,
+			funcNameLen:           byte(len(s.Name)),
+			defLine:               defLine,
+			params:                params,
+			stmts:                 fbStmts,
+			srcLines:              srcLines,
+			hasImplicitNoneReturn: implicitNoneReturn,
 		},
 	}, true
 }

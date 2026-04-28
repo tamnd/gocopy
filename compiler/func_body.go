@@ -147,6 +147,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 			}
 		} else if st.isIfReturn {
 			// `if <cond>: return <expr>` early-return pattern.
+			// Save lastCondStart/End for potential implicit None return after this stmt.
 			cmpNode := st.condExpr.(*parser2.Compare)
 			op, cmpBase, _ := cmpOpFromOp(cmpNode.Ops[0])
 
@@ -183,6 +184,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				}
 				fs.bc = append(fs.bc, byte(bytecode.NOT_TAKEN), 0)
 				fs.emitSame(1+pjifCacheWords+1, varStart, condEnd)
+				fs.lastCondStart, fs.lastCondEnd = varStart, condEnd
 			} else {
 				// COMPARE_OP (conditional) + POP_JUMP_IF_FALSE path.
 				cmpOparg := cmpBase + 16
@@ -227,6 +229,7 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 				}
 				fs.bc = append(fs.bc, byte(bytecode.NOT_TAKEN), 0)
 				fs.emitSame(1+cmpCacheWords+1+pjifCacheWords+1, condStart, condEnd)
+				fs.lastCondStart, fs.lastCondEnd = condStart, condEnd
 			}
 
 			// Then-branch: load return value + RETURN_VALUE.
@@ -513,6 +516,18 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 		}
 	}
 
+	// Implicit None return: function falls off the end without an explicit return.
+	// Emit LOAD_CONST None + RETURN_VALUE attributed to the last if-condition's span.
+	if g.hasImplicitNoneReturn {
+		lastSt := g.stmts[len(g.stmts)-1]
+		fs.newStmt(lastSt.line)
+		noneIdx := fs.constIndex(nil)
+		fs.bc = append(fs.bc, byte(bytecode.LOAD_CONST), noneIdx)
+		fs.bc = append(fs.bc, byte(bytecode.RETURN_VALUE), 0)
+		fs.emit(2, fs.lastCondStart, fs.lastCondEnd)
+		fs.trackDepth(1)
+	}
+
 	maxDepth := fs.maxDepth
 	if maxDepth < 1 {
 		maxDepth = 1
@@ -520,6 +535,9 @@ func compileFuncBodyExpr(filename string, cls classification) (*bytecode.CodeObj
 
 	lastStmt := g.stmts[len(g.stmts)-1]
 	bodyEndLine := lastStmt.line
+	if g.hasImplicitNoneReturn && lastStmt.thenLine > bodyEndLine {
+		bodyEndLine = lastStmt.thenLine
+	}
 	bodyEndCol := fs.lastExprEnd
 
 	innerCode := &bytecode.CodeObject{
@@ -616,6 +634,11 @@ type funcState struct {
 
 	maxDepth    int  // peak stack depth seen so far
 	lastExprEnd byte // end column of the most recently walked expression
+
+	// lastCondStart/End track the span of the last emitted condition (for
+	// implicit None return attribution).
+	lastCondStart byte
+	lastCondEnd   byte
 }
 
 func newFuncState(defLine int, slots map[string]byte, srcLines [][]byte) *funcState {
@@ -831,9 +854,16 @@ func (fs *funcState) walkExpr(e parser2.Expr) (startCol, endCol byte, depth int)
 				}
 			}
 		}
-		_, rec, rd := fs.walkExpr(n.Right)
+		rsc, rec, rd := fs.walkExpr(n.Right)
 		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
-			rec = fs.scanEndCol(rec)
+			// Extend rec to include ')' only when the right sub-expression's
+			// leftmost token is directly preceded by '(' — i.e. the whole
+			// right child is parenthesized. Use rsc (the start column returned
+			// by walkExpr, which is the leftmost token's column) not exprCol
+			// (which points to the operator character, not the leftmost token).
+			if fs.scanBackOpen(rsc) < rsc {
+				rec = fs.scanEndCol(rec)
+			}
 		}
 		boparg, _ := binOpargFromOp(n.Op)
 		cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
@@ -1362,11 +1392,13 @@ func (fs *funcState) walkExprSkipFirstLocal(e parser2.Expr) (startCol, endCol by
 				}
 			}
 		}
-		_, rec, rd := fs.walkExpr(n.Right)
-		// Extend rec forward to include the closing ')' when the right
-		// sub-expression is a BinOp (i.e. was parenthesized in source).
+		rsc, rec, rd := fs.walkExpr(n.Right)
+		// Extend rec forward to include ')' only when the right sub-expression's
+		// leftmost token is directly preceded by '(' (parenthesized as a unit).
 		if _, isBinOp := n.Right.(*parser2.BinOp); isBinOp {
-			rec = fs.scanEndCol(rec)
+			if fs.scanBackOpen(rsc) < rsc {
+				rec = fs.scanEndCol(rec)
+			}
 		}
 		boparg, _ := binOpargFromOp(n.Op)
 		cacheWords := int(bytecode.CacheSize[bytecode.BINARY_OP])
@@ -1413,7 +1445,7 @@ func (fs *funcState) loadConst(c *parser2.Constant) (sc, ec byte) {
 		iv := c.Value.(int64)
 		ec = sc + byte(len(strconv.Itoa(int(iv))))
 		if iv >= 0 && iv <= 255 {
-			if !fs.intConstSeen && !fs.noneCheckFunc {
+			if !fs.intConstSeen && !fs.noneCheckFunc && len(fs.consts) == 0 {
 				fs.constIndex(iv)
 				fs.intConstSeen = true
 			}

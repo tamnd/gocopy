@@ -588,12 +588,13 @@ type genExprInfo struct {
 // of Name nodes referring to function parameters or previously assigned
 // locals, plus BinOp and UnaryOp (USub/Invert) nodes.
 type funcBodyInfo struct {
-	funcName    string
-	funcNameLen byte
-	defLine     int
-	params      []fbParam  // positional parameters in declaration order
-	stmts       []fbStmt   // body statements: all assignments then one return
-	srcLines    [][]byte
+	funcName              string
+	funcNameLen           byte
+	defLine               int
+	params                []fbParam // positional parameters in declaration order
+	stmts                 []fbStmt  // body statements: all assignments then one return
+	srcLines              [][]byte
+	hasImplicitNoneReturn bool // function body ends without an explicit return
 }
 
 // fbParam is one positional parameter in a funcBodyInfo.
