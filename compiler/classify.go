@@ -138,11 +138,24 @@ type mixedModuleClassify struct {
 	docEndCol    byte
 	docText      string
 
+	hasStarImport    bool
+	starImportModule string
+	starImportLine   int
+	starImportEndCol byte
+
 	hasCLC      bool
 	clc         constLitCollAssign
 
 	assigns []asgn
-	funcs   []funcBodyInfo
+	funcs   []mixedFunc
+}
+
+// mixedFunc is one function definition in a mixed module body.
+// Either funcBody (stmtFuncBodyExpr) or funcDef (stmtFuncDef) is valid.
+type mixedFunc struct {
+	isFuncBodyExpr bool
+	funcBody       funcBodyInfo
+	funcDef        funcDefClassify
 }
 
 // rawStmt is the intermediate form produced by classifyAST before
@@ -1070,6 +1083,20 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
 			idx++
 		}
+		// Optional single star import (from X import *).
+		if idx < len(stmts) && stmts[idx].kind == stmtFromImport {
+			ie := stmts[idx].importAsgn
+			if ie.IsFrom && ie.Level == 0 && len(ie.Aliases) == 1 && ie.Aliases[0].Name == "*" {
+				m.hasStarImport = true
+				m.starImportModule = ie.FromMod
+				m.starImportLine = stmts[idx].line
+				m.starImportEndCol = stmts[idx].endCol
+				idx++
+				for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
+					idx++
+				}
+			}
+		}
 		// Optional single constLitColl (e.g. __all__ = [...]).
 		if idx < len(stmts) && stmts[idx].kind == stmtConstLitColl {
 			m.hasCLC = true
@@ -1107,9 +1134,16 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 			}
 		}
 	doneAssigns:
-		// One or more funcBodyExpr definitions.
-		for idx < len(stmts) && stmts[idx].kind == stmtFuncBodyExpr {
-			m.funcs = append(m.funcs, stmts[idx].funcBodyAsgn)
+		// One or more function definitions (stmtFuncBodyExpr or stmtFuncDef).
+		for idx < len(stmts) {
+			s := stmts[idx]
+			if s.kind == stmtFuncBodyExpr {
+				m.funcs = append(m.funcs, mixedFunc{isFuncBodyExpr: true, funcBody: s.funcBodyAsgn})
+			} else if s.kind == stmtFuncDef {
+				m.funcs = append(m.funcs, mixedFunc{isFuncBodyExpr: false, funcDef: s.funcDefAsgn})
+			} else {
+				break
+			}
 			idx++
 			for idx < len(stmts) && stmts[idx].kind == stmtNoOp {
 				idx++

@@ -113,12 +113,17 @@ func MultiFuncDefLineTable(entries []MultiFuncDefEntry) []byte {
 }
 
 // MixedModuleInfo describes a mixed module: optional docstring, optional
-// constLitColl (__all__), folded BinOp assignments, and function definitions.
+// star import, optional constLitColl (__all__), folded BinOp assignments,
+// and function definitions.
 type MixedModuleInfo struct {
 	HasDocstring bool
 	DocLine      int
 	DocEndLine   int
 	DocEndCol    byte
+
+	HasStarImport    bool
+	StarImportLine   int
+	StarImportEndCol byte
 
 	HasCLC       bool
 	CLCLine      int
@@ -150,6 +155,13 @@ func MixedModuleLineTable(info MixedModuleInfo) []byte {
 			out = appendListSpanEntry(out, 2, lineDelta, endLineDelta, 0, info.DocEndCol)
 		}
 		prevLine = info.DocLine
+	}
+
+	if info.HasStarImport {
+		// 5 CUs: LOAD_SMALL_INT + LOAD_CONST + IMPORT_NAME + CALL_INTRINSIC_1 + POP_TOP
+		lineDelta := info.StarImportLine - prevLine
+		out = appendValueEntryN(out, 5, lineDelta, 0, info.StarImportEndCol)
+		prevLine = info.StarImportLine
 	}
 
 	if info.HasCLC {

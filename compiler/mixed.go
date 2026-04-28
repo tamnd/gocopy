@@ -6,12 +6,10 @@ import (
 
 // compileMixed lowers a module whose body is:
 //
-//	[docstring?] [constLitColl?] [foldedBinOp assigns*] [funcBodyExprs+]
+//	[docstring?] [starImport?] [constLitColl?] [assigns*] [funcBodyExprs+]
 //
-// This is the shape of CPython's colorsys.py.
-//
-// co_consts layout: [docstr?, code_0..code_N-1, None, clcTuple?, foldedVals...]
-// co_names layout:  [__doc__?, __all__?, assignNames..., funcNames...]
+// co_consts layout: [docstr?, ('*',)?, code_0..code_N-1, None, clcTuple?, foldedVals...]
+// co_names layout:  [__doc__?, module?, __all__?, assignNames..., funcNames...]
 func compileMixed(filename string, cls classification) (*bytecode.CodeObject, error) {
 	m := cls.mixedModuleAsgn
 	nFuncs := len(m.funcs)
@@ -25,8 +23,16 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 	entries := make([]funcEntry, nFuncs)
 	for i, f := range m.funcs {
-		innerCls := classification{kind: modFuncBodyExpr, funcBodyAsgn: f}
-		code, endLine, endCol, err := compileFuncBodyCore(filename, innerCls)
+		var code *bytecode.CodeObject
+		var endLine int
+		var endCol byte
+		var err error
+		if f.isFuncBodyExpr {
+			innerCls := classification{kind: modFuncBodyExpr, funcBodyAsgn: f.funcBody}
+			code, endLine, endCol, err = compileFuncBodyCore(filename, innerCls)
+		} else {
+			code, endLine, endCol, err = compileFuncDefInner(filename, f.funcDef)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -34,17 +40,24 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 
 	// Build co_consts:
-	//   [docstr?]  index 0 if hasDocstring
-	//   [code_0 .. code_N-1]  function code objects
+	//   [docstr?]          index 0 if hasDocstring
+	//   [('*',)?]          right after docstring if hasStarImport
+	//   [code_0..code_N-1] function code objects
 	//   [None]
-	//   [clcTuple?]  if hasCLC
-	//   [foldedVals...]  one per assign
+	//   [clcTuple?]        if hasCLC
+	//   [foldedVals...]    one per foldedBinOp assign
 	consts := []any{}
 
 	docConstIdx := byte(0)
 	if m.hasDocstring {
 		docConstIdx = byte(len(consts))
 		consts = append(consts, m.docText)
+	}
+
+	starImportConstIdx := byte(0)
+	if m.hasStarImport {
+		starImportConstIdx = byte(len(consts))
+		consts = append(consts, bytecode.ConstTuple{"*"})
 	}
 
 	funcConstBase := byte(len(consts))
@@ -75,12 +88,18 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 
 	// Build co_names:
 	//   __doc__ (if hasDocstring)
+	//   module name (if hasStarImport)
 	//   clc.target (if hasCLC)
 	//   assign names in order
 	//   func names in order
 	names := []string{}
 	if m.hasDocstring {
 		names = append(names, "__doc__")
+	}
+	starImportNameIdx := byte(0)
+	if m.hasStarImport {
+		starImportNameIdx = byte(len(names))
+		names = append(names, m.starImportModule)
 	}
 	clcNameIdx := byte(0)
 	if m.hasCLC {
@@ -93,7 +112,7 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 	funcNameBase := byte(len(names))
 	for _, f := range m.funcs {
-		names = append(names, f.funcName)
+		names = append(names, mixedFuncName(f))
 	}
 
 	// Build a name→co_names index map for LOAD_NAME lookups.
@@ -103,12 +122,22 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 
 	// Build bytecode.
-	bc := make([]byte, 0, 2+4+4+4*nAsgns+6*nFuncs+4)
+	bc := make([]byte, 0, 2+4+10+4*nAsgns+6*nFuncs+4)
 	bc = append(bc, byte(bytecode.RESUME), 0)
 
 	if m.hasDocstring {
 		bc = append(bc, byte(bytecode.LOAD_CONST), docConstIdx)
 		bc = append(bc, byte(bytecode.STORE_NAME), 0) // __doc__ is always names[0] when present
+	}
+
+	if m.hasStarImport {
+		bc = append(bc,
+			byte(bytecode.LOAD_SMALL_INT), 0,
+			byte(bytecode.LOAD_CONST), starImportConstIdx,
+			byte(bytecode.IMPORT_NAME), starImportNameIdx,
+			byte(bytecode.CALL_INTRINSIC_1), 2,
+			byte(bytecode.POP_TOP), 0,
+		)
 	}
 
 	if m.hasCLC {
@@ -131,12 +160,13 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	}
 
 	for i, f := range m.funcs {
-		if len(f.defaults) > 0 {
-			for _, d := range f.defaults {
+		defs := mixedFuncDefaults(f)
+		if len(defs) > 0 {
+			for _, d := range defs {
 				idx := nameIdx[d.name]
 				bc = append(bc, byte(bytecode.LOAD_NAME), idx)
 			}
-			bc = append(bc, byte(bytecode.BUILD_TUPLE), byte(len(f.defaults)))
+			bc = append(bc, byte(bytecode.BUILD_TUPLE), byte(len(defs)))
 			bc = append(bc, byte(bytecode.LOAD_CONST), funcConstBase+byte(i))
 			bc = append(bc, byte(bytecode.MAKE_FUNCTION), 0)
 			bc = append(bc, byte(bytecode.SET_FUNCTION_ATTRIBUTE), 1)
@@ -152,16 +182,19 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 
 	// Build linetable.
 	info := bytecode.MixedModuleInfo{
-		HasDocstring: m.hasDocstring,
-		DocLine:      m.docLine,
-		DocEndLine:   m.docEndLine,
-		DocEndCol:    m.docEndCol,
-		HasCLC:       m.hasCLC,
-		CLCLine:      m.clc.line,
-		CLCCloseLine: m.clc.closeLine,
-		CLCOpenCol:   m.clc.openCol,
-		CLCCloseEnd:  m.clc.closeEnd,
-		CLCTargetLen: m.clc.targetLen,
+		HasDocstring:     m.hasDocstring,
+		DocLine:          m.docLine,
+		DocEndLine:       m.docEndLine,
+		DocEndCol:        m.docEndCol,
+		HasStarImport:    m.hasStarImport,
+		StarImportLine:   m.starImportLine,
+		StarImportEndCol: m.starImportEndCol,
+		HasCLC:           m.hasCLC,
+		CLCLine:          m.clc.line,
+		CLCCloseLine:     m.clc.closeLine,
+		CLCOpenCol:       m.clc.openCol,
+		CLCCloseEnd:      m.clc.closeEnd,
+		CLCTargetLen:     m.clc.targetLen,
 	}
 	info.Assigns = make([]bytecode.AssignInfo, nAsgns)
 	for i, a := range m.assigns {
@@ -175,13 +208,14 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	info.Funcs = make([]bytecode.MultiFuncDefEntry, nFuncs)
 	for i, f := range m.funcs {
 		entry := bytecode.MultiFuncDefEntry{
-			DefLine:     f.defLine,
+			DefLine:     mixedFuncDefLine(f),
 			BodyEndLine: entries[i].bodyEndLine,
 			BodyEndCol:  entries[i].bodyEndCol,
 		}
-		if len(f.defaults) > 0 {
-			entry.Defaults = make([]bytecode.DefaultInfo, len(f.defaults))
-			for j, d := range f.defaults {
+		defs := mixedFuncDefaults(f)
+		if len(defs) > 0 {
+			entry.Defaults = make([]bytecode.DefaultInfo, len(defs))
+			for j, d := range defs {
 				entry.Defaults[j] = bytecode.DefaultInfo{
 					Line:     d.line,
 					ColStart: d.colStart,
@@ -197,7 +231,7 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	// the peak is max(2, maxDefaults) where 2 covers all non-default paths.
 	stackSize := int32(2)
 	for _, f := range m.funcs {
-		if k := int32(len(f.defaults)); k > stackSize {
+		if k := int32(len(mixedFuncDefaults(f))); k > stackSize {
 			stackSize = k
 		}
 	}
@@ -205,4 +239,54 @@ func compileMixed(filename string, cls classification) (*bytecode.CodeObject, er
 	co := module(filename, bc, lt, consts, names)
 	co.StackSize = stackSize
 	return co, nil
+}
+
+// mixedFuncName returns the function name for a mixedFunc.
+func mixedFuncName(f mixedFunc) string {
+	if f.isFuncBodyExpr {
+		return f.funcBody.funcName
+	}
+	return f.funcDef.funcName
+}
+
+// mixedFuncDefLine returns the def-line for a mixedFunc.
+func mixedFuncDefLine(f mixedFunc) int {
+	if f.isFuncBodyExpr {
+		return f.funcBody.defLine
+	}
+	return f.funcDef.defLine
+}
+
+// mixedFuncDefaults returns the Name-expression defaults for a mixedFunc.
+// stmtFuncDef functions have no defaults.
+func mixedFuncDefaults(f mixedFunc) []fbDefault {
+	if f.isFuncBodyExpr {
+		return f.funcBody.defaults
+	}
+	return nil
+}
+
+// compileFuncDefInner compiles the inner code object for a stmtFuncDef
+// (def f(arg): return arg) and returns it alongside line/col info for the
+// mixed module linetable.
+func compileFuncDefInner(filename string, fd funcDefClassify) (*bytecode.CodeObject, int, byte, error) {
+	code := &bytecode.CodeObject{
+		ArgCount:        1,
+		PosOnlyArgCount: 0,
+		KwOnlyArgCount:  0,
+		StackSize:       1,
+		Flags:           0x3,
+		Bytecode:        bytecode.FuncReturnArgBytecode(0),
+		Consts:          []any{nil},
+		Names:           []string{},
+		LocalsPlusNames: []string{fd.argName},
+		LocalsPlusKinds: []byte{0x26},
+		Filename:        filename,
+		Name:            fd.funcName,
+		QualName:        fd.funcName,
+		FirstLineNo:     int32(fd.defLine),
+		LineTable:       bytecode.FuncReturnArgLineTable(fd.defLine, fd.bodyLine, fd.argCol, fd.argEnd, fd.retKwCol),
+		ExcTable:        []byte{},
+	}
+	return code, fd.bodyLine, fd.argEnd, nil
 }
