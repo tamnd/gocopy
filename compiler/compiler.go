@@ -186,6 +186,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return compileConstLitColl(opts.Filename, cls.constLitCollAsgn)
 	case modConstLitSeq:
 		return compileConstLitSeq(opts.Filename, cls.constLitSeqAsgn)
+	case modFrozenSetContains:
+		return compileFrozenSetContains(opts.Filename, cls.frozensetAsgn)
 	}
 	return nil, ErrUnsupportedSource
 }
@@ -1213,5 +1215,18 @@ func compileConstLitSeq(filename string, seq constLitSeqClassify) (*bytecode.Cod
 
 	co := module(filename, bc, lt, consts, names)
 	co.StackSize = 2
+	return co, nil
+}
+
+// compileFrozenSetContains lowers `target = frozenset(arg).__contains__`.
+func compileFrozenSetContains(filename string, a frozenSetContainsAssign) (*bytecode.CodeObject, error) {
+	consts := []any{nil} // co_consts: (None,)
+	names := []string{"frozenset", a.argName, "__contains__", a.target}
+
+	bc := bytecode.FrozenSetContainsBytecode()
+	lt := bytecode.FrozenSetContainsLineTable(a.line, a.targetLen, a.frozensetCol, a.argCol, a.argLen)
+
+	co := module(filename, bc, lt, consts, names)
+	co.StackSize = 3
 	return co, nil
 }

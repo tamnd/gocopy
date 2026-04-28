@@ -583,6 +583,9 @@ func extractExprAssign(line int, target *parser2.Name, value parser2.Expr, lines
 		return extractSubscriptLoad(line, target, e)
 
 	case *parser2.Attribute:
+		if rs, ok := extractFrozenSetContains(line, target, e); ok {
+			return rs, true
+		}
 		return extractAttrLoad(line, target, e)
 
 	case *parser2.Compare:
@@ -1991,4 +1994,47 @@ func augOpargFromOp(op string) (byte, bool) {
 		return bytecode.NbInplaceRshift, true
 	}
 	return 0, false
+}
+
+// extractFrozenSetContains handles `target = frozenset(arg).__contains__`
+// where arg is a Name node. Returns false for any other Attribute pattern.
+func extractFrozenSetContains(line int, target *parser2.Name, e *parser2.Attribute) (rawStmt, bool) {
+	if e.Attr != "__contains__" {
+		return rawStmt{}, false
+	}
+	call, callOK := e.Value.(*parser2.Call)
+	if !callOK {
+		return rawStmt{}, false
+	}
+	fn, fnOK := call.Func.(*parser2.Name)
+	if !fnOK || fn.Id != "frozenset" {
+		return rawStmt{}, false
+	}
+	if len(call.Args) != 1 || len(call.Keywords) != 0 {
+		return rawStmt{}, false
+	}
+	arg, argOK := call.Args[0].(*parser2.Name)
+	if !argOK {
+		return rawStmt{}, false
+	}
+	if fn.P.Col > 255 || arg.P.Col > 255 {
+		return rawStmt{}, false
+	}
+	if len(target.Id) > 15 || len(arg.Id) > 15 {
+		return rawStmt{}, false
+	}
+	return rawStmt{
+		line:    line,
+		endLine: line,
+		kind:    stmtFrozenSetContains,
+		frozensetAsgn: frozenSetContainsAssign{
+			line:         line,
+			target:       target.Id,
+			targetLen:    byte(len(target.Id)),
+			argName:      arg.Id,
+			argCol:       byte(arg.P.Col),
+			argLen:       byte(len(arg.Id)),
+			frozensetCol: byte(fn.P.Col),
+		},
+	}, true
 }
