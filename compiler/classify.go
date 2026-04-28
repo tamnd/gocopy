@@ -264,6 +264,7 @@ type negLiteral struct {
 // Only string elements are supported in v0.4.2; val is always a string.
 type constLitElt struct {
 	val    string
+	line   int  // 1-indexed source line (same as assignment line for n<31 single-line)
 	col    byte // 0-indexed column of the opening quote
 	endCol byte // exclusive end col (after closing quote)
 }
@@ -275,7 +276,8 @@ type constLitCollAssign struct {
 	target    string
 	targetLen byte
 	openCol   byte // column of '[' or '('
-	closeEnd  byte // lineEndCol (exclusive end of the line)
+	closeEnd  byte // exclusive end col of closing bracket (']' or ')')
+	closeLine int  // source line of the closing bracket (= line for single-line; > line for multi-line)
 	isList    bool
 	elts      []constLitElt
 }

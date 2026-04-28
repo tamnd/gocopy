@@ -1378,24 +1378,32 @@ func extractClosure(outer *parser2.FunctionDef, outerArgName string) (rawStmt, b
 
 // extractConstLitColl handles `x = ["a", "b", "c"]` or `x = ("a", "b", "c")`
 // where all elements are plain-ASCII single-line string constants.
+// For n < 31 all elements must be on the same line as the opening bracket.
+// For n >= 31 (isList only) elements may each be on their own line.
 // openCol is the column of the opening bracket, isList=true for list, false for tuple.
 func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
 	if openCol > 255 || len(target.Id) > 15 || target.P.Col > 255 {
 		return rawStmt{}, false
 	}
-	if len(eltsExprs) == 0 {
+	n := len(eltsExprs)
+	if n == 0 {
 		return rawStmt{}, false // empty collections handled by extractCollection
 	}
 	if line < 1 || line > len(lines) {
 		return rawStmt{}, false
 	}
+
+	if n >= 31 && isList {
+		return extractLargeStringList(line, target, openCol, eltsExprs, lines)
+	}
+
 	ln := trimRight(stripLineComment(lines[line-1]))
 	if len(ln) > 255 {
 		return rawStmt{}, false
 	}
 	closeEnd := byte(len(ln))
 
-	elts := make([]constLitElt, 0, len(eltsExprs))
+	elts := make([]constLitElt, 0, n)
 	for _, expr := range eltsExprs {
 		c, isConst := expr.(*parser2.Constant)
 		if !isConst || c.Kind != "str" || c.P.Col > 255 || c.P.Line != line {
@@ -1413,7 +1421,7 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 		}
 		col := byte(c.P.Col)
 		endCol := col + 2 + byte(len(sv)) // opening-quote + content + closing-quote
-		elts = append(elts, constLitElt{val: sv, col: col, endCol: endCol})
+		elts = append(elts, constLitElt{val: sv, line: line, col: col, endCol: endCol})
 	}
 
 	return rawStmt{
@@ -1426,7 +1434,80 @@ func extractConstLitColl(line int, target *parser2.Name, isList bool, openCol by
 			targetLen: byte(len(target.Id)),
 			openCol:   openCol,
 			closeEnd:  closeEnd,
+			closeLine: line,
 			isList:    isList,
+			elts:      elts,
+		},
+	}, true
+}
+
+// extractLargeStringList handles all-string-constant list literals with n >= 31
+// elements, each on their own line, with the closing ']' on its own line.
+func extractLargeStringList(line int, target *parser2.Name, openCol byte, eltsExprs []parser2.Expr, lines [][]byte) (rawStmt, bool) {
+	n := len(eltsExprs)
+	elts := make([]constLitElt, 0, n)
+	for _, expr := range eltsExprs {
+		c, isConst := expr.(*parser2.Constant)
+		if !isConst || c.Kind != "str" || c.P.Col > 255 {
+			return rawStmt{}, false
+		}
+		if c.P.Line < line || c.P.Line > len(lines) {
+			return rawStmt{}, false
+		}
+		sv, ok := c.Value.(string)
+		if !ok {
+			return rawStmt{}, false
+		}
+		if strings.Contains(sv, "\n") {
+			return rawStmt{}, false
+		}
+		if !isPlainAscii([]byte(sv), 0) {
+			return rawStmt{}, false
+		}
+		col := byte(c.P.Col)
+		endCol := col + 2 + byte(len(sv))
+		elts = append(elts, constLitElt{val: sv, line: c.P.Line, col: col, endCol: endCol})
+	}
+	// All elements must be on strictly increasing distinct lines.
+	for i := 1; i < n; i++ {
+		if elts[i].line <= elts[i-1].line {
+			return rawStmt{}, false
+		}
+	}
+	// Scan for the closing ']' starting from the line after the last element.
+	closeLine := -1
+	closeEndCol := byte(0)
+	for i := elts[n-1].line; i < len(lines); i++ { // i is 0-indexed
+		b := lines[i]
+		for j := 0; j < len(b); j++ {
+			ch := b[j]
+			if ch == ']' {
+				closeLine = i + 1 // 1-indexed
+				closeEndCol = byte(j + 1)
+				break
+			} else if ch != ' ' && ch != '\t' {
+				break
+			}
+		}
+		if closeLine != -1 {
+			break
+		}
+	}
+	if closeLine == -1 {
+		return rawStmt{}, false
+	}
+	return rawStmt{
+		line:    line,
+		endLine: closeLine,
+		kind:    stmtConstLitColl,
+		constLitCollAsgn: constLitCollAssign{
+			line:      line,
+			target:    target.Id,
+			targetLen: byte(len(target.Id)),
+			openCol:   openCol,
+			closeEnd:  closeEndCol,
+			closeLine: closeLine,
+			isList:    true,
 			elts:      elts,
 		},
 	}, true

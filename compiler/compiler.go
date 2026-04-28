@@ -1066,7 +1066,23 @@ func compileConstLitColl(filename string, a constLitCollAssign) (*bytecode.CodeO
 		co.StackSize = 2
 		return co, nil
 	default:
-		// 3+ elements: BUILD_LIST 0 + LOAD_CONST tuple + LIST_EXTEND 1.
+		if n >= 31 {
+			// 31+ elements: BUILD_LIST 0 + N×(LOAD_CONST i + LIST_APPEND 1).
+			// co_consts: (elem0, elem1, ..., elemN-1, None)
+			consts := make([]any, n+1)
+			elts := make([]bytecode.LargeListElt, n)
+			for i, e := range a.elts {
+				consts[i] = e.val
+				elts[i] = bytecode.LargeListElt{Line: e.line, StartCol: e.col, EndCol: e.endCol}
+			}
+			consts[n] = nil
+			bc := bytecode.ConstLitLargeListBytecode(n)
+			lt := bytecode.ConstLitLargeListLineTable(a.line, a.closeLine, a.targetLen, a.openCol, a.closeEnd, elts)
+			co := module(filename, bc, lt, consts, names)
+			co.StackSize = 2
+			return co, nil
+		}
+		// 3–30 elements: BUILD_LIST 0 + LOAD_CONST tuple + LIST_EXTEND 1.
 		// co_consts: (first_elem, None, ConstTuple{all_elems})
 		first := a.elts[0].val
 		tup := make(bytecode.ConstTuple, n)

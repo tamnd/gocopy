@@ -66,6 +66,67 @@ func ConstLitListExtendBytecode() []byte {
 	}
 }
 
+// LargeListElt describes one element of a large (n≥31) all-string-constant list.
+type LargeListElt struct {
+	Line     int  // 1-indexed source line of the element
+	StartCol byte // column of the opening quote
+	EndCol   byte // exclusive end column (after closing quote)
+}
+
+// ConstLitLargeListBytecode returns the instruction stream for a large (n≥31)
+// all-string-constant list: RESUME + BUILD_LIST 0 + N×(LOAD_CONST i + LIST_APPEND 1) +
+// STORE_NAME 0 + LOAD_CONST N (None at index N) + RETURN_VALUE.
+func ConstLitLargeListBytecode(n int) []byte {
+	out := make([]byte, 0, 4+n*4+6)
+	out = append(out, byte(RESUME), 0, byte(BUILD_LIST), 0)
+	for i := range n {
+		out = append(out, byte(LOAD_CONST), byte(i), byte(LIST_APPEND), 1)
+	}
+	out = append(out, byte(STORE_NAME), 0, byte(LOAD_CONST), byte(n), byte(RETURN_VALUE), 0)
+	return out
+}
+
+// ConstLitLargeListLineTable returns the PEP 626 line table for a large list
+// assignment where elements are each on their own line. openLine/closeLine are
+// the 1-indexed lines of '[' and ']'; openCol is the column of '[';
+// closeEndCol is the exclusive end column of ']' (1 for ']' at col 0).
+func ConstLitLargeListLineTable(openLine, closeLine int, nameLen, openCol, closeEndCol byte, elts []LargeListElt) []byte {
+	n := len(elts)
+	out := make([]byte, 0, 5+6+n*14+2)
+	out = append(out, 0xf0, 0x03, 0x01, 0x01, 0x01) // RESUME prologue
+
+	endLineDelta := closeLine - openLine
+
+	// BUILD_LIST: LONG, 1 CU, spanning [openLine, closeLine].
+	prevLine := 0
+	out = appendListSpanEntry(out, 1, openLine-prevLine, endLineDelta, openCol, closeEndCol)
+	prevLine = openLine
+
+	for _, elt := range elts {
+		// LOAD_CONST element: single-line entry.
+		out = appendValueEntry(out, elt.Line-prevLine, elt.StartCol, elt.EndCol)
+		prevLine = elt.Line
+		// LIST_APPEND: back to openLine, same multi-line span.
+		out = appendListSpanEntry(out, 1, openLine-prevLine, endLineDelta, openCol, closeEndCol)
+		prevLine = openLine
+	}
+
+	// STORE_NAME + LOAD_CONST None + RETURN_VALUE: SHORT0 covering 3 CUs.
+	out = appendShort0Entry(out, 3, 0, nameLen)
+	return out
+}
+
+// appendListSpanEntry appends one LONG linetable entry covering a multi-line
+// span (BUILD_LIST or LIST_APPEND) back to the opening bracket's line.
+func appendListSpanEntry(out []byte, numCUs, lineDelta, endLineDelta int, openCol, closeEndCol byte) []byte {
+	out = append(out, entryHeader(codeLong, numCUs))
+	out = appendSignedVarint(out, lineDelta)
+	out = appendVarint(out, uint(endLineDelta))
+	out = appendVarint(out, uint(openCol)+1)
+	out = appendVarint(out, uint(closeEndCol)+1)
+	return out
+}
+
 // ConstLitTupleLineTable returns the PEP 626 line table for a constant-literal
 // tuple assignment on `line`. openCol is the column of '(' and closeEnd is
 // the lineEndCol (exclusive). This is identical to AssignLineTable(line, nameLen,
