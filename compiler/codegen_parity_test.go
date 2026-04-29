@@ -139,6 +139,12 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			t.Fatalf("classifier compileChainedAssign: %v", err)
 		}
 		return co
+	case modAugAssign:
+		co, err := compileAugAssign(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileAugAssign: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
