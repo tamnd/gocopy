@@ -163,6 +163,12 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			t.Fatalf("classifier compileCmpAssign: %v", err)
 		}
 		return co
+	case modBoolOp:
+		co, err := compileBoolOp(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileBoolOp: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
