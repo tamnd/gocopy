@@ -17,7 +17,10 @@
 // Names and any of the 13 BinOp operators. v0.6.13 adds
 // modUnaryAssign: a single `<target> = -<operand>`,
 // `<target> = ~<operand>`, or `<target> = not <operand>` with the
-// operand as a Name. Anything else returns ErrUnsupported and the
+// operand as a Name. v0.6.14 adds modCmpAssign: a single
+// `<target> = <left> <cmp> <right>` with all operands as Names and
+// any of the 10 comparison operators (six COMPARE_OP, two IS_OP,
+// two CONTAINS_OP). Anything else returns ErrUnsupported and the
 // caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
@@ -82,6 +85,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if u, ok := classifyUnaryAssignModule(mod, opts.Source); ok {
 		return buildUnaryAssignModule(u, opts)
+	}
+	if c, ok := classifyCmpAssignModule(mod, opts.Source); ok {
+		return buildCmpAssignModule(c, opts)
 	}
 	return nil, ErrUnsupported
 }
