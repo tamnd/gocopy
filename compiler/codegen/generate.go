@@ -76,6 +76,18 @@ type compileUnit struct {
 	// fit LOAD_SMALL_INT land in co_consts AFTER None; the
 	// placeholder Arg is rewritten in finalizeDeferred.
 	deferredPatches []deferredPatch
+
+	// tailEmitted records that a statement visitor has already
+	// emitted the module's trailing implicit-return-None
+	// (LOAD_CONST None + RETURN_VALUE) — directly, or once-per-branch
+	// when the shape requires it (v0.7.6 visitIfStmt). When set,
+	// visitModule must skip its own trailing terminator emit.
+	// Mirrors the effect of CPython 3.14
+	// Python/flowgraph.c::inline_small_or_no_lineno_blocks duplicating
+	// the module-level implicit return into every branch tail; here
+	// the visitor just emits it directly, so the unit-level emit is
+	// suppressed.
+	tailEmitted bool
 }
 
 // newCompileUnit allocates a fresh per-frame compileUnit linked to
@@ -305,6 +317,10 @@ func visitModule(u *compileUnit, mod *ast.Module) error {
 		}
 	}
 
+	if u.tailEmitted {
+		u.finalizeDeferred()
+		return nil
+	}
 	noneIdx := u.addConst(nil)
 	u.finalizeDeferred()
 	tailBlock := u.currentBlock()
