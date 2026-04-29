@@ -2352,6 +2352,185 @@ func TestBuildCallAssignKwargRejected(t *testing.T) {
 	}
 }
 
+// TestBuildGenExprAddChain covers `x = a + b + c`: nested BinOp where
+// every operand is a Name. Verifies recursive walker emits LOAD_NAME
+// in left-to-right order, BINARY_OP after each pair, and StackSize=2.
+func TestBuildGenExprAddChain(t *testing.T) {
+	src := []byte("x = a + b + c\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P: ast.Pos{Line: 1, Col: 4},
+				Left: &ast.BinOp{
+					P:    ast.Pos{Line: 1, Col: 4},
+					Left: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+					Op:   "Add",
+					Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+				},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 12}, Id: "c"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 4 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "c" || co.Names[3] != "x" {
+		t.Fatalf("names = %v, want [a b c x]", co.Names)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildGenExprNestedPrec covers `x = a + b * c`: precedence
+// produces BinOp(a, Add, BinOp(b, Mult, c)) — right-deeper than left.
+func TestBuildGenExprNestedPrec(t *testing.T) {
+	src := []byte("x = a + b * c\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Left: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:   "Add",
+				Right: &ast.BinOp{
+					P:     ast.Pos{Line: 1, Col: 8},
+					Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+					Op:    "Mult",
+					Right: &ast.Name{P: ast.Pos{Line: 1, Col: 12}, Id: "c"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 4 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "c" || co.Names[3] != "x" {
+		t.Fatalf("names = %v, want [a b c x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildGenExprIntRight covers `x = a + 1`: BinOp with a small-int
+// Constant on the right. The first int constant must be appended to
+// co_consts before the trailing None.
+func TestBuildGenExprIntRight(t *testing.T) {
+	src := []byte("x = a + 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "Add",
+				Right: &ast.Constant{P: ast.Pos{Line: 1, Col: 8}, Kind: "int", Value: int64(1)},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "a" || co.Names[1] != "x" {
+		t.Fatalf("names = %v, want [a x]", co.Names)
+	}
+	if len(co.Consts) != 2 {
+		t.Fatalf("consts len = %d, want 2", len(co.Consts))
+	}
+	if iv, ok := co.Consts[0].(int64); !ok || iv != 1 {
+		t.Fatalf("consts[0] = %v, want int64(1)", co.Consts[0])
+	}
+	if co.Consts[1] != nil {
+		t.Fatalf("consts[1] = %v, want nil", co.Consts[1])
+	}
+}
+
+// TestBuildGenExprUnaryThenAdd covers `x = -a + b`: UnaryOp(USub) over
+// a Name inside a BinOp. The classifier's modAssign extractValue must
+// not fold this — only UnaryOp over a numeric Constant collapses.
+func TestBuildGenExprUnaryThenAdd(t *testing.T) {
+	src := []byte("x = -a + b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P: ast.Pos{Line: 1, Col: 4},
+				Left: &ast.UnaryOp{
+					P:       ast.Pos{Line: 1, Col: 4},
+					Op:      "USub",
+					Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+				},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+}
+
+// TestBuildGenExprWithTailFallsThrough ensures codegen rejects
+// multi-statement modGenExpr modules (single-statement parity rule).
+func TestBuildGenExprWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a + b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	// modBinOpAssign owns Name+Name BinOps single-statement, so this
+	// multi-statement module falls through both modBinOpAssign and
+	// modGenExpr to ErrUnsupported.
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(genexpr+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
