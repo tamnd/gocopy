@@ -47,17 +47,48 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	args := s.Args
-	if args == nil || len(args.PosOnly) != 0 || len(args.KwOnly) != 0 ||
-		args.Vararg != nil || args.Kwarg != nil || len(args.Defaults) != 0 {
+	if args == nil || len(args.Defaults) != 0 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
-	if len(args.Args) > 15 {
-		return bytecode.Loc{}, ErrNotImplemented
-	}
-	for _, a := range args.Args {
-		if a.Annotation != nil || a.P.Col > 255 || len(a.Name) < 1 || len(a.Name) > 15 {
+	for _, d := range args.KwOnlyDef {
+		if d != nil {
 			return bytecode.Loc{}, ErrNotImplemented
 		}
+	}
+	totalSlots := len(args.PosOnly) + len(args.Args) + len(args.KwOnly)
+	if args.Vararg != nil {
+		totalSlots++
+	}
+	if args.Kwarg != nil {
+		totalSlots++
+	}
+	if totalSlots > 15 {
+		return bytecode.Loc{}, ErrNotImplemented
+	}
+	validateArg := func(a *ast.Arg) bool {
+		return a != nil && a.Annotation == nil && a.P.Col <= 255 &&
+			len(a.Name) >= 1 && len(a.Name) <= 15
+	}
+	for _, a := range args.PosOnly {
+		if !validateArg(a) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+	}
+	for _, a := range args.Args {
+		if !validateArg(a) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+	}
+	for _, a := range args.KwOnly {
+		if !validateArg(a) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+	}
+	if args.Vararg != nil && !validateArg(args.Vararg) {
+		return bytecode.Loc{}, ErrNotImplemented
+	}
+	if args.Kwarg != nil && !validateArg(args.Kwarg) {
+		return bytecode.Loc{}, ErrNotImplemented
 	}
 	if len(s.Name) < 1 || len(s.Name) > 15 || s.P.Col > 255 {
 		return bytecode.Loc{}, ErrNotImplemented
@@ -188,9 +219,19 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		child.addConst(nil)
 	}
 
+	flags := bytecode.CO_OPTIMIZED | bytecode.CO_NEWLOCALS
+	if args.Vararg != nil {
+		flags |= bytecode.CO_VARARGS
+	}
+	if args.Kwarg != nil {
+		flags |= bytecode.CO_VARKEYWORDS
+	}
+
 	funcCode, err := u.popChildUnit(child, assemble.Options{
-		ArgCount:        int32(len(args.Args)),
-		Flags:           bytecode.CO_OPTIMIZED | bytecode.CO_NEWLOCALS,
+		ArgCount:        int32(len(args.PosOnly) + len(args.Args)),
+		PosOnlyArgCount: int32(len(args.PosOnly)),
+		KwOnlyArgCount:  int32(len(args.KwOnly)),
+		Flags:           flags,
 		LocalsPlusNames: localsPlusNames,
 		LocalsPlusKinds: localsPlusKinds,
 		Filename:        u.Filename,
