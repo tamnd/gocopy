@@ -283,7 +283,13 @@ func (w *genWalker) constEndCol(n *ast.Constant) uint16 {
 // else [nil].
 // co_names  = [insertion-order names... target] (first-occurrence
 // wins; target is appended only if not already present).
-// co.StackSize = max(2, walkerDepth).
+// co.StackSize = max(1, walkerDepth). Trivial single-name and
+// single-name UnaryOp shapes need only 1 slot; the lower bound was
+// 2 while the dedicated unary_assign / binop_assign classifiers
+// owned the simple cases. With those classifiers gone (v0.7.2) the
+// floor drops to 1 so single-name UnaryOp matches the v0.6 byte
+// output, and assemble.Assemble's flow analysis still bumps it for
+// real BinOp/Unary chains.
 func buildGenExprModule(g genExprModule, opts Options) (*bytecode.CodeObject, error) {
 	if g.TargetLen == 0 || g.TargetLen > 15 {
 		return nil, errors.New("codegen.buildGenExprModule: target name length out of SHORT0 range")
@@ -325,7 +331,7 @@ func buildGenExprModule(g genExprModule, opts Options) (*bytecode.CodeObject, er
 	if err != nil {
 		return nil, err
 	}
-	want := max(int32(2), int32(depth))
+	want := max(int32(1), int32(depth))
 	if co.StackSize < want {
 		co.StackSize = want
 	}

@@ -5,19 +5,12 @@
 // At v0.7.1 the modEmpty/modNoOps/modDocstring shapes — the v0.6.6,
 // v0.6.7, and v0.6.8 entries — were promoted to the visitor pipeline
 // (compiler/codegen.Generate); they are no longer reachable through
-// codegen.Build. v0.6.9 added the simple-constant modAssign
-// shape: `<name> = <const>` (non-folded value) followed by zero or
-// more no-op statements. v0.6.10 adds two natural extensions of
-// modAssign: modMultiAssign (N >= 2 independent simple-constant
-// assignments) and modChainedAssign (`t0 = t1 = ... = tN-1 =
-// <const>`). v0.6.11 adds modAugAssign: `<name> = <initInt>`
-// followed by `<name> <op>= <augInt>` for non-negative ints and any
-// of the 12 in-place binary operators. v0.6.12 adds modBinOpAssign:
-// a single `<target> = <left> <op> <right>` with all operands as
-// Names and any of the 13 BinOp operators. v0.6.13 adds
-// modUnaryAssign: a single `<target> = -<operand>`,
-// `<target> = ~<operand>`, or `<target> = not <operand>` with the
-// operand as a Name. v0.6.14 adds modCmpAssign: a single
+// codegen.Build. At v0.7.2 the simple-constant modAssign,
+// modMultiAssign, modChainedAssign, modAugAssign, modBinOpAssign,
+// and modUnaryAssign shapes (the v0.6.9-v0.6.13 entries) were
+// promoted to the visitor pipeline as well; their classifier files
+// are gone and Build no longer dispatches them. v0.6.14 adds
+// modCmpAssign: a single
 // `<target> = <left> <cmp> <right>` with all operands as Names and
 // any of the 10 comparison operators (six COMPARE_OP, two IS_OP,
 // two CONTAINS_OP). v0.6.15 adds modBoolOp: a single
@@ -128,24 +121,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if a, ok := classifyAssignModule(mod, opts.Source); ok {
-		return buildAssignModule(a, opts)
-	}
-	if m, ok := classifyMultiAssignModule(mod, opts.Source); ok {
-		return buildMultiAssignModule(m, opts)
-	}
-	if c, ok := classifyChainedAssignModule(mod, opts.Source); ok {
-		return buildChainedAssignModule(c, opts)
-	}
-	if a, ok := classifyAugAssignModule(mod, opts.Source); ok {
-		return buildAugAssignModule(a, opts)
-	}
-	if b, ok := classifyBinOpAssignModule(mod, opts.Source); ok {
-		return buildBinOpAssignModule(b, opts)
-	}
-	if u, ok := classifyUnaryAssignModule(mod, opts.Source); ok {
-		return buildUnaryAssignModule(u, opts)
-	}
 	if c, ok := classifyCmpAssignModule(mod, opts.Source); ok {
 		return buildCmpAssignModule(c, opts)
 	}

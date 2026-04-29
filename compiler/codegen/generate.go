@@ -30,6 +30,17 @@ type GenerateOptions struct {
 	FirstLineNo int32
 }
 
+// deferredPatch records a LOAD_CONST instruction whose Arg must be
+// rewritten at module finalize: instructions emitted while folding
+// BinOp(Const,op,Const) or UnaryOp(USub,numeric Const) point to a
+// const-pool slot that lands AFTER None, so the index is unknown at
+// emit time.
+type deferredPatch struct {
+	block    *ir.Block
+	instrIdx int
+	value    any
+}
+
 // compileUnit is the per-frame state CPython 3.14 carries on its
 // compiler scope stack (Python/compile.c::compiler_unit). Every code
 // object — module, function, class, lambda, comprehension — lowers to
@@ -49,6 +60,22 @@ type compileUnit struct {
 	FirstLineNo int32
 
 	Parent *compileUnit
+
+	// phantomDone tracks whether co_consts[0] has been claimed by
+	// the first const-emitting expression in this unit. CPython
+	// 3.14 leaves the first const a module body emits at index 0
+	// even when LOAD_SMALL_INT replaces the actual LOAD_CONST.
+	// v0.7.16's optimize_cfg pass replaces this in-visitor logic
+	// with the canonical post-CFG fold pass.
+	phantomDone bool
+
+	// deferredPatches collects LOAD_CONST instructions whose Arg
+	// must be rewritten once the final const-pool index of the
+	// referenced value is known. Folded results from
+	// BinOp(Const,op,Const) and UnaryOp(USub,numeric) that don't
+	// fit LOAD_SMALL_INT land in co_consts AFTER None; the
+	// placeholder Arg is rewritten in finalizeDeferred.
+	deferredPatches []deferredPatch
 }
 
 // newCompileUnit allocates a fresh per-frame compileUnit linked to
@@ -69,10 +96,20 @@ func newCompileUnit(scope *symtable.Scope, name, qualName string, firstLineNo in
 // dedup-by-equality semantics: nil is unique, and other values dedup
 // when their Go type matches and they are ==-equal. Boxed types like
 // *big.Int that don't compare with == still dedup correctly because
-// CPython's pool is keyed on Python identity for those — for v0.7.1
-// the only callers append nil and string, both of which == as
-// expected.
+// CPython's pool is keyed on Python identity for those — for v0.7.2
+// the only callers append nil, int64, float64, complex128, string,
+// []byte, bool, and bytecode.EllipsisType. []byte deduplication uses
+// content equality.
 func (u *compileUnit) addConst(v any) uint32 {
+	if bv, ok := v.([]byte); ok {
+		for i, c := range u.Consts {
+			if cb, ok2 := c.([]byte); ok2 && bytesEqual(bv, cb) {
+				return uint32(i)
+			}
+		}
+		u.Consts = append(u.Consts, v)
+		return uint32(len(u.Consts) - 1)
+	}
 	for i, c := range u.Consts {
 		if c == nil && v == nil {
 			return uint32(i)
@@ -88,6 +125,18 @@ func (u *compileUnit) addConst(v any) uint32 {
 	return uint32(len(u.Consts) - 1)
 }
 
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // addName returns the index of s in u.Names, appending it if it
 // isn't already there.
 func (u *compileUnit) addName(s string) uint32 {
@@ -98,6 +147,21 @@ func (u *compileUnit) addName(s string) uint32 {
 	}
 	u.Names = append(u.Names, s)
 	return uint32(len(u.Names) - 1)
+}
+
+// finalizeDeferred resolves every LOAD_CONST instruction queued in
+// u.deferredPatches by appending its target value to u.Consts (with
+// dedup) and rewriting the instruction's Arg to the resulting index.
+// The unique-by-==-equality dedup matches u.addConst.
+func (u *compileUnit) finalizeDeferred() {
+	if len(u.deferredPatches) == 0 {
+		return
+	}
+	for _, dp := range u.deferredPatches {
+		idx := u.addConst(dp.value)
+		dp.block.Instrs[dp.instrIdx].Arg = idx
+	}
+	u.deferredPatches = nil
 }
 
 // Generate is the visitor pipeline's entry point. It builds a
@@ -133,25 +197,68 @@ func Generate(mod *ast.Module, scope *symtable.Scope, opts GenerateOptions) (*ir
 	return u.Seq, consts, names, nil
 }
 
+// checkBodyShape rejects module bodies whose stmt ordering does not
+// match the classifier's accepted shapes at v0.7.2. Specifically:
+//
+//   - A no-op statement (Pass, or *ast.ExprStmt wrapping a non-string
+//     Constant or a tail string Constant) may appear only AFTER all
+//     "real" stmts in the body. Real stmts before tail no-ops follow
+//     CPython's optimize_cfg trailing-NOP fold; the reverse ordering
+//     would emit a NOP that doesn't fold to byte parity until the
+//     v0.7.13 optimize_cfg pass lands.
+//   - An *ast.AugAssign is valid only when it is preceded by a real
+//     statement. A bare AugAssign at body[0] falls outside the
+//     classifier's modAugAssign shape (which requires an init Assign
+//     at body[0..0] and the AugAssign at body[1]).
+//
+// Returns ErrNotImplemented when the shape falls outside this scope
+// so runVisitorShadow falls back to the classifier path. Statement
+// kinds the visitor doesn't recognize at all (AnnAssign, If, ...)
+// are accepted by checkBodyShape and rejected later by visitStmt.
+func checkBodyShape(body []ast.Stmt) error {
+	sawNoOp := false
+	sawReal := false
+	for _, stmt := range body {
+		switch stmt.(type) {
+		case *ast.Pass:
+			sawNoOp = true
+		case *ast.ExprStmt:
+			sawNoOp = true
+		case *ast.Assign:
+			if sawNoOp {
+				return ErrNotImplemented
+			}
+			sawReal = true
+		case *ast.AugAssign:
+			if sawNoOp {
+				return ErrNotImplemented
+			}
+			if !sawReal {
+				return ErrNotImplemented
+			}
+			sawReal = true
+		}
+	}
+	return nil
+}
+
 // visitModule is the top-level AST walker. It mirrors
-// CPython 3.14 Python/codegen.c::compiler_codegen for module bodies:
-// emit the synthetic RESUME prologue; if body[0] is a string-literal
-// docstring, emit LOAD_CONST + STORE_NAME __doc__; walk the
-// remaining statements emitting one NOP per stmt; then emit
-// LOAD_CONST None + RETURN_VALUE at the last source position.
+// CPython 3.14 Python/codegen.c::compiler_codegen for module bodies.
 //
-// Per CPython 3.14, the unoptimized form would emit one NOP per
-// constant ExprStmt and Pass, plus a synthetic LOAD_CONST None +
-// RETURN_VALUE at the end. CPython's optimize_cfg pass folds the
-// trailing NOP into the LOAD_CONST/RETURN_VALUE pair (preserving
-// line info on the last source line). v0.7.1 has no optimizer pass
-// yet, so we emit the post-fold pattern directly: NOP for every
-// non-last stmt, and reuse the last stmt's Loc on the
-// LOAD_CONST None + RETURN_VALUE pair. v0.7.13 (optimize_cfg)
-// generalizes this fold and removes the special case here.
+// Layout:
 //
-// Returns ErrNotImplemented for any module body shape outside
-// modEmpty / modNoOps / modDocstring.
+//   - RESUME 0 prologue.
+//   - If body[0] is a string-literal docstring, emit
+//     LOAD_CONST + STORE_NAME __doc__.
+//   - For every remaining statement, dispatch through visitStmt.
+//     Last statement's Loc anchors the trailing terminator
+//     (CPython's optimize_cfg trailing-NOP fold).
+//   - finalizeDeferred resolves any folded-but-too-large constants
+//     into their final co_consts index.
+//   - LOAD_CONST None + RETURN_VALUE.
+//
+// Returns ErrNotImplemented for any AST node visitStmt does not
+// recognize; the caller falls back to the classifier path.
 func visitModule(u *compileUnit, mod *ast.Module) error {
 	block := u.Seq.AddBlock()
 	syntheticLoc := bytecode.Loc{Line: 0, EndLine: 1}
@@ -178,26 +285,28 @@ func visitModule(u *compileUnit, mod *ast.Module) error {
 			ir.Instr{Op: bytecode.LOAD_CONST, Arg: textIdx, Loc: doc.Loc},
 			ir.Instr{Op: bytecode.STORE_NAME, Arg: nameIdx, Loc: doc.Loc},
 		)
+		u.phantomDone = true
 		lastLoc = doc.Loc
 		bodyStart = 1
 	}
 
 	tail := mod.Body[bodyStart:]
+	if err := checkBodyShape(tail); err != nil {
+		return err
+	}
 	for i, stmt := range tail {
-		loc, err := stmtNopLoc(stmt, u.Source)
+		isLast := i == len(tail)-1
+		loc, err := visitStmt(u, stmt, u.Source, isLast)
 		if err != nil {
 			return err
 		}
-		if i == len(tail)-1 {
+		if isLast {
 			lastLoc = loc
-			break
 		}
-		block.Instrs = append(block.Instrs, ir.Instr{
-			Op: bytecode.NOP, Arg: 0, Loc: loc,
-		})
 	}
 
 	noneIdx := u.addConst(nil)
+	u.finalizeDeferred()
 	block.Instrs = append(block.Instrs,
 		ir.Instr{Op: bytecode.LOAD_CONST, Arg: noneIdx, Loc: lastLoc},
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: lastLoc},
