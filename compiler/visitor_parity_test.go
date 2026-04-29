@@ -42,6 +42,11 @@ func TestVisitorParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
+	funcbodyFiles, err := filepath.Glob(filepath.Join(root, "funcbody", "*.py"))
+	if err != nil {
+		t.Fatalf("glob funcbody: %v", err)
+	}
+	files = append(files, funcbodyFiles...)
 	if len(files) == 0 {
 		t.Skipf("no fixtures found under %s", root)
 	}
