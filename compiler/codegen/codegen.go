@@ -29,12 +29,15 @@
 // block, one body block per branch, optional kept-merge end block)
 // and the first to drive the optimize pipeline through a real
 // branching shape (eliminate_empty_blocks +
-// inline_small_exit_blocks). v0.6.23 adds modWhile: a single
+// inline_small_exit_blocks). v0.7.7 promotes modWhile — a single
 // top-level `while cond: name = val` loop with no break/continue/
 // else, where cond is a 1..15-char Name and val is a small int
-// (0..255). First codegen path that emits a backward jump
-// (`JUMP_BACKWARD 12`); the trailing implicit-return-None run is
-// attributed back to the condition line, mirroring modIfElse.
+// (0..255) — to the visitor pipeline as visitWhileStmt; the
+// v0.6.23 codegen classifier file (visit_while.go) and Build
+// dispatch arm are gone. visitWhileStmt is the first visitor that
+// emits a backward jump (JUMP_BACKWARD), and v0.7.7 lifts the
+// resolveJumps tripwire that previously panicked on backward
+// targets.
 // v0.6.24 closes band B with modFor: a single top-level
 // `for loopVar in iter: bodyVar = val` loop with no break/continue/
 // else, where iter and loopVar are 1..15-char Names and val is a
@@ -95,9 +98,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if w, ok := classifyWhileModule(mod, opts.Source); ok {
-		return buildWhileModule(w, opts)
-	}
 	if f, ok := classifyForModule(mod, opts.Source); ok {
 		return buildForModule(f, opts)
 	}
