@@ -1095,6 +1095,263 @@ func TestBuildUnaryAssignWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildCmpAssignLt covers the canonical cmp shape:
+// `x = a < b`. COMPARE_OP with CmpLt, 1 cache word, names = [a, b, x].
+func TestBuildCmpAssignLt(t *testing.T) {
+	src := []byte("x = a < b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"Lt"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp <): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.COMPARE_OP, bytecode.CmpLt)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.CmpAssignLineTable(bytecode.COMPARE_OP, 1, 4, 1, 8, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildCmpAssignEq covers operator dispatch via cmpOpFromAstOp:
+// `x = a == b` produces COMPARE_OP with CmpEq.
+func TestBuildCmpAssignEq(t *testing.T) {
+	src := []byte("x = a == b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"Eq"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp ==): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.COMPARE_OP, bytecode.CmpEq)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildCmpAssignIs covers the IS_OP path: `x = a is b`. IS_OP
+// has 0 cache words so the bytecode is two bytes shorter than the
+// COMPARE_OP form. Confirms codegen lets the IR encoder decide the
+// cache count from bytecode.CacheSize.
+func TestBuildCmpAssignIs(t *testing.T) {
+	src := []byte("x = a is b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"Is"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp is): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.IS_OP, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.CmpAssignLineTable(bytecode.IS_OP, 1, 4, 1, 9, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildCmpAssignIsNot exercises the IS_OP / oparg=1 path:
+// `x = a is not b`.
+func TestBuildCmpAssignIsNot(t *testing.T) {
+	src := []byte("x = a is not b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"IsNot"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 13}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp is not): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.IS_OP, 1)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildCmpAssignIn exercises the CONTAINS_OP / oparg=0 path:
+// `x = a in b`.
+func TestBuildCmpAssignIn(t *testing.T) {
+	src := []byte("x = a in b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"In"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp in): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.CONTAINS_OP, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.CmpAssignLineTable(bytecode.CONTAINS_OP, 1, 4, 1, 9, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildCmpAssignNotIn exercises the CONTAINS_OP / oparg=1 path:
+// `x = a not in b`.
+func TestBuildCmpAssignNotIn(t *testing.T) {
+	src := []byte("x = a not in b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"NotIn"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 13}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp not in): %v", err)
+	}
+	wantBC := bytecode.CmpAssignBytecode(bytecode.CONTAINS_OP, 1)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildCmpAssignMultiCharNames covers `result = left < right`:
+// names longer than 1 char must still SHORT0-encode.
+func TestBuildCmpAssignMultiCharNames(t *testing.T) {
+	src := []byte("result = left < right\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 9},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "left"},
+				Ops:         []string{"Lt"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 16}, Id: "right"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(cmp multichar): %v", err)
+	}
+	wantLT := bytecode.CmpAssignLineTable(bytecode.COMPARE_OP, 1, 9, 4, 16, 5, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "left" || co.Names[1] != "right" || co.Names[2] != "result" {
+		t.Fatalf("names = %v, want [left right result]", co.Names)
+	}
+}
+
+// TestBuildCmpAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the v0.0.x CmpAssignBytecode helper has no slot
+// for them, so multi-statement modules must fall through to the
+// classifier path.
+func TestBuildCmpAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a < b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Compare{
+				P:           ast.Pos{Line: 1, Col: 4},
+				Left:        &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Ops:         []string{"Lt"},
+				Comparators: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"}},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(cmp+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
