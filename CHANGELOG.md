@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.15](changelog/v0.6.15.md) - codegen module-level: boolop assignment (2026-04-29)
 - [v0.6.14](changelog/v0.6.14.md) - codegen module-level: cmp assignment (2026-04-29)
 - [v0.6.13](changelog/v0.6.13.md) - codegen module-level: unary assignment (2026-04-29)
 - [v0.6.12](changelog/v0.6.12.md) - codegen module-level: binop assignment (2026-04-29)
