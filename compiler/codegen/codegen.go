@@ -12,7 +12,9 @@
 // assignments) and modChainedAssign (`t0 = t1 = ... = tN-1 =
 // <const>`). v0.6.11 adds modAugAssign: `<name> = <initInt>`
 // followed by `<name> <op>= <augInt>` for non-negative ints and any
-// of the 12 in-place binary operators. Anything else returns
+// of the 12 in-place binary operators. v0.6.12 adds modBinOpAssign:
+// a single `<target> = <left> <op> <right>` with all operands as
+// Names and any of the 13 BinOp operators. Anything else returns
 // ErrUnsupported and the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
@@ -71,6 +73,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if a, ok := classifyAugAssignModule(mod, opts.Source); ok {
 		return buildAugAssignModule(a, opts)
+	}
+	if b, ok := classifyBinOpAssignModule(mod, opts.Source); ok {
+		return buildBinOpAssignModule(b, opts)
 	}
 	return nil, ErrUnsupported
 }
