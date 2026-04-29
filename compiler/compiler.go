@@ -86,11 +86,8 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	// optimize.Run → assemble.Assemble) as a shadow pass. The
 	// returned CodeObject is discarded; the legacy classifier path
 	// below stays authoritative until each shape is promoted in
-	// v0.7.1+. At v0.7.0 every Generate call returns
-	// ErrNotImplemented, so this is a free placeholder; later
-	// releases produce real CodeObjects here automatically as the
-	// visitor learns AST nodes.
-	_ = runVisitorShadow(mod, scope, opts)
+	// v0.7.1+ (commit 2 of v0.7.1 makes this routing live).
+	_ = runVisitorShadow(mod, scope, source, opts)
 
 	// v0.6.6: try codegen first; on ErrUnsupported, fall back to the
 	// classifier. Other codegen errors (a malformed IR is a bug, not
