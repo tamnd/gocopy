@@ -81,7 +81,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		len(retName.Id) < 1 || len(retName.Id) > 15 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
-	for i := 0; i < lastIdx; i++ {
+	for i := range lastIdx {
 		asgn, ok := s.Body[i].(*ast.Assign)
 		if !ok {
 			return bytecode.Loc{}, ErrNotImplemented
@@ -96,6 +96,13 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		switch v := asgn.Value.(type) {
 		case *ast.Name:
 			if v.P.Col > 255 || len(v.Id) < 1 || len(v.Id) > 15 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+		case *ast.Constant:
+			if _, ok := constantValue(v); !ok {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if v.P.Col > 255 {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		default:
@@ -137,16 +144,19 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		ir.Instr{Op: bytecode.RESUME, Arg: 0, Loc: resumeLoc},
 	)
 
-	for i := 0; i < lastIdx; i++ {
+	lines := splitLines(source)
+	for i := range lastIdx {
 		asgn := s.Body[i].(*ast.Assign)
-		if err := emitFuncBodyAssign(child, asgn); err != nil {
+		if err := emitFuncBodyAssign(child, asgn, lines); err != nil {
 			return bytecode.Loc{}, err
 		}
 	}
 	if err := emitFuncBodyReturn(child, ret, retName); err != nil {
 		return bytecode.Loc{}, err
 	}
-	child.addConst(nil)
+	if len(child.Consts) == 0 {
+		child.addConst(nil)
+	}
 
 	bodyEndLine := ret.P.Line
 	bodyEndCol := uint16(retName.P.Col) + uint16(len(retName.Id))
@@ -187,41 +197,71 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 
 // emitFuncBodyAssign emits the IR for `target = value` inside a
 // function body. v0.7.10 step 4 supports a single Name target with
-// a bare-Name RHS. The local-Name RHS uses LOAD_FAST (move
-// semantics) — CPython's optimize_load_fast does NOT promote the
-// load-into-store path to LOAD_FAST_BORROW because STORE_FAST
-// kills the borrowed reference. Globals and other expressions land
-// in later steps.
-func emitFuncBodyAssign(u *compileUnit, a *ast.Assign) error {
+// a bare-Name or simple-Constant RHS. The local-Name RHS uses
+// LOAD_FAST (move semantics) — CPython's optimize_load_fast does
+// NOT promote the load-into-store path to LOAD_FAST_BORROW because
+// STORE_FAST kills the borrowed reference. Globals and richer RHS
+// expressions land in later v0.7.10 steps.
+func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 	target := a.Targets[0].(*ast.Name)
-	rhsName := a.Value.(*ast.Name)
-
-	rhsLoc := bytecode.Loc{
-		Line: uint32(rhsName.P.Line), EndLine: uint32(rhsName.P.Line),
-		Col: uint16(rhsName.P.Col), EndCol: uint16(rhsName.P.Col) + uint16(len(rhsName.Id)),
-	}
 	tgtLoc := bytecode.Loc{
 		Line: uint32(target.P.Line), EndLine: uint32(target.P.Line),
 		Col: uint16(target.P.Col), EndCol: uint16(target.P.Col) + uint16(len(target.Id)),
 	}
-
-	rhsKind, rhsArg := u.resolveNameOp(rhsName.Id)
 	tgtKind, tgtArg := u.resolveNameOp(target.Id)
 
 	block := u.currentBlock()
-	switch rhsKind {
-	case nameOpFast:
+	switch v := a.Value.(type) {
+	case *ast.Name:
+		rhsLoc := bytecode.Loc{
+			Line: uint32(v.P.Line), EndLine: uint32(v.P.Line),
+			Col: uint16(v.P.Col), EndCol: uint16(v.P.Col) + uint16(len(v.Id)),
+		}
+		rhsKind, rhsArg := u.resolveNameOp(v.Id)
+		if rhsKind != nameOpFast {
+			return ErrNotImplemented
+		}
 		block.Instrs = append(block.Instrs, ir.Instr{Op: bytecode.LOAD_FAST, Arg: rhsArg, Loc: rhsLoc})
+	case *ast.Constant:
+		val, ok := constantValue(v)
+		if !ok {
+			return ErrNotImplemented
+		}
+		endCol := astExprEndCol(lines, v.P.Line, v)
+		rhsLoc := bytecode.Loc{
+			Line: uint32(v.P.Line), EndLine: uint32(v.P.Line),
+			Col: uint16(v.P.Col), EndCol: uint16(endCol),
+		}
+		emitFuncBodyConstLoad(u, val, rhsLoc)
 	default:
 		return ErrNotImplemented
 	}
-	switch tgtKind {
-	case nameOpFast:
-		block.Instrs = append(block.Instrs, ir.Instr{Op: bytecode.STORE_FAST, Arg: tgtArg, Loc: tgtLoc})
-	default:
+	if tgtKind != nameOpFast {
 		return ErrNotImplemented
 	}
+	block.Instrs = append(block.Instrs, ir.Instr{Op: bytecode.STORE_FAST, Arg: tgtArg, Loc: tgtLoc})
 	return nil
+}
+
+// emitFuncBodyConstLoad emits a constant load inside a function
+// body. Unlike emitConstLoad (used at module scope), function-scope
+// constant emission does not maintain a phantom co_consts[0] slot:
+// the function's const pool starts empty, and the first emit
+// occupies index 0 directly. LOAD_SMALL_INT for int 0..255 does not
+// add to co_consts (CPython 3.14 specializes that opcode to encode
+// the literal in the oparg).
+func emitFuncBodyConstLoad(u *compileUnit, v any, loc bytecode.Loc) {
+	block := u.currentBlock()
+	if iv, ok := v.(int64); ok && iv >= 0 && iv <= 255 {
+		block.Instrs = append(block.Instrs, ir.Instr{
+			Op: bytecode.LOAD_SMALL_INT, Arg: uint32(iv), Loc: loc,
+		})
+		return
+	}
+	idx := u.addConst(v)
+	block.Instrs = append(block.Instrs, ir.Instr{
+		Op: bytecode.LOAD_CONST, Arg: idx, Loc: loc,
+	})
 }
 
 // emitFuncBodyReturn emits the IR for `return name` inside a
