@@ -26,6 +26,8 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 		return visitFuncConstantExpr(u, v, lines)
 	case *ast.BinOp:
 		return visitFuncBinOpExpr(u, v, lines)
+	case *ast.UnaryOp:
+		return visitFuncUnaryOpExpr(u, v, lines)
 	case *ast.Compare:
 		return visitFuncCompareExpr(u, v, lines)
 	case *ast.Call:
@@ -164,6 +166,86 @@ func visitFuncBinOpExpr(u *compileUnit, b *ast.BinOp, lines [][]byte) (uint16, u
 		Op: bytecode.BINARY_OP, Arg: uint32(oparg), Loc: loc,
 	})
 	return lc, re, nil
+}
+
+// visitFuncUnaryOpExpr emits IR for `-x` / `~x` / `not x` in
+// function-scope context. Mirrors compiler/func_body.go's UnaryOp
+// arm:
+//
+//   - USub / Invert: walk operand, emit UNARY_NEGATIVE or
+//     UNARY_INVERT at (opCol, operandEnd).
+//   - Not (operand is single-op single-comparator Compare): emit the
+//     Compare with the conditional-context bit (oparg+16) set, then
+//     UNARY_NOT — no TO_BOOL, no caches between. The COMPARE_OP and
+//     UNARY_NOT both span (opCol, scanWhitespaceClose(rhsEnd)).
+//   - Not (general): walk operand, emit TO_BOOL + UNARY_NOT at
+//     (opCol, scanWhitespaceClose(operandEnd)).
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_expr_unary +
+// the codegen_compare conditional-flag specialisation.
+func visitFuncUnaryOpExpr(u *compileUnit, un *ast.UnaryOp, lines [][]byte) (uint16, uint16, error) {
+	if un.P.Col > 255 {
+		return 0, 0, ErrNotImplemented
+	}
+	opCol := uint16(un.P.Col)
+	block := u.currentBlock()
+	switch un.Op {
+	case "USub", "Invert":
+		_, oe, err := visitFuncExpr(u, un.Operand, lines)
+		if err != nil {
+			return 0, 0, err
+		}
+		loc := bytecode.Loc{
+			Line: uint32(un.P.Line), EndLine: uint32(un.P.Line),
+			Col: opCol, EndCol: oe,
+		}
+		op := bytecode.UNARY_NEGATIVE
+		if un.Op == "Invert" {
+			op = bytecode.UNARY_INVERT
+		}
+		block.Instrs = append(block.Instrs, ir.Instr{Op: op, Arg: 0, Loc: loc})
+		return opCol, oe, nil
+	case "Not":
+		if cmp, isCmp := un.Operand.(*ast.Compare); isCmp &&
+			len(cmp.Ops) == 1 && len(cmp.Comparators) == 1 {
+			op, base, ok := cmpOpFromAstOp(cmp.Ops[0])
+			if !ok {
+				return 0, 0, ErrNotImplemented
+			}
+			if _, _, err := visitFuncExpr(u, cmp.Left, lines); err != nil {
+				return 0, 0, err
+			}
+			_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
+			if err != nil {
+				return 0, 0, err
+			}
+			closedRec := uint16(scanWhitespaceClose(lines, un.P.Line, byte(re)))
+			loc := bytecode.Loc{
+				Line: uint32(un.P.Line), EndLine: uint32(un.P.Line),
+				Col: opCol, EndCol: closedRec,
+			}
+			block.Instrs = append(block.Instrs,
+				ir.Instr{Op: op, Arg: uint32(base + 16), Loc: loc},
+				ir.Instr{Op: bytecode.UNARY_NOT, Arg: 0, Loc: loc},
+			)
+			return opCol, closedRec, nil
+		}
+		_, oe, err := visitFuncExpr(u, un.Operand, lines)
+		if err != nil {
+			return 0, 0, err
+		}
+		closedEnd := uint16(scanWhitespaceClose(lines, un.P.Line, byte(oe)))
+		loc := bytecode.Loc{
+			Line: uint32(un.P.Line), EndLine: uint32(un.P.Line),
+			Col: opCol, EndCol: closedEnd,
+		}
+		block.Instrs = append(block.Instrs,
+			ir.Instr{Op: bytecode.TO_BOOL, Arg: 0, Loc: loc},
+			ir.Instr{Op: bytecode.UNARY_NOT, Arg: 0, Loc: loc},
+		)
+		return opCol, closedEnd, nil
+	}
+	return 0, 0, ErrNotImplemented
 }
 
 // visitFuncCompareExpr emits a value-context Compare in function

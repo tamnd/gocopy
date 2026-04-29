@@ -379,6 +379,15 @@ func validateFuncBodyAssignRHS(e ast.Expr) bool {
 			return false
 		}
 		return validateFuncBodyAssignRHS(v.Left) && validateFuncBodyAssignRHS(v.Right)
+	case *ast.UnaryOp:
+		if v.P.Col > 255 {
+			return false
+		}
+		switch v.Op {
+		case "USub", "Invert", "Not":
+			return validateFuncBodyAssignRHS(v.Operand)
+		}
+		return false
 	case *ast.Compare:
 		if v.P.Col > 255 {
 			return false
