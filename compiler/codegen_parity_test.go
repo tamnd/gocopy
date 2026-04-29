@@ -96,6 +96,13 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			bytecode.LineTableNoOps(cls.stmts),
 			[]any{nil}, nil,
 		)
+	case modDocstring:
+		return module(filename,
+			bytecode.DocstringBytecode(len(cls.stmts)),
+			bytecode.DocstringLineTable(cls.docLine, cls.docEndLine, cls.docCol, cls.stmts),
+			[]any{cls.docText, nil},
+			[]string{"__doc__"},
+		)
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
