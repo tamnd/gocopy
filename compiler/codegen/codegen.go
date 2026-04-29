@@ -24,8 +24,12 @@
 // `<target> = <left> and <right>` or `<target> = <left> or
 // <right>` with both operands as Names. This is the first codegen
 // path that emits a forward jump (POP_JUMP_IF_FALSE for `and`,
-// POP_JUMP_IF_TRUE for `or`). Anything else returns ErrUnsupported
-// and the caller falls back to the classifier.
+// POP_JUMP_IF_TRUE for `or`). v0.6.16 adds modTernary: a single
+// `<target> = <trueVal> if <cond> else <falseVal>` with all three
+// operands as Names. This is the second jump-bearing codegen path
+// and the first with two return-bearing branches.
+// Anything else returns ErrUnsupported and the caller falls back
+// to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -95,6 +99,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if b, ok := classifyBoolOpAssignModule(mod, opts.Source); ok {
 		return buildBoolOpAssignModule(b, opts)
+	}
+	if t, ok := classifyTernaryAssignModule(mod, opts.Source); ok {
+		return buildTernaryAssignModule(t, opts)
 	}
 	return nil, ErrUnsupported
 }
