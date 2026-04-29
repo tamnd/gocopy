@@ -3,7 +3,39 @@ package codegen
 import (
 	"github.com/tamnd/gocopy/bytecode"
 	"github.com/tamnd/gocopy/compiler/ast"
+	"github.com/tamnd/gocopy/compiler/ir"
 )
+
+// visitStmt lowers a single module-level statement to IR. Returns
+// the Loc visitModule should anchor the trailing terminator on when
+// stmt is the last in the body. Tail no-op statements (Pass and
+// constant ExprStmt) emit a NOP unless they are last (in which case
+// just the Loc is returned, mirroring CPython's optimize_cfg
+// trailing-NOP fold). Returns ErrNotImplemented for any AST shape
+// the v0.7.2 visitor does not yet handle.
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt.
+func visitStmt(u *compileUnit, stmt ast.Stmt, source []byte, isLast bool) (bytecode.Loc, error) {
+	switch s := stmt.(type) {
+	case *ast.Assign:
+		return visitAssignStmt(u, s, source, isLast)
+	case *ast.AugAssign:
+		return visitAugAssignStmt(u, s, source, isLast)
+	case *ast.Pass, *ast.ExprStmt:
+		loc, err := stmtNopLoc(stmt, source)
+		if err != nil {
+			return bytecode.Loc{}, err
+		}
+		if !isLast {
+			block := u.currentBlock()
+			block.Instrs = append(block.Instrs, ir.Instr{
+				Op: bytecode.NOP, Arg: 0, Loc: loc,
+			})
+		}
+		return loc, nil
+	}
+	return bytecode.Loc{}, ErrNotImplemented
+}
 
 // docstringInfo carries the resolved Loc and string payload of a
 // leading module docstring.
