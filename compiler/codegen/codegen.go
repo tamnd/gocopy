@@ -74,6 +74,14 @@
 // small int (0..255). Adds the FOR_ITER + END_FOR + POP_ITER opcode
 // trio; the trailing 4-cu loop-exit run is attributed back to the
 // for line via a LONG line-table entry.
+// v0.6.25 opens band C with modFuncDef: a single top-level
+// `def f(arg): return arg` definition where f and arg are 1..15-char
+// identifiers, the body is a single `return <argName>` statement,
+// and there are no decorators/annotations/type-params/defaults/
+// vararg/kwarg. First codegen path that emits a nested code object;
+// the inner function CodeObject is hand-built mirroring the
+// classifier's `compileFuncDef` byte-for-byte rather than routed
+// through assemble.Assemble.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -178,6 +186,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if f, ok := classifyForModule(mod, opts.Source); ok {
 		return buildForModule(f, opts)
+	}
+	if f, ok := classifyFuncDefModule(mod, opts.Source); ok {
+		return buildFuncDefModule(f, opts)
 	}
 	return nil, ErrUnsupported
 }
