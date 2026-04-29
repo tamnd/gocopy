@@ -52,6 +52,7 @@ func TestCodegenParity(t *testing.T) {
 			}
 			scope, _ := symtable.Build(mod) // best-effort, mirrors Compile
 			co, cgErr := codegen.Build(mod, scope, codegen.Options{
+				Source:      src,
 				Filename:    filepath.Base(f),
 				Name:        "<module>",
 				QualName:    "<module>",
@@ -87,6 +88,12 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 		return module(filename,
 			bytecode.NoOpBytecode(1),
 			bytecode.LineTableEmpty(),
+			[]any{nil}, nil,
+		)
+	case modNoOps:
+		return module(filename,
+			bytecode.NoOpBytecode(len(cls.stmts)),
+			bytecode.LineTableNoOps(cls.stmts),
 			[]any{nil}, nil,
 		)
 	}
