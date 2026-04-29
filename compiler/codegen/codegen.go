@@ -27,9 +27,12 @@
 // POP_JUMP_IF_TRUE for `or`). v0.6.16 adds modTernary: a single
 // `<target> = <trueVal> if <cond> else <falseVal>` with all three
 // operands as Names. This is the second jump-bearing codegen path
-// and the first with two return-bearing branches.
-// Anything else returns ErrUnsupported and the caller falls back
-// to the classifier.
+// and the first with two return-bearing branches. v0.6.17 adds
+// modCollection: a single `<target> = [...]`, `<target> = (...)`,
+// `<target> = {...}` (set), or `<target> = {k: v, ...}` (dict)
+// where every element is a Name on the same source line, plus the
+// empty `[]`, `()`, and `{}` (dict) cases. Anything else returns
+// ErrUnsupported and the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -102,6 +105,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if t, ok := classifyTernaryAssignModule(mod, opts.Source); ok {
 		return buildTernaryAssignModule(t, opts)
+	}
+	if c, ok := classifyCollectionModule(mod, opts.Source); ok {
+		return buildCollectionModule(c, opts)
 	}
 	return nil, ErrUnsupported
 }

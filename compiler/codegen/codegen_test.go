@@ -1601,6 +1601,196 @@ func TestBuildTernaryAssignWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildCollectionEmptyList covers `x = []` — BUILD_LIST 0,
+// co_consts = [None], co_names = [x].
+func TestBuildCollectionEmptyList(t *testing.T) {
+	src := []byte("x = []\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.List{P: ast.Pos{Line: 1, Col: 4}},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(empty list): %v", err)
+	}
+	wantBC := bytecode.CollectionEmptyBytecode(bytecode.CollList)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.CollectionEmptyLineTable(1, 4, 6, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "x" {
+		t.Fatalf("names = %v, want [x]", co.Names)
+	}
+}
+
+// TestBuildCollectionEmptyTuple covers `x = ()` — LOAD_CONST 1,
+// co_consts = [None, ConstTuple{}].
+func TestBuildCollectionEmptyTuple(t *testing.T) {
+	src := []byte("x = ()\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Tuple{P: ast.Pos{Line: 1, Col: 4}},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(empty tuple): %v", err)
+	}
+	wantBC := bytecode.CollectionEmptyBytecode(bytecode.CollTuple)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil, ConstTuple{}]", co.Consts)
+	}
+	if _, ok := co.Consts[1].(bytecode.ConstTuple); !ok {
+		t.Fatalf("consts[1] = %T, want bytecode.ConstTuple", co.Consts[1])
+	}
+}
+
+// TestBuildCollectionEmptyDict covers `x = {}` — BUILD_MAP 0.
+func TestBuildCollectionEmptyDict(t *testing.T) {
+	src := []byte("x = {}\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Dict{P: ast.Pos{Line: 1, Col: 4}},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(empty dict): %v", err)
+	}
+	wantBC := bytecode.CollectionEmptyBytecode(bytecode.CollDict)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildCollectionListNames covers `x = [a, b]` — two LOAD_NAME
+// instructions then BUILD_LIST 2, co_names = [a, b, x],
+// co.StackSize = 2.
+func TestBuildCollectionListNames(t *testing.T) {
+	src := []byte("x = [a, b]\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.List{
+				P: ast.Pos{Line: 1, Col: 4},
+				Elts: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(list names): %v", err)
+	}
+	wantBC := bytecode.CollectionNamesBytecode(bytecode.CollList, 2)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantElts := []bytecode.CollElt{
+		{Name: "a", Col: 5, NameLen: 1},
+		{Name: "b", Col: 8, NameLen: 1},
+	}
+	wantLT := bytecode.CollectionNamesLineTable(1, wantElts, 4, 10, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildCollectionDictNames covers `x = {a: b}` — flattened
+// key/value LOAD_NAMEs then BUILD_MAP 1.
+func TestBuildCollectionDictNames(t *testing.T) {
+	src := []byte("x = {a: b}\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Dict{
+				P:      ast.Pos{Line: 1, Col: 4},
+				Keys:   []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"}},
+				Values: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(dict names): %v", err)
+	}
+	wantBC := bytecode.CollectionNamesBytecode(bytecode.CollDict, 2)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+}
+
+// TestBuildCollectionWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the classifier helpers have no slot for them.
+func TestBuildCollectionWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = [a, b]\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.List{
+				P: ast.Pos{Line: 1, Col: 4},
+				Elts: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+				},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(coll+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
