@@ -2741,6 +2741,181 @@ func TestBuildIfElseMultiVarFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildWhileSimple covers `while a:\n    x = 1`. Verifies the
+// 8-cu condition run, JUMP_BACKWARD 12 after the body, and the
+// trailing implicit-return-None run attributed back to the condition
+// line (LONG line-table entry produced by the encoder).
+func TestBuildWhileSimple(t *testing.T) {
+	src := []byte("while a:\n    x = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.While{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Test: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "a" || co.Names[1] != "x" {
+		t.Fatalf("names = %v, want [a x]", co.Names)
+	}
+	if len(co.Consts) != 2 {
+		t.Fatalf("consts len = %d, want 2", len(co.Consts))
+	}
+	if iv, ok := co.Consts[0].(int64); !ok || iv != 1 {
+		t.Fatalf("consts[0] = %v, want int64(1)", co.Consts[0])
+	}
+	if co.Consts[1] != nil {
+		t.Fatalf("consts[1] = %v, want nil", co.Consts[1])
+	}
+	if co.StackSize < 1 {
+		t.Fatalf("stacksize = %d, want >= 1", co.StackSize)
+	}
+}
+
+// TestBuildWhileSameNameDedupes covers `while x: x = 0`. The
+// classifier's compileWhile collapses condName == varName to a
+// single co_names entry; the codegen path must do the same via the
+// insertion-order addName helper.
+func TestBuildWhileSameNameDedupes(t *testing.T) {
+	src := []byte("while x:\n    x = 0\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.While{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Test: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "x"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(0)},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "x" {
+		t.Fatalf("names = %v, want [x] (dedupe)", co.Names)
+	}
+	if len(co.Consts) != 2 {
+		t.Fatalf("consts len = %d, want 2", len(co.Consts))
+	}
+	if iv, ok := co.Consts[0].(int64); !ok || iv != 0 {
+		t.Fatalf("consts[0] = %v, want int64(0)", co.Consts[0])
+	}
+}
+
+// TestBuildWhileMultiVarFallsThrough rejects a body with two
+// assignments — the single-assign body rule.
+func TestBuildWhileMultiVarFallsThrough(t *testing.T) {
+	src := []byte("while a:\n    x = 1\n    y = 2\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.While{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Test: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+				&ast.Assign{
+					P:       ast.Pos{Line: 3, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 3, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 3, Col: 8}, Kind: "int", Value: int64(2)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(multi-stmt body) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildWhileWithElseFallsThrough rejects `while a: x = 1\nelse:
+// x = 2` — codegen does not own loops with else clauses.
+func TestBuildWhileWithElseFallsThrough(t *testing.T) {
+	src := []byte("while a:\n    x = 1\nelse:\n    x = 2\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.While{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Test: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+			Orelse: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 4, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 4, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 4, Col: 8}, Kind: "int", Value: int64(2)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(while+else) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildWhileNonNameCondFallsThrough rejects `while a + b: x = 1`
+// — the cond-must-be-Name rule.
+func TestBuildWhileNonNameCondFallsThrough(t *testing.T) {
+	src := []byte("while a + b:\n    x = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.While{
+			P: ast.Pos{Line: 1, Col: 0},
+			Test: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 6},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 10}, Id: "b"},
+			},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(non-Name cond) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildIfElseNonNameCondFallsThrough ensures codegen rejects an
 // `if` whose condition is not a bare Name (e.g. `if a + b: x = 1`).
 func TestBuildIfElseNonNameCondFallsThrough(t *testing.T) {
