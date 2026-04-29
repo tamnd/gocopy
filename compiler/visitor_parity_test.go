@@ -71,7 +71,8 @@ func TestVisitorParity(t *testing.T) {
 			skipped++
 			continue
 		}
-		seq, genErr := codegen.Generate(mod, scope, codegen.GenerateOptions{
+		seq, consts, names, genErr := codegen.Generate(mod, scope, codegen.GenerateOptions{
+			Source:      src,
 			Filename:    filepath.Base(f),
 			Name:        "<module>",
 			QualName:    "<module>",
@@ -91,6 +92,8 @@ func TestVisitorParity(t *testing.T) {
 			Filename: filepath.Base(f),
 			Name:     "<module>",
 			QualName: "<module>",
+			Consts:   consts,
+			Names:    names,
 		})
 		if asmErr != nil {
 			errored++

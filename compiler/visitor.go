@@ -14,23 +14,16 @@ import (
 // the resulting CodeObject, or nil on any pipeline error including
 // codegen.ErrNotImplemented.
 //
-// The helper exists so v0.7.1+ visitor arms light up automatically:
-// each release that teaches codegen.Generate a new AST node category
-// becomes visible end-to-end here without driver edits.
-//
-// The returned CodeObject is intentionally not authoritative.
-// compiler.Compile returns the classifier path's CodeObject; the
-// shadow's output is consumed only by TestVisitorParity, which
-// re-invokes the same three calls with explicit error logging.
-//
-// At v0.7.0 every codegen.Generate call returns ErrNotImplemented
-// and this helper always returns nil. That is the expected steady
-// state for v0.7.0; v0.7.1 starts producing real CodeObjects here.
-func runVisitorShadow(mod *ast.Module, scope *symtable.Scope, opts Options) *bytecode.CodeObject {
+// At v0.7.1 the visitor knows modEmpty / modNoOps / modDocstring
+// shapes; for other AST inputs it returns ErrNotImplemented and the
+// helper returns nil so compiler.Compile can fall back to the
+// classifier path.
+func runVisitorShadow(mod *ast.Module, scope *symtable.Scope, source []byte, opts Options) *bytecode.CodeObject {
 	if scope == nil {
 		return nil
 	}
-	seq, err := codegen.Generate(mod, scope, codegen.GenerateOptions{
+	seq, consts, names, err := codegen.Generate(mod, scope, codegen.GenerateOptions{
+		Source:      source,
 		Filename:    opts.Filename,
 		Name:        "<module>",
 		QualName:    "<module>",
@@ -44,6 +37,8 @@ func runVisitorShadow(mod *ast.Module, scope *symtable.Scope, opts Options) *byt
 		Filename: opts.Filename,
 		Name:     "<module>",
 		QualName: "<module>",
+		Consts:   consts,
+		Names:    names,
 	})
 	if err != nil {
 		return nil

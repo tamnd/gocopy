@@ -84,25 +84,6 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 		t.Fatalf("classifier rejected fixture")
 	}
 	switch cls.kind {
-	case modEmpty:
-		return module(filename,
-			bytecode.NoOpBytecode(1),
-			bytecode.LineTableEmpty(),
-			[]any{nil}, nil,
-		)
-	case modNoOps:
-		return module(filename,
-			bytecode.NoOpBytecode(len(cls.stmts)),
-			bytecode.LineTableNoOps(cls.stmts),
-			[]any{nil}, nil,
-		)
-	case modDocstring:
-		return module(filename,
-			bytecode.DocstringBytecode(len(cls.stmts)),
-			bytecode.DocstringLineTable(cls.docLine, cls.docEndLine, cls.docCol, cls.stmts),
-			[]any{cls.docText, nil},
-			[]string{"__doc__"},
-		)
 	case modAssign:
 		lt := bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts)
 		if iv, ok := cls.asgnValue.(int64); ok {

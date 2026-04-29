@@ -87,7 +87,8 @@ func TestCompileallLib(t *testing.T) {
 			skipped++
 			return nil
 		}
-		seq, genErr := codegen.Generate(mod, scope, codegen.GenerateOptions{
+		seq, consts, names, genErr := codegen.Generate(mod, scope, codegen.GenerateOptions{
+			Source:      src,
 			Filename:    filepath.Base(path),
 			Name:        "<module>",
 			QualName:    "<module>",
@@ -106,6 +107,8 @@ func TestCompileallLib(t *testing.T) {
 			Filename: filepath.Base(path),
 			Name:     "<module>",
 			QualName: "<module>",
+			Consts:   consts,
+			Names:    names,
 		}); asmErr != nil {
 			errored++
 			return nil

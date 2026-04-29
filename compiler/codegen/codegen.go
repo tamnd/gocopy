@@ -2,10 +2,10 @@
 // a fully-formed *bytecode.CodeObject by emitting an InstrSeq IR and
 // running it through the v0.6.5 assembler.
 //
-// At v0.6.6 codegen owned the empty-module shape. v0.6.7 added the
-// modNoOps shape (N >= 1 no-op statements). v0.6.8 added the
-// modDocstring shape: a leading string literal followed by zero or
-// more no-op statements. v0.6.9 added the simple-constant modAssign
+// At v0.7.1 the modEmpty/modNoOps/modDocstring shapes — the v0.6.6,
+// v0.6.7, and v0.6.8 entries — were promoted to the visitor pipeline
+// (compiler/codegen.Generate); they are no longer reachable through
+// codegen.Build. v0.6.9 added the simple-constant modAssign
 // shape: `<name> = <const>` (non-folded value) followed by zero or
 // more no-op statements. v0.6.10 adds two natural extensions of
 // modAssign: modMultiAssign (N >= 2 independent simple-constant
@@ -121,23 +121,13 @@ type Options struct {
 }
 
 // Build emits a fully-formed CodeObject for the supported shape, or
-// ErrUnsupported when the source falls outside the v0.6.7 codegen
-// surface.
+// ErrUnsupported when the source falls outside the codegen surface.
 func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.CodeObject, error) {
 	if mod == nil {
 		return nil, errors.New("codegen.Build: nil module")
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if len(mod.Body) == 0 {
-		return buildEmptyModule(opts)
-	}
-	if stmts, ok := classifyNoOpModule(mod, opts.Source); ok {
-		return buildNoOpsModule(stmts, opts)
-	}
-	if d, ok := classifyDocstringModule(mod, opts.Source); ok {
-		return buildDocstringModule(d, opts)
-	}
 	if a, ok := classifyAssignModule(mod, opts.Source); ok {
 		return buildAssignModule(a, opts)
 	}
