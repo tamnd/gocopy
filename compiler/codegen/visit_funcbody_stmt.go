@@ -67,11 +67,20 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	}
 
 	lastIdx := len(s.Body) - 1
-	ret, ok := s.Body[lastIdx].(*ast.Return)
-	if !ok || ret.Value == nil {
-		return bytecode.Loc{}, ErrNotImplemented
-	}
-	if ret.P.Col > 255 || !validateFuncBodyReturnValue(ret.Value) {
+	var ret *ast.Return
+	var termIf *ast.If
+	switch last := s.Body[lastIdx].(type) {
+	case *ast.Return:
+		if last.Value == nil || last.P.Col > 255 || !validateFuncBodyReturnValue(last.Value) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		ret = last
+	case *ast.If:
+		if !validateFuncBodyTerminatingIf(last) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		termIf = last
+	default:
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	for i := range lastIdx {
@@ -158,15 +167,26 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			}
 		}
 	}
-	bodyEndCol, err := emitFuncBodyReturn(child, ret, lines)
-	if err != nil {
-		return bytecode.Loc{}, err
+	var bodyEndCol uint16
+	var bodyEndLine int
+	if ret != nil {
+		c, err := emitFuncBodyReturn(child, ret, lines)
+		if err != nil {
+			return bytecode.Loc{}, err
+		}
+		bodyEndCol = c
+		bodyEndLine = ret.P.Line
+	} else {
+		c, line, err := emitFuncBodyTerminatingIf(child, termIf, lines)
+		if err != nil {
+			return bytecode.Loc{}, err
+		}
+		bodyEndCol = c
+		bodyEndLine = line
 	}
 	if len(child.Consts) == 0 {
 		child.addConst(nil)
 	}
-
-	bodyEndLine := ret.P.Line
 
 	funcCode, err := u.popChildUnit(child, assemble.Options{
 		ArgCount:        int32(len(args.Args)),
@@ -384,6 +404,96 @@ func validateFuncBodyReturnValue(e ast.Expr) bool {
 		return validateFuncBodyAssignRHS(ifexpr.Body) && validateFuncBodyAssignRHS(ifexpr.OrElse)
 	}
 	return validateFuncBodyAssignRHS(e)
+}
+
+// validateFuncBodyTerminatingIf reports whether ifs is an if/elif/else
+// chain whose every leaf branch is a Return — i.e. an If statement
+// that fully replaces the trailing function-body Return. Used when
+// the LAST statement of a function body is *ast.If rather than
+// *ast.Return.
+//
+// Each branch's Body must be a single Return (not Assign — Assigns
+// fall through). Orelse must be either a nested terminating If or a
+// single Return. An empty Orelse is rejected because there is no
+// trailing function-body Return to fall through to.
+func validateFuncBodyTerminatingIf(ifs *ast.If) bool {
+	if ifs.P.Col > 255 || len(ifs.Body) != 1 || len(ifs.Orelse) != 1 {
+		return false
+	}
+	cmp, ok := ifs.Test.(*ast.Compare)
+	if !ok || cmp.P.Col > 255 || len(cmp.Ops) != 1 || len(cmp.Comparators) != 1 {
+		return false
+	}
+	op, _, ok := cmpOpFromAstOp(cmp.Ops[0])
+	if !ok || op == bytecode.IS_OP {
+		return false
+	}
+	if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
+		return false
+	}
+	body, ok := ifs.Body[0].(*ast.Return)
+	if !ok || body.Value == nil || body.P.Col > 255 || !validateFuncBodyReturnValue(body.Value) {
+		return false
+	}
+	if elif, ok := ifs.Orelse[0].(*ast.If); ok {
+		return validateFuncBodyTerminatingIf(elif)
+	}
+	if ret, ok := ifs.Orelse[0].(*ast.Return); ok {
+		return ret.Value != nil && ret.P.Col <= 255 && validateFuncBodyReturnValue(ret.Value)
+	}
+	return false
+}
+
+// emitFuncBodyTerminatingIf lowers a terminating if/elif/else chain.
+// Mirrors emitFuncBodyIf but every branch terminates in a Return, so
+// no merge block is bound after the chain. Returns (bodyEndCol,
+// bodyEndLine) — the (EndCol, Line) of the deepest Return value,
+// which the caller uses for the outer LOAD_CONST/MAKE_FUNCTION/
+// STORE_NAME Loc on the module-level instructions.
+func emitFuncBodyTerminatingIf(u *compileUnit, ifs *ast.If, lines [][]byte) (uint16, int, error) {
+	cmp := ifs.Test.(*ast.Compare)
+	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
+	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	condLoc := bytecode.Loc{
+		Line: uint32(cmp.P.Line), EndLine: uint32(cmp.P.Line),
+		Col: lc, EndCol: re,
+	}
+	block := u.currentBlock()
+	block.Instrs = append(block.Instrs, ir.Instr{
+		Op: op, Arg: uint32(base + 16), Loc: condLoc,
+	})
+	falseLabel := u.Seq.AllocLabel()
+	block.AddJump(bytecode.POP_JUMP_IF_FALSE, falseLabel, condLoc)
+
+	thenBlock := u.Seq.AddBlock()
+	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
+		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
+	})
+
+	bodyRet := ifs.Body[0].(*ast.Return)
+	if _, err := emitFuncBodyReturn(u, bodyRet, lines); err != nil {
+		return 0, 0, err
+	}
+
+	elseBlock := u.Seq.AddBlock()
+	u.Seq.BindLabel(falseLabel, elseBlock)
+
+	if elif, ok := ifs.Orelse[0].(*ast.If); ok {
+		return emitFuncBodyTerminatingIf(u, elif, lines)
+	}
+	elseRet := ifs.Orelse[0].(*ast.Return)
+	endCol, err := emitFuncBodyReturn(u, elseRet, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	return endCol, elseRet.P.Line, nil
 }
 
 // emitFuncBodyIf emits the gated-then If shape inside a function
