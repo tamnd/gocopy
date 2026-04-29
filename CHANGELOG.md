@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.5](changelog/v0.7.5.md) - visitExpr dispatcher + collection / subscript / attribute / call (closes phase A) (2026-04-29)
 - [v0.7.4](changelog/v0.7.4.md) - visit_Compare + visit_BoolOp + visit_IfExp + first optimizer passes (2026-04-29)
 - [v0.7.2](changelog/v0.7.2.md) - visit_Assign + visit_BinOp + visit_UnaryOp + visit_AugAssign + int-fold (2026-04-29)
 - [v0.7.1](changelog/v0.7.1.md) - visit_Constant + visit_Name + visit_Module: empty / no-ops / docstring (2026-04-29)
