@@ -937,9 +937,9 @@ func TestBuildBinOpAssignWithTailFallsThrough(t *testing.T) {
 	}
 }
 
-// TestBuildBinOpAssignUnaryFallsThrough ensures codegen leaves
-// unary expressions to the classifier (`x = -a`).
-func TestBuildBinOpAssignUnaryFallsThrough(t *testing.T) {
+// TestBuildUnaryAssignNeg covers `x = -a`: UNARY_NEGATIVE on a
+// name operand. co_names = [a, x], stacksize = 1.
+func TestBuildUnaryAssignNeg(t *testing.T) {
 	src := []byte("x = -a\n")
 	mod := &ast.Module{Body: []ast.Stmt{
 		&ast.Assign{
@@ -952,12 +952,146 @@ func TestBuildBinOpAssignUnaryFallsThrough(t *testing.T) {
 			},
 		},
 	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(unary -): %v", err)
+	}
+	wantBC := bytecode.UnaryNegInvertBytecode(bytecode.UNARY_NEGATIVE)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.UnaryNegInvertLineTable(1, 4, 5, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "a" || co.Names[1] != "x" {
+		t.Fatalf("names = %v, want [a x]", co.Names)
+	}
+	if co.StackSize < 1 {
+		t.Fatalf("stacksize = %d, want >= 1", co.StackSize)
+	}
+}
+
+// TestBuildUnaryAssignInvert covers `x = ~a`: UNARY_INVERT path
+// (operator dispatch through the same Neg/Invert helper).
+func TestBuildUnaryAssignInvert(t *testing.T) {
+	src := []byte("x = ~a\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 4},
+				Op:      "Invert",
+				Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(unary ~): %v", err)
+	}
+	wantBC := bytecode.UnaryNegInvertBytecode(bytecode.UNARY_INVERT)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildUnaryAssignNot covers `x = not a`: TO_BOOL (with 3 cache
+// words) followed by UNARY_NOT, sharing one Loc so the encoder
+// merges them into a single 5-unit linetable entry.
+func TestBuildUnaryAssignNot(t *testing.T) {
+	src := []byte("x = not a\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 4},
+				Op:      "Not",
+				Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "a"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(unary not): %v", err)
+	}
+	wantBC := bytecode.UnaryNotBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.UnaryNotLineTable(1, 4, 8, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildUnaryAssignNotMultiCharNames covers
+// `result = not operand`: multi-char names in the Not path.
+func TestBuildUnaryAssignNotMultiCharNames(t *testing.T) {
+	src := []byte("result = not operand\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 9},
+				Op:      "Not",
+				Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 13}, Id: "operand"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(unary not multichar): %v", err)
+	}
+	wantLT := bytecode.UnaryNotLineTable(1, 9, 13, 7, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "operand" || co.Names[1] != "result" {
+		t.Fatalf("names = %v, want [operand result]", co.Names)
+	}
+}
+
+// TestBuildUnaryAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops (the v0.0.16 unary helpers have no slot for them).
+func TestBuildUnaryAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = -a\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 4},
+				Op:      "USub",
+				Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
 	_, err := Build(mod, nil, Options{
 		Source: src, Filename: "x.py", Name: "<module>",
 		QualName: "<module>", FirstLineNo: 1,
 	})
 	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Build(unary) = %v, want ErrUnsupported", err)
+		t.Fatalf("Build(unary+tail) = %v, want ErrUnsupported", err)
 	}
 }
 
