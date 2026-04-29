@@ -143,6 +143,24 @@ func emitAssignValue(u *compileUnit, e ast.Expr, line uint32, lineEnd uint16, ch
 			return ErrNotImplemented
 		}
 		return emitUnaryOpValue(u, v, line, lineEnd)
+
+	case *ast.Compare:
+		if chained {
+			return ErrNotImplemented
+		}
+		return emitCompareValue(u, v, line, lineEnd)
+
+	case *ast.BoolOp:
+		if chained {
+			return ErrNotImplemented
+		}
+		return emitBoolOpValue(u, v, line, lineEnd)
+
+	case *ast.IfExp:
+		if chained {
+			return ErrNotImplemented
+		}
+		return emitIfExpValue(u, v, line, lineEnd)
 	}
 	return ErrNotImplemented
 }

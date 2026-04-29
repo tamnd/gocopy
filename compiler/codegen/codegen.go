@@ -9,18 +9,12 @@
 // modMultiAssign, modChainedAssign, modAugAssign, modBinOpAssign,
 // and modUnaryAssign shapes (the v0.6.9-v0.6.13 entries) were
 // promoted to the visitor pipeline as well; their classifier files
-// are gone and Build no longer dispatches them. v0.6.14 adds
-// modCmpAssign: a single
-// `<target> = <left> <cmp> <right>` with all operands as Names and
-// any of the 10 comparison operators (six COMPARE_OP, two IS_OP,
-// two CONTAINS_OP). v0.6.15 adds modBoolOp: a single
-// `<target> = <left> and <right>` or `<target> = <left> or
-// <right>` with both operands as Names. This is the first codegen
-// path that emits a forward jump (POP_JUMP_IF_FALSE for `and`,
-// POP_JUMP_IF_TRUE for `or`). v0.6.16 adds modTernary: a single
-// `<target> = <trueVal> if <cond> else <falseVal>` with all three
-// operands as Names. This is the second jump-bearing codegen path
-// and the first with two return-bearing branches. v0.6.17 adds
+// are gone and Build no longer dispatches them. v0.7.4 promotes
+// modCmpAssign, modBoolOp, and modTernary (the v0.6.14-v0.6.16
+// entries) to the visitor pipeline together with the first two
+// real optimizer passes (inline_small_exit_blocks and
+// resolve_jumps); their classifier files are gone and Build no
+// longer dispatches them. v0.6.17 adds
 // modCollection: a single `<target> = [...]`, `<target> = (...)`,
 // `<target> = {...}` (set), or `<target> = {k: v, ...}` (dict)
 // where every element is a Name on the same source line, plus the
@@ -121,15 +115,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if c, ok := classifyCmpAssignModule(mod, opts.Source); ok {
-		return buildCmpAssignModule(c, opts)
-	}
-	if b, ok := classifyBoolOpAssignModule(mod, opts.Source); ok {
-		return buildBoolOpAssignModule(b, opts)
-	}
-	if t, ok := classifyTernaryAssignModule(mod, opts.Source); ok {
-		return buildTernaryAssignModule(t, opts)
-	}
 	if c, ok := classifyCollectionModule(mod, opts.Source); ok {
 		return buildCollectionModule(c, opts)
 	}
