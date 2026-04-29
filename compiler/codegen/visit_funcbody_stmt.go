@@ -99,7 +99,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		case *ast.If:
-			if !validateFuncBodyIfReturn(st) {
+			if !validateFuncBodyIf(st) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		default:
@@ -153,7 +153,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 				return bytecode.Loc{}, err
 			}
 		case *ast.If:
-			if err := emitFuncBodyIfReturn(child, st, lines); err != nil {
+			if err := emitFuncBodyIf(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
 		}
@@ -229,24 +229,10 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 			return ErrNotImplemented
 		}
 		block.Instrs = append(block.Instrs, ir.Instr{Op: bytecode.LOAD_FAST, Arg: rhsArg, Loc: rhsLoc})
-	case *ast.Constant:
-		val, ok := constantValue(v)
-		if !ok {
-			return ErrNotImplemented
-		}
-		endCol := astExprEndCol(lines, v.P.Line, v)
-		rhsLoc := bytecode.Loc{
-			Line: uint32(v.P.Line), EndLine: uint32(v.P.Line),
-			Col: uint16(v.P.Col), EndCol: uint16(endCol),
-		}
-		emitFuncBodyConstLoad(u, val, rhsLoc)
-	case *ast.BinOp, *ast.Compare, *ast.Call,
-		*ast.Attribute, *ast.Subscript, *ast.Tuple:
-		if _, _, err := visitFuncExpr(u, v, lines); err != nil {
+	default:
+		if _, _, err := visitFuncExpr(u, a.Value, lines); err != nil {
 			return err
 		}
-	default:
-		return ErrNotImplemented
 	}
 	if tgtKind != nameOpFast {
 		return ErrNotImplemented
@@ -302,24 +288,22 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 	return nil
 }
 
-// validateFuncBodyIfReturn reports whether ifs is the simple
-// "early-return" if-statement shape the v0.7.10 visitor accepts:
+// validateFuncBodyIf reports whether ifs is one of the if-statement
+// shapes the v0.7.10 visitor accepts:
 //
 //   - No Orelse (the trailing function-body return supplies the
 //     "else").
-//   - Body is exactly one *ast.Return with a non-nil value.
+//   - Body is exactly one *ast.Return with a non-nil value, OR a
+//     single *ast.Assign with one Name target (validated via
+//     validateFuncBodyAssign).
 //   - Test is a single-op single-comparator *ast.Compare whose op
 //     resolves via cmpOpFromAstOp and is not IS_OP (None checks
 //     emit POP_JUMP_IF_NONE / POP_JUMP_IF_NOT_NONE in a separate
 //     specialised path; not yet ported).
-//   - Both Compare operands and the Return value validate via
-//     validateFuncBodyAssignRHS.
-func validateFuncBodyIfReturn(ifs *ast.If) bool {
+//   - Both Compare operands validate via validateFuncBodyAssignRHS,
+//     as does the body's value when it is a Return.
+func validateFuncBodyIf(ifs *ast.If) bool {
 	if ifs.P.Col > 255 || len(ifs.Orelse) != 0 || len(ifs.Body) != 1 {
-		return false
-	}
-	ret, ok := ifs.Body[0].(*ast.Return)
-	if !ok || ret.Value == nil || ret.P.Col > 255 {
 		return false
 	}
 	cmp, ok := ifs.Test.(*ast.Compare)
@@ -333,12 +317,31 @@ func validateFuncBodyIfReturn(ifs *ast.If) bool {
 	if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
 		return false
 	}
-	return validateFuncBodyAssignRHS(ret.Value)
+	switch body := ifs.Body[0].(type) {
+	case *ast.Return:
+		return body.Value != nil && body.P.Col <= 255 && validateFuncBodyAssignRHS(body.Value)
+	case *ast.Assign:
+		return validateFuncBodyAssign(body)
+	}
+	return false
 }
 
-// emitFuncBodyIfReturn emits the early-return If shape inside a
-// function body. Mirrors compiler/func_body.go::isIfReturn for the
-// COMPARE_OP path:
+// validateFuncBodyAssign reports whether a is a single-Name-target
+// assignment with an RHS the function-body visitor accepts.
+func validateFuncBodyAssign(a *ast.Assign) bool {
+	if len(a.Targets) != 1 {
+		return false
+	}
+	tn, ok := a.Targets[0].(*ast.Name)
+	if !ok || tn.P.Col > 255 || len(tn.Id) < 1 || len(tn.Id) > 15 {
+		return false
+	}
+	return validateFuncBodyAssignRHS(a.Value)
+}
+
+// emitFuncBodyIf emits the gated-then If shape inside a function
+// body. Mirrors compiler/func_body.go::isIfReturn / isIfAssign for
+// the COMPARE_OP path:
 //
 //   - Walk Compare.Left and Compare.Comparators[0] via
 //     visitFuncExpr (which produces LFLBLFLB for two-Name pairs).
@@ -346,14 +349,14 @@ func validateFuncBodyIfReturn(ifs *ast.If) bool {
 //     at Loc(condStart, condEnd).
 //   - Emit POP_JUMP_IF_FALSE → afterThenLabel at the same Loc.
 //   - AddBlock for the then-branch. Emit NOT_TAKEN at condLoc, then
-//     the body Return via emitFuncBodyReturn.
+//     the body Return / Assign.
 //   - AddBlock + BindLabel(afterThenLabel) so the next body
 //     statement (or trailing Return) emits into the kept-merge
 //     block.
 //
 // SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_if +
 // the conditional-context COMPARE_OP specialisation in codegen_compare.
-func emitFuncBodyIfReturn(u *compileUnit, ifs *ast.If, lines [][]byte) error {
+func emitFuncBodyIf(u *compileUnit, ifs *ast.If, lines [][]byte) error {
 	cmp := ifs.Test.(*ast.Compare)
 	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
 	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
@@ -379,35 +382,22 @@ func emitFuncBodyIfReturn(u *compileUnit, ifs *ast.If, lines [][]byte) error {
 	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
 		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
 	})
-	ret := ifs.Body[0].(*ast.Return)
-	if _, err := emitFuncBodyReturn(u, ret, lines); err != nil {
-		return err
+	switch body := ifs.Body[0].(type) {
+	case *ast.Return:
+		if _, err := emitFuncBodyReturn(u, body, lines); err != nil {
+			return err
+		}
+	case *ast.Assign:
+		if err := emitFuncBodyAssign(u, body, lines); err != nil {
+			return err
+		}
+	default:
+		return ErrNotImplemented
 	}
 
 	afterBlock := u.Seq.AddBlock()
 	u.Seq.BindLabel(afterThenLabel, afterBlock)
 	return nil
-}
-
-// emitFuncBodyConstLoad emits a constant load inside a function
-// body. Unlike emitConstLoad (used at module scope), function-scope
-// constant emission does not maintain a phantom co_consts[0] slot:
-// the function's const pool starts empty, and the first emit
-// occupies index 0 directly. LOAD_SMALL_INT for int 0..255 does not
-// add to co_consts (CPython 3.14 specializes that opcode to encode
-// the literal in the oparg).
-func emitFuncBodyConstLoad(u *compileUnit, v any, loc bytecode.Loc) {
-	block := u.currentBlock()
-	if iv, ok := v.(int64); ok && iv >= 0 && iv <= 255 {
-		block.Instrs = append(block.Instrs, ir.Instr{
-			Op: bytecode.LOAD_SMALL_INT, Arg: uint32(iv), Loc: loc,
-		})
-		return
-	}
-	idx := u.addConst(v)
-	block.Instrs = append(block.Instrs, ir.Instr{
-		Op: bytecode.LOAD_CONST, Arg: idx, Loc: loc,
-	})
 }
 
 // emitFuncBodyReturn emits the IR for `return <expr>` inside a
