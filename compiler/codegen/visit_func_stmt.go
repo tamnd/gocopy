@@ -47,6 +47,11 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 // LOAD_FAST_BORROW / LOAD_DEREF / LOAD_GLOBAL / LOAD_NAME. The
 // LOAD_FAST_BORROW emit is the v0.7.10 byte-parity precomputation;
 // see scope_ops.go::emitNameLoad for the lifecycle note.
+//
+// Adjacent LOAD_FAST_BORROW pairs are fused into LFLBLFLB by the
+// flowgraph.InsertSuperinstructions pass run inside optimize.Run
+// (see compiler/flowgraph/insert_superinstructions.go); the visitor
+// no longer pre-fuses at emit time.
 func visitFuncNameExpr(u *compileUnit, n *ast.Name) (uint16, uint16, error) {
 	if len(n.Id) < 1 || len(n.Id) > 15 || n.P.Col > 255 {
 		return 0, 0, ErrNotImplemented
@@ -58,7 +63,6 @@ func visitFuncNameExpr(u *compileUnit, n *ast.Name) (uint16, uint16, error) {
 		Col: col, EndCol: end,
 	}
 	u.emitNameLoad(n.Id, loc)
-	fuseLflblflbTail(u)
 	return col, end, nil
 }
 
@@ -382,8 +386,8 @@ func visitFuncTupleExpr(u *compileUnit, t *ast.Tuple, lines [][]byte) (uint16, u
 // or builtin Name that means LOAD_GLOBAL with bit 0 of the oparg
 // set (the "push NULL before call" hint that replaces the explicit
 // PUSH_NULL the module-scope visitor emits). Args are recursed in
-// order; fuseLflblflbTail collapses the trailing pair if both are
-// LOAD_FAST_BORROW with slot ≤ 15.
+// order; LFLBLFLB pair fusion happens later in
+// flowgraph.InsertSuperinstructions during optimize.Run.
 //
 // Keyword args, *args, and **kwargs land in later steps. Func
 // shapes other than *ast.Name (e.g. Attribute method calls) also
@@ -455,36 +459,3 @@ func visitFuncCallExpr(u *compileUnit, c *ast.Call, lines [][]byte) (uint16, uin
 	return funcCol, uint16(closeEnd), nil
 }
 
-// fuseLflblflbTail scans the current block's last few instructions
-// and fuses two consecutive LOAD_FAST_BORROW with slots ≤ 15 into a
-// single LOAD_FAST_BORROW_LOAD_FAST_BORROW. The fused instruction's
-// Loc and Arg are taken from the first LOAD_FAST_BORROW's Loc and
-// the LflblflbArg(slotL, slotR) encoding respectively.
-//
-// This is v0.7.10 byte-parity precomputation for the
-// insert_superinstructions pass that lands at v0.7.16. CPython's
-// real pass runs over the entire CFG at the end of compilation; the
-// visitor's pre-pass runs after each expression / statement so it
-// catches the same back-to-back-load shapes the v0.6 classifier
-// emitted by hand.
-func fuseLflblflbTail(u *compileUnit) {
-	block := u.currentBlock()
-	n := len(block.Instrs)
-	if n < 2 {
-		return
-	}
-	a := block.Instrs[n-2]
-	b := block.Instrs[n-1]
-	if a.Op != bytecode.LOAD_FAST_BORROW || b.Op != bytecode.LOAD_FAST_BORROW {
-		return
-	}
-	if a.Arg >= 16 || b.Arg >= 16 {
-		return
-	}
-	fused := ir.Instr{
-		Op:  bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW,
-		Arg: uint32(bytecode.LflblflbArg(byte(a.Arg), byte(b.Arg))),
-		Loc: a.Loc,
-	}
-	block.Instrs = append(block.Instrs[:n-2], fused)
-}

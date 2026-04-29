@@ -54,6 +54,7 @@ const (
 	LOAD_FAST                         Opcode = 84
 	LOAD_FAST_BORROW                  Opcode = 86
 	LOAD_FAST_BORROW_LOAD_FAST_BORROW Opcode = 87
+	LOAD_FAST_LOAD_FAST               Opcode = 89
 	LOAD_GLOBAL                       Opcode = 92
 	LOAD_NAME                         Opcode = 93
 	MAKE_CELL         Opcode = 97
@@ -66,6 +67,8 @@ const (
 	STORE_NAME             Opcode = 116
 	STORE_ATTR             Opcode = 110
 	STORE_FAST             Opcode = 112
+	STORE_FAST_LOAD_FAST   Opcode = 113
+	STORE_FAST_STORE_FAST  Opcode = 114
 	STORE_DEREF            Opcode = 111
 	STORE_GLOBAL           Opcode = 115
 	RESUME            Opcode = 128
