@@ -33,13 +33,20 @@ fix_mtime() {
 
 fail=0
 total=0
-for src in tests/fixtures/*.py; do
+
+# run_oracle <fixture> <pycache_dir>
+#   Touches the fixture to a fixed mtime, runs python3.14 -m py_compile
+#   to populate <pycache_dir>/__pycache__/, runs gocopy on the same
+#   source, byte-compares the two .pyc outputs.
+run_oracle() {
+    src="$1"
+    pycache_dir="$2"
     total=$((total + 1))
     fix_mtime "$src"
 
-    rm -rf tests/fixtures/__pycache__
+    rm -rf "$pycache_dir/__pycache__"
     python3.14 -m py_compile "$src"
-    expected="tests/fixtures/__pycache__/$(basename "$src" .py).cpython-314.pyc"
+    expected="$pycache_dir/__pycache__/$(basename "$src" .py).cpython-314.pyc"
 
     actual="$(mktemp -t gocopy.XXXXXX)"
     bin/gocopy compile "$src" -o "$actual"
@@ -54,9 +61,20 @@ for src in tests/fixtures/*.py; do
         xxd "$actual" | sed 's/^/    /'
         fail=$((fail + 1))
     fi
+    rm -f "$actual"
+}
+
+# Top-level fixtures.
+for src in tests/fixtures/*.py; do
+    run_oracle "$src" "tests/fixtures"
 done
 
-rm -rf tests/fixtures/__pycache__
+# v0.7.10.x funcbody fixtures (flat second pass; spec 1559).
+for src in tests/fixtures/funcbody/*.py; do
+    run_oracle "$src" "tests/fixtures/funcbody"
+done
+
+rm -rf tests/fixtures/__pycache__ tests/fixtures/funcbody/__pycache__
 
 echo "---"
 echo "$((total - fail))/$total fixtures byte-identical"
