@@ -3,14 +3,26 @@
 // passes over an *ir.InstrSeq that canonicalize the visitor's output
 // into the byte form CPython's py_compile actually emits.
 //
-// At v0.7.4 Run runs two passes:
+// At v0.7.6 Run runs three passes:
 //
+//   - eliminateEmptyBlocks drops empty labelled blocks by
+//     retargeting jumps to the block's first non-empty successor
+//     (or by transferring the empty's label when the successor has
+//     no label). Narrow specialisation of CPython's
+//     eliminate_empty_basic_blocks. The v0.7.6 visit_If shapes
+//     emit no empty bridging blocks (per-branch implicit-return
+//     emit terminates every branch directly), so the pass is a
+//     no-op here; it lands now so future shapes that DO produce
+//     empty bridges have it ready.
 //   - inlineSmallExitBlocks duplicates a small RETURN_VALUE-tail
 //     block into every predecessor reaching it via fall-through or
-//     unconditional JUMP_FORWARD, then drops the merge block. A
-//     narrow specialisation of CPython's
-//     inline_small_or_no_lineno_blocks; the visitor's IfExp shape
-//     needs it.
+//     unconditional JUMP_FORWARD, then removes the merge block.
+//     Verbatim clone of the v0.7.4 / v0.7.5 implementation —
+//     visit_If's per-branch tail emit means the inliner sees no
+//     candidate merge blocks for v0.7.6 fixtures, so the pass is
+//     a no-op for those; v0.7.4 BoolOp / IfExp shapes still
+//     exercise it. Mirrors CPython's
+//     inline_small_or_no_lineno_blocks.
 //   - resolveJumps rewrites every jump instruction's Arg from a
 //     LabelID into the byte-distance form ir.Encode consumes, then
 //     linearises the multi-block IR into a single flat block.
@@ -43,6 +55,7 @@ func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 	if seq == nil {
 		return nil
 	}
+	eliminateEmptyBlocks(seq)
 	inlineSmallExitBlocks(seq)
 	resolveJumps(seq)
 	return seq

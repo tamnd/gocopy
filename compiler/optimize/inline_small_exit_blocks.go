@@ -11,7 +11,7 @@ import (
 // fall-through or unconditional JUMP_FORWARD, then removes the merge
 // block from seq.Blocks (and drops any consumed JUMP_FORWARD).
 //
-// At v0.7.4 this is a narrow specialisation of CPython 3.14
+// At v0.7.6 this is a narrow specialisation of CPython 3.14
 // Python/flowgraph.c::inline_small_or_no_lineno_blocks for the
 // shapes the visitor emits (the BoolOp / IfExp merge tail of
 // STORE_NAME + LOAD_CONST None + RETURN_VALUE).
@@ -26,7 +26,7 @@ import (
 //     BoolOp shape multi-block until resolveJumps linearises it).
 //
 // The pass is idempotent: a second run after the fixed point is a
-// no-op. v0.7.4 calls it once; v0.7.13's full optimize_cfg loop
+// no-op. v0.7.6 calls it once; v0.7.13's full optimize_cfg loop
 // runs it together with the rest of the CFG passes.
 //
 // SOURCE: CPython 3.14 Python/flowgraph.c::inline_small_or_no_lineno_blocks.
