@@ -50,14 +50,76 @@ func TestBuildEmptyModule(t *testing.T) {
 	}
 }
 
-// TestBuildUnsupportedReturnsErrUnsupported guarantees the driver's
-// fallback contract: any non-empty module returns ErrUnsupported so
-// the classifier path takes over.
-func TestBuildUnsupportedReturnsErrUnsupported(t *testing.T) {
-	mod := &ast.Module{Body: []ast.Stmt{&ast.Pass{}}}
-	_, err := Build(mod, nil, Options{Name: "<module>", QualName: "<module>"})
+// TestBuildSinglePass covers the simplest non-empty no-op shape.
+func TestBuildSinglePass(t *testing.T) {
+	src := []byte("pass\n")
+	mod := &ast.Module{Body: []ast.Stmt{&ast.Pass{P: ast.Pos{Line: 1}}}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(single pass): %v", err)
+	}
+	wantBC := bytecode.NoOpBytecode(1)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.LineTableNoOps([]bytecode.NoOpStmt{{Line: 1, EndCol: 4}})
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if co.StackSize != 1 {
+		t.Fatalf("stacksize = %d, want 1", co.StackSize)
+	}
+}
+
+// TestBuildThreePass covers the multi-stmt no-op shape: each
+// non-last statement contributes one NOP, the last contributes the
+// LOAD_CONST + RETURN_VALUE pair.
+func TestBuildThreePass(t *testing.T) {
+	src := []byte("pass\npass\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Pass{P: ast.Pos{Line: 1}},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+		&ast.Pass{P: ast.Pos{Line: 3}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(three pass): %v", err)
+	}
+	wantBC := bytecode.NoOpBytecode(3)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.LineTableNoOps([]bytecode.NoOpStmt{
+		{Line: 1, EndCol: 4},
+		{Line: 2, EndCol: 4},
+		{Line: 3, EndCol: 4},
+	})
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildAssignReturnsErrUnsupported guarantees the driver's
+// fallback contract: shapes codegen does not yet own surface as
+// ErrUnsupported so the classifier path takes over.
+func TestBuildAssignReturnsErrUnsupported(t *testing.T) {
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: []byte("x = 1\n"), Name: "<module>", QualName: "<module>",
+	})
 	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Build(non-empty) error = %v, want ErrUnsupported", err)
+		t.Fatalf("Build(assign) error = %v, want ErrUnsupported", err)
 	}
 }
 
