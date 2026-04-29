@@ -93,19 +93,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		if !ok || tn.P.Col > 255 || len(tn.Id) < 1 || len(tn.Id) > 15 {
 			return bytecode.Loc{}, ErrNotImplemented
 		}
-		switch v := asgn.Value.(type) {
-		case *ast.Name:
-			if v.P.Col > 255 || len(v.Id) < 1 || len(v.Id) > 15 {
-				return bytecode.Loc{}, ErrNotImplemented
-			}
-		case *ast.Constant:
-			if _, ok := constantValue(v); !ok {
-				return bytecode.Loc{}, ErrNotImplemented
-			}
-			if v.P.Col > 255 {
-				return bytecode.Loc{}, ErrNotImplemented
-			}
-		default:
+		if !validateFuncBodyAssignRHS(asgn.Value) {
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 	}
@@ -233,6 +221,10 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 			Col: uint16(v.P.Col), EndCol: uint16(endCol),
 		}
 		emitFuncBodyConstLoad(u, val, rhsLoc)
+	case *ast.BinOp:
+		if _, _, err := visitFuncExpr(u, v, lines); err != nil {
+			return err
+		}
 	default:
 		return ErrNotImplemented
 	}
@@ -288,6 +280,40 @@ func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, retName *ast.Name) erro
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc},
 	)
 	return nil
+}
+
+// validateFuncBodyAssignRHS reports whether e is an expression
+// shape the v0.7.10 function-body visitor accepts on the RHS of an
+// Assign. Accepted shapes:
+//
+//   - *ast.Name with 1..15-byte id and col ≤ 255.
+//   - *ast.Constant whose value resolves via constantValue and col
+//     ≤ 255.
+//   - *ast.BinOp with a known oparg whose Left and Right operands
+//     each recursively validate.
+//
+// Wider shapes return false and the caller falls through to the
+// next FunctionDef arm in visit_stmt.go.
+func validateFuncBodyAssignRHS(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.Name:
+		return v.P.Col <= 255 && len(v.Id) >= 1 && len(v.Id) <= 15
+	case *ast.Constant:
+		if v.P.Col > 255 {
+			return false
+		}
+		_, ok := constantValue(v)
+		return ok
+	case *ast.BinOp:
+		if v.P.Col > 255 {
+			return false
+		}
+		if _, ok := binOpargFromOp(v.Op); !ok {
+			return false
+		}
+		return validateFuncBodyAssignRHS(v.Left) && validateFuncBodyAssignRHS(v.Right)
+	}
+	return false
 }
 
 // findFunctionChildScope returns the symtable.Scope corresponding
