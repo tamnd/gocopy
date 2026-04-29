@@ -20,8 +20,12 @@
 // operand as a Name. v0.6.14 adds modCmpAssign: a single
 // `<target> = <left> <cmp> <right>` with all operands as Names and
 // any of the 10 comparison operators (six COMPARE_OP, two IS_OP,
-// two CONTAINS_OP). Anything else returns ErrUnsupported and the
-// caller falls back to the classifier.
+// two CONTAINS_OP). v0.6.15 adds modBoolOp: a single
+// `<target> = <left> and <right>` or `<target> = <left> or
+// <right>` with both operands as Names. This is the first codegen
+// path that emits a forward jump (POP_JUMP_IF_FALSE for `and`,
+// POP_JUMP_IF_TRUE for `or`). Anything else returns ErrUnsupported
+// and the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -88,6 +92,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if c, ok := classifyCmpAssignModule(mod, opts.Source); ok {
 		return buildCmpAssignModule(c, opts)
+	}
+	if b, ok := classifyBoolOpAssignModule(mod, opts.Source); ok {
+		return buildBoolOpAssignModule(b, opts)
 	}
 	return nil, ErrUnsupported
 }

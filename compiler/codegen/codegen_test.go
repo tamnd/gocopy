@@ -1352,6 +1352,151 @@ func TestBuildCmpAssignWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildBoolOpAssignAnd covers `x = a and b`: POP_JUMP_IF_FALSE
+// short-circuit, names = [a, b, x], stacksize = 2.
+func TestBuildBoolOpAssignAnd(t *testing.T) {
+	src := []byte("x = a and b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BoolOp{
+				P:  ast.Pos{Line: 1, Col: 4},
+				Op: "And",
+				Values: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 10}, Id: "b"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(bool and): %v", err)
+	}
+	wantBC := bytecode.BoolAndBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.BoolAndOrLineTable(1, 4, 1, 10, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildBoolOpAssignOr covers operator dispatch via the IsOr
+// flag: `x = a or b` produces POP_JUMP_IF_TRUE in place of
+// POP_JUMP_IF_FALSE.
+func TestBuildBoolOpAssignOr(t *testing.T) {
+	src := []byte("x = a or b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BoolOp{
+				P:  ast.Pos{Line: 1, Col: 4},
+				Op: "Or",
+				Values: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(bool or): %v", err)
+	}
+	wantBC := bytecode.BoolOrBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.BoolAndOrLineTable(1, 4, 1, 9, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildBoolOpAssignMultiCharNames covers `result = left and right`:
+// names longer than 1 char must still SHORT-encode through the run
+// merge / split-at-8 boundary.
+func TestBuildBoolOpAssignMultiCharNames(t *testing.T) {
+	src := []byte("result = left and right\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.BoolOp{
+				P:  ast.Pos{Line: 1, Col: 9},
+				Op: "And",
+				Values: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "left"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 18}, Id: "right"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(bool multichar): %v", err)
+	}
+	wantLT := bytecode.BoolAndOrLineTable(1, 9, 4, 18, 5, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "left" || co.Names[1] != "right" || co.Names[2] != "result" {
+		t.Fatalf("names = %v, want [left right result]", co.Names)
+	}
+}
+
+// TestBuildBoolOpAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the v0.0.x BoolAndBytecode helper has no slot
+// for them, so multi-statement modules must fall through to the
+// classifier path.
+func TestBuildBoolOpAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a and b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BoolOp{
+				P:  ast.Pos{Line: 1, Col: 4},
+				Op: "And",
+				Values: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 10}, Id: "b"},
+				},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(bool+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
