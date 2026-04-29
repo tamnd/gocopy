@@ -42,9 +42,7 @@ import (
 // Python/codegen.c::codegen_visit_stmt_function_def +
 // Python/compile.c::compiler_enter_scope/compiler_exit_scope.
 func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast bool) (bytecode.Loc, error) {
-	if !isLast {
-		return bytecode.Loc{}, ErrNotImplemented
-	}
+	_ = isLast
 	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
