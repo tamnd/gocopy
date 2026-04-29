@@ -82,6 +82,14 @@
 // the inner function CodeObject is hand-built mirroring the
 // classifier's `compileFuncDef` byte-for-byte rather than routed
 // through assemble.Assemble.
+// v0.6.26 adds modClosureDef: a single top-level
+// `def f(x): def g(): return x; return g` definition where f, x, and
+// g are 1..15-char identifiers and the inner function captures x as
+// a free variable. First codegen path that emits three nested code
+// objects (module → outer → inner) and the first to exercise the
+// cell + free closure-variable machinery (LocalsKindArgCell on the
+// outer arg slot, LocalsKindFree on the inner). Hand-built mirroring
+// the classifier's `compileClosure` byte-for-byte.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -189,6 +197,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if f, ok := classifyFuncDefModule(mod, opts.Source); ok {
 		return buildFuncDefModule(f, opts)
+	}
+	if c, ok := classifyClosureDefModule(mod, opts.Source); ok {
+		return buildClosureDefModule(c, opts)
 	}
 	return nil, ErrUnsupported
 }

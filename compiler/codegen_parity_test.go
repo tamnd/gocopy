@@ -241,6 +241,12 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			t.Fatalf("classifier compileFuncDef: %v", err)
 		}
 		return co
+	case modClosureDef:
+		co, err := compileClosure(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileClosure: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil

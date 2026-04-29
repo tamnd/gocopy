@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.26](changelog/v0.6.26.md) - codegen module-level: closuredef (band C) (2026-04-29)
 - [v0.6.25](changelog/v0.6.25.md) - codegen module-level: funcdef (band C start) (2026-04-29)
 - [v0.6.24](changelog/v0.6.24.md) - codegen module-level: for loop (closes band B) (2026-04-29)
 - [v0.6.23](changelog/v0.6.23.md) - codegen module-level: while loop (2026-04-29)
