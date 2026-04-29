@@ -134,7 +134,8 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			return bytecode.Loc{}, err
 		}
 	}
-	if err := emitFuncBodyReturn(child, ret, lines); err != nil {
+	bodyEndCol, err := emitFuncBodyReturn(child, ret, lines)
+	if err != nil {
 		return bytecode.Loc{}, err
 	}
 	if len(child.Consts) == 0 {
@@ -142,7 +143,6 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	}
 
 	bodyEndLine := ret.P.Line
-	bodyEndCol := uint16(astExprEndCol(lines, ret.P.Line, ret.Value))
 
 	funcCode, err := u.popChildUnit(child, assemble.Options{
 		ArgCount:        int32(len(args.Args)),
@@ -216,7 +216,8 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 			Col: uint16(v.P.Col), EndCol: uint16(endCol),
 		}
 		emitFuncBodyConstLoad(u, val, rhsLoc)
-	case *ast.BinOp, *ast.Compare, *ast.Call:
+	case *ast.BinOp, *ast.Compare, *ast.Call,
+		*ast.Attribute, *ast.Subscript, *ast.Tuple:
 		if _, _, err := visitFuncExpr(u, v, lines); err != nil {
 			return err
 		}
@@ -263,24 +264,24 @@ func emitFuncBodyConstLoad(u *compileUnit, v any, loc bytecode.Loc) {
 // 3.14 attributes RETURN_VALUE to the constant's span instead of
 // the return-keyword span — matching that here keeps the linetable
 // byte-identical.
-func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) error {
-	if _, _, err := visitFuncExpr(u, ret.Value, lines); err != nil {
-		return err
+func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) (uint16, error) {
+	_, valEnd, err := visitFuncExpr(u, ret.Value, lines)
+	if err != nil {
+		return 0, err
 	}
-	endCol := astExprEndCol(lines, ret.P.Line, ret.Value)
 	startCol := uint16(ret.P.Col)
 	if c, ok := ret.Value.(*ast.Constant); ok {
 		startCol = uint16(c.P.Col)
 	}
 	retLoc := bytecode.Loc{
 		Line: uint32(ret.P.Line), EndLine: uint32(ret.P.Line),
-		Col: startCol, EndCol: uint16(endCol),
+		Col: startCol, EndCol: valEnd,
 	}
 	block := u.currentBlock()
 	block.Instrs = append(block.Instrs,
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc},
 	)
-	return nil
+	return valEnd, nil
 }
 
 // validateFuncBodyAssignRHS reports whether e is an expression
@@ -331,15 +332,46 @@ func validateFuncBodyAssignRHS(e ast.Expr) bool {
 		if len(v.Keywords) != 0 {
 			return false
 		}
-		fn, ok := v.Func.(*ast.Name)
-		if !ok {
-			return false
-		}
-		if len(fn.Id) < 1 || len(fn.Id) > 15 || fn.P.Col > 255 {
+		switch fn := v.Func.(type) {
+		case *ast.Name:
+			if len(fn.Id) < 1 || len(fn.Id) > 15 || fn.P.Col > 255 {
+				return false
+			}
+		case *ast.Attribute:
+			if len(fn.Attr) < 1 || len(fn.Attr) > 15 || fn.P.Col > 255 {
+				return false
+			}
+			if !validateFuncBodyAssignRHS(fn.Value) {
+				return false
+			}
+		default:
 			return false
 		}
 		for _, a := range v.Args {
 			if !validateFuncBodyAssignRHS(a) {
+				return false
+			}
+		}
+		return true
+	case *ast.Attribute:
+		if v.P.Col > 255 {
+			return false
+		}
+		if len(v.Attr) < 1 || len(v.Attr) > 15 {
+			return false
+		}
+		return validateFuncBodyAssignRHS(v.Value)
+	case *ast.Subscript:
+		if v.P.Col > 255 {
+			return false
+		}
+		return validateFuncBodyAssignRHS(v.Value) && validateFuncBodyAssignRHS(v.Slice)
+	case *ast.Tuple:
+		if v.P.Col > 255 || len(v.Elts) == 0 {
+			return false
+		}
+		for _, e := range v.Elts {
+			if !validateFuncBodyAssignRHS(e) {
 				return false
 			}
 		}

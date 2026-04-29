@@ -30,6 +30,12 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 		return visitFuncCompareExpr(u, v, lines)
 	case *ast.Call:
 		return visitFuncCallExpr(u, v, lines)
+	case *ast.Attribute:
+		return visitFuncAttributeExpr(u, v, lines)
+	case *ast.Subscript:
+		return visitFuncSubscriptExpr(u, v, lines)
+	case *ast.Tuple:
+		return visitFuncTupleExpr(u, v, lines)
 	}
 	return 0, 0, ErrNotImplemented
 }
@@ -50,6 +56,7 @@ func visitFuncNameExpr(u *compileUnit, n *ast.Name) (uint16, uint16, error) {
 		Col: col, EndCol: end,
 	}
 	u.emitNameLoad(n.Id, loc)
+	fuseLflblflbTail(u)
 	return col, end, nil
 }
 
@@ -108,8 +115,20 @@ func emitFuncBodyConstLoadFirstInt(u *compileUnit, v any, loc bytecode.Loc) {
 
 // visitFuncBinOpExpr emits a BinOp in recursive function-scope
 // context. Both operands are recursed via visitFuncExpr; BINARY_OP's
-// Loc spans (left.startCol, right.endCol). Mirrors
-// CPython 3.14 Python/codegen.c::codegen_visit_expr_binop.
+// Loc spans (left.startCol, right.endCol).
+//
+// Paren extension (mirrors compiler/func_body.go's BinOp arm):
+//
+//   - When the left operand is itself a BinOp wrapped in '(...)',
+//     extend lsc back over the '(' provided the matching ')' closes
+//     at or before the right operand's start column.
+//   - When the right operand is itself a BinOp wrapped in '(...)',
+//     extend rec past whitespace and a trailing ')' via
+//     scanWhitespaceClose. The check `scanBackOpen(rsc) < rsc`
+//     confirms the right child's leftmost token is preceded by '('.
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_expr_binop +
+// the surrounding tokenizer's column tracking.
 func visitFuncBinOpExpr(u *compileUnit, b *ast.BinOp, lines [][]byte) (uint16, uint16, error) {
 	oparg, ok := binOpargFromOp(b.Op)
 	if !ok {
@@ -119,11 +138,24 @@ func visitFuncBinOpExpr(u *compileUnit, b *ast.BinOp, lines [][]byte) (uint16, u
 	if err != nil {
 		return 0, 0, err
 	}
-	_, re, err := visitFuncExpr(u, b.Right, lines)
+	if _, isBinOp := b.Left.(*ast.BinOp); isBinOp {
+		candidate := scanBackOpen(lines, b.P.Line, byte(lc))
+		if candidate < byte(lc) {
+			closeCol := scanMatchingClose(lines, b.P.Line, candidate)
+			if closeCol <= astExprCol(b.Right) {
+				lc = uint16(candidate)
+			}
+		}
+	}
+	rsc, re, err := visitFuncExpr(u, b.Right, lines)
 	if err != nil {
 		return 0, 0, err
 	}
-	fuseLflblflbTail(u)
+	if _, isBinOp := b.Right.(*ast.BinOp); isBinOp {
+		if scanBackOpen(lines, b.P.Line, byte(rsc)) < byte(rsc) {
+			re = uint16(scanWhitespaceClose(lines, b.P.Line, byte(re)))
+		}
+	}
 	loc := bytecode.Loc{
 		Line: uint32(b.P.Line), EndLine: uint32(b.P.Line),
 		Col: lc, EndCol: re,
@@ -161,7 +193,6 @@ func visitFuncCompareExpr(u *compileUnit, c *ast.Compare, lines [][]byte) (uint1
 	if err != nil {
 		return 0, 0, err
 	}
-	fuseLflblflbTail(u)
 	loc := bytecode.Loc{
 		Line: uint32(c.P.Line), EndLine: uint32(c.P.Line),
 		Col: lc, EndCol: re,
@@ -170,6 +201,98 @@ func visitFuncCompareExpr(u *compileUnit, c *ast.Compare, lines [][]byte) (uint1
 		Op: op, Arg: uint32(base), Loc: loc,
 	})
 	return lc, re, nil
+}
+
+// visitFuncAttributeExpr emits IR for `value.attr` in value
+// context (LOAD_ATTR with the method bit clear). For method
+// callees (`obj.method()`) the Call dispatcher in
+// visitFuncCallExpr emits its own LOAD_ATTR with the method bit
+// set — this helper is the value-context (load-only) path.
+func visitFuncAttributeExpr(u *compileUnit, a *ast.Attribute, lines [][]byte) (uint16, uint16, error) {
+	if len(a.Attr) < 1 || len(a.Attr) > 15 || a.P.Col > 255 {
+		return 0, 0, ErrNotImplemented
+	}
+	startCol, _, err := visitFuncExpr(u, a.Value, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	endCol := uint16(astExprEndCol(lines, a.P.Line, a))
+	loc := bytecode.Loc{
+		Line: uint32(a.P.Line), EndLine: uint32(a.P.Line),
+		Col: startCol, EndCol: endCol,
+	}
+	nameIdx := u.addName(a.Attr)
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.LOAD_ATTR, Arg: uint32(bytecode.LoadAttrArg(byte(nameIdx), false)), Loc: loc,
+	})
+	return startCol, endCol, nil
+}
+
+// visitFuncSubscriptExpr emits IR for `value[slice]` — pushes
+// value and slice, then BINARY_OP NbGetItem (the CPython 3.14
+// subscript opcode is BINARY_OP with the NB_GETITEM oparg).
+func visitFuncSubscriptExpr(u *compileUnit, s *ast.Subscript, lines [][]byte) (uint16, uint16, error) {
+	if s.P.Col > 255 {
+		return 0, 0, ErrNotImplemented
+	}
+	startCol, _, err := visitFuncExpr(u, s.Value, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	_, _, err = visitFuncExpr(u, s.Slice, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	endCol := uint16(astExprEndCol(lines, s.P.Line, s))
+	loc := bytecode.Loc{
+		Line: uint32(s.P.Line), EndLine: uint32(s.P.Line),
+		Col: startCol, EndCol: endCol,
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.BINARY_OP, Arg: bytecode.NbGetItem, Loc: loc,
+	})
+	return startCol, endCol, nil
+}
+
+// visitFuncTupleExpr emits IR for an unparenthesized or
+// parenthesized tuple literal in value context — recurse each
+// element, then BUILD_TUPLE n.
+//
+// Paren extension (mirrors compiler/func_body.go's Tuple arm):
+//
+//   - For parenthesised tuples gopapy's parser sets t.P.Col to the
+//     '(' column, which is one column before the first element. If
+//     so, extend startCol back to t.P.Col.
+//   - Always run scanWhitespaceClose past the last element to
+//     consume a trailing ')'. For unparenthesised tuples this is a
+//     no-op (the byte after the last element is not ')').
+func visitFuncTupleExpr(u *compileUnit, t *ast.Tuple, lines [][]byte) (uint16, uint16, error) {
+	if t.P.Col > 255 || len(t.Elts) == 0 {
+		return 0, 0, ErrNotImplemented
+	}
+	var startCol, lastEnd uint16
+	for i, e := range t.Elts {
+		sc, ec, err := visitFuncExpr(u, e, lines)
+		if err != nil {
+			return 0, 0, err
+		}
+		if i == 0 {
+			startCol = sc
+		}
+		lastEnd = ec
+	}
+	if uint16(t.P.Col) < startCol {
+		startCol = uint16(t.P.Col)
+	}
+	endCol := uint16(scanWhitespaceClose(lines, t.P.Line, byte(lastEnd)))
+	loc := bytecode.Loc{
+		Line: uint32(t.P.Line), EndLine: uint32(t.P.Line),
+		Col: startCol, EndCol: endCol,
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.BUILD_TUPLE, Arg: uint32(len(t.Elts)), Loc: loc,
+	})
+	return startCol, endCol, nil
 }
 
 // visitFuncCallExpr emits a positional-only Call in function-body
@@ -190,20 +313,42 @@ func visitFuncCallExpr(u *compileUnit, c *ast.Call, lines [][]byte) (uint16, uin
 	if len(c.Keywords) != 0 {
 		return 0, 0, ErrNotImplemented
 	}
-	fn, ok := c.Func.(*ast.Name)
-	if !ok {
+	var funcCol, funcEnd uint16
+	switch fn := c.Func.(type) {
+	case *ast.Name:
+		if len(fn.Id) < 1 || len(fn.Id) > 15 || fn.P.Col > 255 {
+			return 0, 0, ErrNotImplemented
+		}
+		funcCol = uint16(fn.P.Col)
+		funcEnd = funcCol + uint16(len(fn.Id))
+		funcLoc := bytecode.Loc{
+			Line: uint32(fn.P.Line), EndLine: uint32(fn.P.Line),
+			Col: funcCol, EndCol: funcEnd,
+		}
+		u.emitNameLoadCall(fn.Id, funcLoc)
+	case *ast.Attribute:
+		if len(fn.Attr) < 1 || len(fn.Attr) > 15 || fn.P.Col > 255 {
+			return 0, 0, ErrNotImplemented
+		}
+		var err error
+		funcCol, _, err = visitFuncExpr(u, fn.Value, lines)
+		if err != nil {
+			return 0, 0, err
+		}
+		funcEnd = uint16(astExprEndCol(lines, fn.P.Line, fn))
+		attrLoc := bytecode.Loc{
+			Line: uint32(fn.P.Line), EndLine: uint32(fn.P.Line),
+			Col: funcCol, EndCol: funcEnd,
+		}
+		nameIdx := u.addName(fn.Attr)
+		u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+			Op:  bytecode.LOAD_ATTR,
+			Arg: uint32(bytecode.LoadAttrArg(byte(nameIdx), true)),
+			Loc: attrLoc,
+		})
+	default:
 		return 0, 0, ErrNotImplemented
 	}
-	if len(fn.Id) < 1 || len(fn.Id) > 15 || fn.P.Col > 255 {
-		return 0, 0, ErrNotImplemented
-	}
-	funcCol := uint16(fn.P.Col)
-	funcEnd := funcCol + uint16(len(fn.Id))
-	funcLoc := bytecode.Loc{
-		Line: uint32(fn.P.Line), EndLine: uint32(fn.P.Line),
-		Col: funcCol, EndCol: funcEnd,
-	}
-	u.emitNameLoadCall(fn.Id, funcLoc)
 
 	scanFrom := funcEnd
 	for _, e := range c.Args {
@@ -212,9 +357,6 @@ func visitFuncCallExpr(u *compileUnit, c *ast.Call, lines [][]byte) (uint16, uin
 			return 0, 0, err
 		}
 		scanFrom = argEnd
-	}
-	if len(c.Args) >= 2 {
-		fuseLflblflbTail(u)
 	}
 
 	closeEnd := scanCallEnd(lines, c.P.Line, byte(scanFrom))
