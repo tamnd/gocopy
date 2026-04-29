@@ -67,6 +67,24 @@
 // nested compileUnit (module → outer → inner) and the first to
 // emit MAKE_CELL, COPY_FREE_VARS, LOAD_DEREF, BUILD_TUPLE,
 // SET_FUNCTION_ATTRIBUTE, and STORE_FAST.
+// v0.7.10 opens the general-function-body surface as
+// visitFuncBodyDef (visit_funcbody_stmt.go) plus its statement
+// and expression dispatchers visitFuncStmt / visitFuncExpr
+// (visit_func_stmt.go) and the scope-driven name-resolution
+// helpers in scope_ops.go. The FunctionDef arm of visitStmt now
+// tries visitFuncBodyDef first, then visitClosureDef, then the
+// v0.7.8 visitFunctionDef. The visitor catches multi-stmt
+// Assign / AugAssign / If / Return / bare-Call bodies over
+// BinOp / UnaryOp / Compare / Call / Attribute / Subscript /
+// Tuple / IfExp / Constant / Name expressions, with elif chains
+// and terminating if-else as the last statement. Visitor parity
+// climbs from 142/246 to 205/246. compiler/func_body.go (the
+// 1,516-LOC v0.6 recursive expression compiler) stays alive for
+// the long tail; its funeral moves to the v0.7.10.x systematic
+// series that lifts the visitor's emit-time LOAD_FAST_BORROW
+// classification and LFLBLFLB super-instruction fusion into
+// real post-emit passes mirroring CPython's optimize_load_fast
+// and insert_superinstructions.
 // Anything reaching codegen.Build now returns ErrUnsupported and
 // the caller falls back to the classifier.
 //

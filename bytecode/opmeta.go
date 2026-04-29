@@ -109,6 +109,8 @@ var OpMetaTable = func() [256]OpMeta {
 	set(LOAD_FAST_BORROW_LOAD_FAST_BORROW, OpMeta{Name: "LOAD_FAST_BORROW_LOAD_FAST_BORROW", HasArg: true, ArgKind: ArgRaw, StackEff: 2})
 	set(STORE_FAST, OpMeta{Name: "STORE_FAST", HasArg: true, ArgKind: ArgLocal, StackEff: -1})
 	set(LOAD_DEREF, OpMeta{Name: "LOAD_DEREF", HasArg: true, ArgKind: ArgFree, StackEff: 1})
+	set(STORE_DEREF, OpMeta{Name: "STORE_DEREF", HasArg: true, ArgKind: ArgFree, StackEff: -1})
+	set(STORE_GLOBAL, OpMeta{Name: "STORE_GLOBAL", HasArg: true, ArgKind: ArgName, StackEff: -1})
 	set(MAKE_CELL, OpMeta{Name: "MAKE_CELL", HasArg: true, ArgKind: ArgLocal, StackEff: 0})
 
 	// Builders. Stack effect = -n + 1 for these, captured as

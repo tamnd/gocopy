@@ -66,6 +66,8 @@ const (
 	STORE_NAME             Opcode = 116
 	STORE_ATTR             Opcode = 110
 	STORE_FAST             Opcode = 112
+	STORE_DEREF            Opcode = 111
+	STORE_GLOBAL           Opcode = 115
 	RESUME            Opcode = 128
 )
 

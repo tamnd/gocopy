@@ -176,14 +176,16 @@ func (s *Scope) Lookup(name string) *Symbol {
 	return s.Symbols[name]
 }
 
-// Resolve walks parent scopes looking for a defining scope (module
-// or function) that has name as a binding. It returns the symbol
-// and its owning scope, or (nil, nil) if no enclosing scope binds
-// the name. Class scopes are skipped during the walk to match
-// CPython's free-variable rules; today no class scopes exist.
+// Resolve walks parent function scopes looking for one that binds
+// name as a Param / Local / Cell. It returns the symbol and its
+// owning scope, or (nil, nil) if no enclosing function binds the
+// name. Module and class scopes are skipped: module-level
+// assignments do not promote nested-function reads to free
+// variables (those resolve as LOAD_GLOBAL), and CPython's
+// free-variable rules treat class scopes as transparent.
 func (s *Scope) Resolve(name string) (*Symbol, *Scope) {
 	for cur := s.Parent; cur != nil; cur = cur.Parent {
-		if cur.Kind == ScopeClass {
+		if cur.Kind != ScopeFunction {
 			continue
 		}
 		if sym, ok := cur.Symbols[name]; ok && sym.Flags.HasAny(SymParam|SymLocal|SymCell) {

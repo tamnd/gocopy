@@ -28,11 +28,14 @@ func visitStmt(u *compileUnit, stmt ast.Stmt, source []byte, isLast bool) (bytec
 	case *ast.For:
 		return visitForStmt(u, s, source, isLast)
 	case *ast.FunctionDef:
-		loc, err := visitClosureDef(u, s, source, isLast)
-		if err == nil {
+		if loc, err := visitFuncBodyDef(u, s, source, isLast); err == nil {
 			return loc, nil
+		} else if err != ErrNotImplemented {
+			return bytecode.Loc{}, err
 		}
-		if err != ErrNotImplemented {
+		if loc, err := visitClosureDef(u, s, source, isLast); err == nil {
+			return loc, nil
+		} else if err != ErrNotImplemented {
 			return bytecode.Loc{}, err
 		}
 		return visitFunctionDef(u, s, source, isLast)
