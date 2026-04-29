@@ -307,7 +307,8 @@ func visitModule(u *compileUnit, mod *ast.Module) error {
 
 	noneIdx := u.addConst(nil)
 	u.finalizeDeferred()
-	block.Instrs = append(block.Instrs,
+	tailBlock := u.currentBlock()
+	tailBlock.Instrs = append(tailBlock.Instrs,
 		ir.Instr{Op: bytecode.LOAD_CONST, Arg: noneIdx, Loc: lastLoc},
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: lastLoc},
 	)

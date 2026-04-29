@@ -77,6 +77,35 @@ func binOpargFromOp(op string) (byte, bool) {
 	return 0, false
 }
 
+// cmpOpFromAstOp maps an *ast.Compare op string to the (opcode,
+// oparg) pair CPython 3.14 emits. Mirrors
+// compiler/classify_ast.go::cmpOpFromOp byte-for-byte.
+func cmpOpFromAstOp(op string) (bytecode.Opcode, byte, bool) {
+	switch op {
+	case "Lt":
+		return bytecode.COMPARE_OP, bytecode.CmpLt, true
+	case "LtE":
+		return bytecode.COMPARE_OP, bytecode.CmpLtE, true
+	case "Eq":
+		return bytecode.COMPARE_OP, bytecode.CmpEq, true
+	case "NotEq":
+		return bytecode.COMPARE_OP, bytecode.CmpNotEq, true
+	case "Gt":
+		return bytecode.COMPARE_OP, bytecode.CmpGt, true
+	case "GtE":
+		return bytecode.COMPARE_OP, bytecode.CmpGtE, true
+	case "Is":
+		return bytecode.IS_OP, 0, true
+	case "IsNot":
+		return bytecode.IS_OP, 1, true
+	case "In":
+		return bytecode.CONTAINS_OP, 0, true
+	case "NotIn":
+		return bytecode.CONTAINS_OP, 1, true
+	}
+	return 0, 0, false
+}
+
 // augOpargFromOp maps an *ast.AugAssign Op to its CPython
 // NB_INPLACE_* enum value. Mirrors compiler/classify_ast.go's
 // helper of the same name.
