@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	parser "github.com/tamnd/gopapy/parser"
@@ -143,4 +144,25 @@ func codeObjectsEqual(a, b *bytecode.CodeObject) bool {
 		return false
 	}
 	return true
+}
+
+func findFixturesDir(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	cur := cwd
+	for {
+		candidate := filepath.Join(cur, "tests", "fixtures")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || !strings.Contains(parent, "gocopy") {
+			t.Skipf("could not locate tests/fixtures from %s", cwd)
+			return ""
+		}
+		cur = parent
+	}
 }

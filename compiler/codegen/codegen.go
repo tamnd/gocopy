@@ -58,16 +58,17 @@
 // compiler_exit_scope) and the first to route a non-module unit
 // through optimize.Run + assemble.Assemble. It is also the first
 // visitor that emits LOAD_FAST_BORROW + MAKE_FUNCTION.
-// v0.6.26 adds modClosureDef: a single top-level
-// `def f(x): def g(): return x; return g` definition where f, x, and
-// g are 1..15-char identifiers and the inner function captures x as
-// a free variable. First codegen path that emits three nested code
-// objects (module → outer → inner) and the first to exercise the
-// cell + free closure-variable machinery (LocalsKindArgCell on the
-// outer arg slot, LocalsKindFree on the inner). Hand-built mirroring
-// the classifier's `compileClosure` byte-for-byte.
-// Anything else returns ErrUnsupported and the caller falls back to
-// the classifier.
+// v0.7.9 closes phase B by promoting modClosureDef — a single
+// top-level `def f(x): def g(): return x; return g` closure — to
+// the visitor pipeline as visitClosureDef. The v0.6.26 codegen
+// classifier file (visit_closuredef.go) is gone; Build's dispatch
+// is now empty and returns ErrUnsupported unconditionally.
+// visitClosureDef is the first visitor that exercises a doubly-
+// nested compileUnit (module → outer → inner) and the first to
+// emit MAKE_CELL, COPY_FREE_VARS, LOAD_DEREF, BUILD_TUPLE,
+// SET_FUNCTION_ATTRIBUTE, and STORE_FAST.
+// Anything reaching codegen.Build now returns ErrUnsupported and
+// the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -103,9 +104,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 		return nil, errors.New("codegen.Build: nil module")
 	}
 	_ = scope // reserved for the function-codegen release
-
-	if c, ok := classifyClosureDefModule(mod, opts.Source); ok {
-		return buildClosureDefModule(c, opts)
-	}
+	_ = opts
 	return nil, ErrUnsupported
 }
