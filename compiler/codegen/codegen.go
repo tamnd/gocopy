@@ -19,15 +19,17 @@
 // modAttrStore, modCallAssign, and modGenExpr (the v0.6.17-v0.6.21
 // entries) to the visitor pipeline as cases of the new central
 // `visitExpr` recursive dispatcher; their classifier files and
-// Build dispatch arms are gone. v0.6.22 starts band B with
-// modIfElse: a single top-level
+// Build dispatch arms are gone. v0.7.6 opens phase B by promoting
+// modIfElse — a single top-level
 // `if cond: name = val [elif cond: name = val ...]
-// [else: name = val]` chain where every condition is a 1..15-char
-// Name and every body is a single `name = small_int` (0..255)
-// assignment. First codegen path that emits a multi-branch
-// forward-jump pattern; the no-else implicit-return-None tail
-// produces a LONG line-table entry pointing back to the first
-// condition's source position. v0.6.23 adds modWhile: a single
+// [else: name = val]` chain — to the visitor pipeline as
+// visitIfStmt; the v0.6.22 codegen classifier file
+// (visit_if_else.go) and Build dispatch arm are gone. visitIfStmt
+// is the first visitor that emits a multi-block CFG (one entry
+// block, one body block per branch, optional kept-merge end block)
+// and the first to drive the optimize pipeline through a real
+// branching shape (eliminate_empty_blocks +
+// inline_small_exit_blocks). v0.6.23 adds modWhile: a single
 // top-level `while cond: name = val` loop with no break/continue/
 // else, where cond is a 1..15-char Name and val is a small int
 // (0..255). First codegen path that emits a backward jump
@@ -93,9 +95,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if ie, ok := classifyIfElseModule(mod, opts.Source); ok {
-		return buildIfElseModule(ie, opts)
-	}
 	if w, ok := classifyWhileModule(mod, opts.Source); ok {
 		return buildWhileModule(w, opts)
 	}
