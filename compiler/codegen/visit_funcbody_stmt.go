@@ -98,6 +98,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if !validateFuncBodyAssignRHS(st.Value) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
+		case *ast.If:
+			if !validateFuncBodyIfReturn(st) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
 		default:
 			return bytecode.Loc{}, ErrNotImplemented
 		}
@@ -146,6 +150,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			}
 		case *ast.AugAssign:
 			if err := emitFuncBodyAugAssign(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
+		case *ast.If:
+			if err := emitFuncBodyIfReturn(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
 		}
@@ -291,6 +299,93 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 		ir.Instr{Op: bytecode.BINARY_OP, Arg: uint32(oparg), Loc: binOpLoc},
 		ir.Instr{Op: bytecode.STORE_FAST, Arg: tgtArg, Loc: tgtLoc},
 	)
+	return nil
+}
+
+// validateFuncBodyIfReturn reports whether ifs is the simple
+// "early-return" if-statement shape the v0.7.10 visitor accepts:
+//
+//   - No Orelse (the trailing function-body return supplies the
+//     "else").
+//   - Body is exactly one *ast.Return with a non-nil value.
+//   - Test is a single-op single-comparator *ast.Compare whose op
+//     resolves via cmpOpFromAstOp and is not IS_OP (None checks
+//     emit POP_JUMP_IF_NONE / POP_JUMP_IF_NOT_NONE in a separate
+//     specialised path; not yet ported).
+//   - Both Compare operands and the Return value validate via
+//     validateFuncBodyAssignRHS.
+func validateFuncBodyIfReturn(ifs *ast.If) bool {
+	if ifs.P.Col > 255 || len(ifs.Orelse) != 0 || len(ifs.Body) != 1 {
+		return false
+	}
+	ret, ok := ifs.Body[0].(*ast.Return)
+	if !ok || ret.Value == nil || ret.P.Col > 255 {
+		return false
+	}
+	cmp, ok := ifs.Test.(*ast.Compare)
+	if !ok || cmp.P.Col > 255 || len(cmp.Ops) != 1 || len(cmp.Comparators) != 1 {
+		return false
+	}
+	op, _, ok := cmpOpFromAstOp(cmp.Ops[0])
+	if !ok || op == bytecode.IS_OP {
+		return false
+	}
+	if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
+		return false
+	}
+	return validateFuncBodyAssignRHS(ret.Value)
+}
+
+// emitFuncBodyIfReturn emits the early-return If shape inside a
+// function body. Mirrors compiler/func_body.go::isIfReturn for the
+// COMPARE_OP path:
+//
+//   - Walk Compare.Left and Compare.Comparators[0] via
+//     visitFuncExpr (which produces LFLBLFLB for two-Name pairs).
+//   - Emit COMPARE_OP with the conditional-context bit (oparg+16)
+//     at Loc(condStart, condEnd).
+//   - Emit POP_JUMP_IF_FALSE → afterThenLabel at the same Loc.
+//   - AddBlock for the then-branch. Emit NOT_TAKEN at condLoc, then
+//     the body Return via emitFuncBodyReturn.
+//   - AddBlock + BindLabel(afterThenLabel) so the next body
+//     statement (or trailing Return) emits into the kept-merge
+//     block.
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_if +
+// the conditional-context COMPARE_OP specialisation in codegen_compare.
+func emitFuncBodyIfReturn(u *compileUnit, ifs *ast.If, lines [][]byte) error {
+	cmp := ifs.Test.(*ast.Compare)
+	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
+	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
+	if err != nil {
+		return err
+	}
+	_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
+	if err != nil {
+		return err
+	}
+	condLoc := bytecode.Loc{
+		Line: uint32(cmp.P.Line), EndLine: uint32(cmp.P.Line),
+		Col: lc, EndCol: re,
+	}
+	block := u.currentBlock()
+	block.Instrs = append(block.Instrs, ir.Instr{
+		Op: op, Arg: uint32(base + 16), Loc: condLoc,
+	})
+	afterThenLabel := u.Seq.AllocLabel()
+	block.AddJump(bytecode.POP_JUMP_IF_FALSE, afterThenLabel, condLoc)
+
+	thenBlock := u.Seq.AddBlock()
+	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
+		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
+	})
+	ret := ifs.Body[0].(*ast.Return)
+	if _, err := emitFuncBodyReturn(u, ret, lines); err != nil {
+		return err
+	}
+
+	afterBlock := u.Seq.AddBlock()
+	u.Seq.BindLabel(afterThenLabel, afterBlock)
 	return nil
 }
 
