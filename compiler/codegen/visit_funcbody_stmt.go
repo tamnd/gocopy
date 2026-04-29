@@ -77,18 +77,30 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	for i := range lastIdx {
-		asgn, ok := s.Body[i].(*ast.Assign)
-		if !ok {
-			return bytecode.Loc{}, ErrNotImplemented
-		}
-		if len(asgn.Targets) != 1 {
-			return bytecode.Loc{}, ErrNotImplemented
-		}
-		tn, ok := asgn.Targets[0].(*ast.Name)
-		if !ok || tn.P.Col > 255 || len(tn.Id) < 1 || len(tn.Id) > 15 {
-			return bytecode.Loc{}, ErrNotImplemented
-		}
-		if !validateFuncBodyAssignRHS(asgn.Value) {
+		switch st := s.Body[i].(type) {
+		case *ast.Assign:
+			if len(st.Targets) != 1 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			tn, ok := st.Targets[0].(*ast.Name)
+			if !ok || tn.P.Col > 255 || len(tn.Id) < 1 || len(tn.Id) > 15 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if !validateFuncBodyAssignRHS(st.Value) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+		case *ast.AugAssign:
+			tn, ok := st.Target.(*ast.Name)
+			if !ok || tn.P.Col > 255 || len(tn.Id) < 1 || len(tn.Id) > 15 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if _, ok := augOpargFromOp(st.Op); !ok {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if !validateFuncBodyAssignRHS(st.Value) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+		default:
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 	}
@@ -129,9 +141,15 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 
 	lines := splitLines(source)
 	for i := range lastIdx {
-		asgn := s.Body[i].(*ast.Assign)
-		if err := emitFuncBodyAssign(child, asgn, lines); err != nil {
-			return bytecode.Loc{}, err
+		switch st := s.Body[i].(type) {
+		case *ast.Assign:
+			if err := emitFuncBodyAssign(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
+		case *ast.AugAssign:
+			if err := emitFuncBodyAugAssign(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
 		}
 	}
 	bodyEndCol, err := emitFuncBodyReturn(child, ret, lines)
@@ -228,6 +246,53 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 		return ErrNotImplemented
 	}
 	block.Instrs = append(block.Instrs, ir.Instr{Op: bytecode.STORE_FAST, Arg: tgtArg, Loc: tgtLoc})
+	return nil
+}
+
+// emitFuncBodyAugAssign emits the IR for `target op= value` inside
+// a function body. Mirrors compiler/func_body.go's AugAssign arm:
+//
+//   - LOAD_FAST_BORROW target — Loc spans target's identifier.
+//     (When target and a Name RHS are both ≤ slot 15 the classifier
+//     fuses LFLBLFLB; that fusion happens automatically via
+//     visitFuncNameExpr's eager pair-fuse hook when the RHS recurse
+//     emits a second LOAD_FAST_BORROW.)
+//   - Recurse RHS via visitFuncExpr.
+//   - BINARY_OP NbInplace* — Loc (target.startCol, rhs.endCol).
+//   - STORE_FAST target — Loc spans target's identifier.
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_aug_assign +
+// optimize_load_fast (which the visitor pre-applies for byte parity).
+func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) error {
+	target := a.Target.(*ast.Name)
+	oparg, ok := augOpargFromOp(a.Op)
+	if !ok {
+		return ErrNotImplemented
+	}
+	tgtLoc := bytecode.Loc{
+		Line: uint32(target.P.Line), EndLine: uint32(target.P.Line),
+		Col: uint16(target.P.Col), EndCol: uint16(target.P.Col) + uint16(len(target.Id)),
+	}
+	tgtKind, tgtArg := u.resolveNameOp(target.Id)
+	if tgtKind != nameOpFast {
+		return ErrNotImplemented
+	}
+	block := u.currentBlock()
+	block.Instrs = append(block.Instrs, ir.Instr{
+		Op: bytecode.LOAD_FAST_BORROW, Arg: tgtArg, Loc: tgtLoc,
+	})
+	_, rhsEnd, err := visitFuncExpr(u, a.Value, lines)
+	if err != nil {
+		return err
+	}
+	binOpLoc := bytecode.Loc{
+		Line: uint32(a.P.Line), EndLine: uint32(a.P.Line),
+		Col: uint16(target.P.Col), EndCol: rhsEnd,
+	}
+	block.Instrs = append(block.Instrs,
+		ir.Instr{Op: bytecode.BINARY_OP, Arg: uint32(oparg), Loc: binOpLoc},
+		ir.Instr{Op: bytecode.STORE_FAST, Arg: tgtArg, Loc: tgtLoc},
+	)
 	return nil
 }
 
