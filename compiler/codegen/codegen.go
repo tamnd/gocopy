@@ -88,10 +88,15 @@
 // v0.7.10.1 opens the v0.7.10.x systematic series with a
 // plumbing-only release: tests/fixtures/funcbody/ is created,
 // tests/run.sh and TestVisitorParity walk it as a flat second
-// pass, and 8 baseline fixtures land. No visitor changes; the
-// 1:1 CPython-port work begins in v0.7.10.2 (collapse per-shape
-// If helpers into recursive codegen_if). Visitor parity climbs
+// pass, and 8 baseline fixtures land. Visitor parity climbs
 // to 213/254 (all 8 new baselines route through the visitor).
+// v0.7.10.2 collapses the per-shape If helpers
+// (validateFuncBodyIf / validateFuncBodyTerminatingIf /
+// emitFuncBodyIf / emitFuncBodyTerminatingIf) into a single
+// recursive codegenIf + codegenJumpIf + validateIfStmt in
+// visit_if.go, mirroring CPython 3.14 Python/codegen.c::codegen_if
+// and codegen_jump_if. First v0.7.10.x release with explicit
+// `// MIRRORS:` 1:1 port headers. No fixture coverage change.
 // Anything reaching codegen.Build now returns ErrUnsupported and
 // the caller falls back to the classifier.
 //
