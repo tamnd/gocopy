@@ -85,6 +85,13 @@
 // classification and LFLBLFLB super-instruction fusion into
 // real post-emit passes mirroring CPython's optimize_load_fast
 // and insert_superinstructions.
+// v0.7.10.1 opens the v0.7.10.x systematic series with a
+// plumbing-only release: tests/fixtures/funcbody/ is created,
+// tests/run.sh and TestVisitorParity walk it as a flat second
+// pass, and 8 baseline fixtures land. No visitor changes; the
+// 1:1 CPython-port work begins in v0.7.10.2 (collapse per-shape
+// If helpers into recursive codegen_if). Visitor parity climbs
+// to 213/254 (all 8 new baselines route through the visitor).
 // Anything reaching codegen.Build now returns ErrUnsupported and
 // the caller falls back to the classifier.
 //

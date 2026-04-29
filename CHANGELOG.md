@@ -4,6 +4,8 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.10.1](changelog/v0.7.10.1.md) - open tests/fixtures/funcbody/ + 8 baselines (2026-04-30)
+- [v0.7.10](changelog/v0.7.10.md) - general function bodies (visit_funcbody_stmt + visit_func_stmt + scope_ops) (2026-04-30)
 - [v0.7.9](changelog/v0.7.9.md) - closures (visit_ClosureDef + cell/free machinery) (2026-04-29)
 - [v0.7.8](changelog/v0.7.8.md) - compiler_enter_scope + visit_FunctionDef (band C opener) (2026-04-29)
 - [v0.7.7.1](changelog/v0.7.7.1.md) - visit_For (closes phase B loop shapes) (2026-04-29)
