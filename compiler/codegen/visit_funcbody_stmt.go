@@ -64,7 +64,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	if len(s.Name) < 1 || len(s.Name) > 15 || s.P.Col > 255 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
-	if len(s.Body) < 2 {
+	if len(s.Body) < 1 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 
@@ -73,12 +73,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	if !ok || ret.Value == nil {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
-	retName, ok := ret.Value.(*ast.Name)
-	if !ok {
-		return bytecode.Loc{}, ErrNotImplemented
-	}
-	if ret.P.Col > 255 || retName.P.Col > 255 ||
-		len(retName.Id) < 1 || len(retName.Id) > 15 {
+	if ret.P.Col > 255 || !validateFuncBodyAssignRHS(ret.Value) {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	for i := range lastIdx {
@@ -139,7 +134,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			return bytecode.Loc{}, err
 		}
 	}
-	if err := emitFuncBodyReturn(child, ret, retName); err != nil {
+	if err := emitFuncBodyReturn(child, ret, lines); err != nil {
 		return bytecode.Loc{}, err
 	}
 	if len(child.Consts) == 0 {
@@ -147,7 +142,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	}
 
 	bodyEndLine := ret.P.Line
-	bodyEndCol := uint16(retName.P.Col) + uint16(len(retName.Id))
+	bodyEndCol := uint16(astExprEndCol(lines, ret.P.Line, ret.Value))
 
 	funcCode, err := u.popChildUnit(child, assemble.Options{
 		ArgCount:        int32(len(args.Args)),
@@ -256,27 +251,33 @@ func emitFuncBodyConstLoad(u *compileUnit, v any, loc bytecode.Loc) {
 	})
 }
 
-// emitFuncBodyReturn emits the IR for `return name` inside a
-// function body. v0.7.10 step 4 supports only a single Name value
-// (param / local). The read uses LOAD_FAST_BORROW because the
-// borrowed reference is consumed by RETURN_VALUE — this matches
-// CPython 3.14 optimize_load_fast's promotion of last-use loads.
-func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, retName *ast.Name) error {
-	kind, arg := u.resolveNameOp(retName.Id)
-	if kind != nameOpFast {
-		return ErrNotImplemented
+// emitFuncBodyReturn emits the IR for `return <expr>` inside a
+// function body. The expression is recursed via visitFuncExpr so any
+// shape validateFuncBodyAssignRHS accepts is supported. The trailing
+// RETURN_VALUE consumes the value, which is why Name reads come out
+// as LOAD_FAST_BORROW (CPython 3.14 optimize_load_fast promotes
+// last-use loads — RETURN_VALUE is one such consumer).
+//
+// retLoc spans (return-keyword col, value-end col) for non-constant
+// return values. When the return value is a *ast.Constant, CPython
+// 3.14 attributes RETURN_VALUE to the constant's span instead of
+// the return-keyword span — matching that here keeps the linetable
+// byte-identical.
+func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) error {
+	if _, _, err := visitFuncExpr(u, ret.Value, lines); err != nil {
+		return err
 	}
-	loadLoc := bytecode.Loc{
-		Line: uint32(retName.P.Line), EndLine: uint32(retName.P.Line),
-		Col: uint16(retName.P.Col), EndCol: uint16(retName.P.Col) + uint16(len(retName.Id)),
+	endCol := astExprEndCol(lines, ret.P.Line, ret.Value)
+	startCol := uint16(ret.P.Col)
+	if c, ok := ret.Value.(*ast.Constant); ok {
+		startCol = uint16(c.P.Col)
 	}
 	retLoc := bytecode.Loc{
 		Line: uint32(ret.P.Line), EndLine: uint32(ret.P.Line),
-		Col: uint16(ret.P.Col), EndCol: uint16(retName.P.Col) + uint16(len(retName.Id)),
+		Col: startCol, EndCol: uint16(endCol),
 	}
 	block := u.currentBlock()
 	block.Instrs = append(block.Instrs,
-		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: arg, Loc: loadLoc},
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc},
 	)
 	return nil
