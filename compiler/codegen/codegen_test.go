@@ -2187,6 +2187,171 @@ func TestBuildAttrStoreWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildCallAssignNoArgs covers `x = f()`: PUSH_NULL after
+// LOAD_NAME f, CALL 0 with 3 cache words, names = [f, x],
+// stacksize = 2.
+func TestBuildCallAssignNoArgs(t *testing.T) {
+	src := []byte("x = f()\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "f"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(call no args): %v", err)
+	}
+	wantBC := bytecode.CallAssignBytecode(0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.CallAssignLineTable(1, 4, 5, nil, 7, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "f" || co.Names[1] != "x" {
+		t.Fatalf("names = %v, want [f x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildCallAssignOneArg covers `x = f(a)`.
+func TestBuildCallAssignOneArg(t *testing.T) {
+	src := []byte("x = f(a)\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "f"},
+				Args: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"}},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(call one arg): %v", err)
+	}
+	wantBC := bytecode.CallAssignBytecode(1)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantArgs := []bytecode.CallArg{{Name: "a", Col: 6, NameLen: 1}}
+	wantLT := bytecode.CallAssignLineTable(1, 4, 5, wantArgs, 8, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "f" || co.Names[1] != "a" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [f a x]", co.Names)
+	}
+	if co.StackSize < 3 {
+		t.Fatalf("stacksize = %d, want >= 3", co.StackSize)
+	}
+}
+
+// TestBuildCallAssignTwoArgs covers `x = f(a, b)`.
+func TestBuildCallAssignTwoArgs(t *testing.T) {
+	src := []byte("x = f(a, b)\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "f"},
+				Args: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "a"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "b"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(call two args): %v", err)
+	}
+	wantBC := bytecode.CallAssignBytecode(2)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Names) != 4 || co.Names[0] != "f" || co.Names[1] != "a" || co.Names[2] != "b" || co.Names[3] != "x" {
+		t.Fatalf("names = %v, want [f a b x]", co.Names)
+	}
+	if co.StackSize < 4 {
+		t.Fatalf("stacksize = %d, want >= 4", co.StackSize)
+	}
+}
+
+// TestBuildCallAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops.
+func TestBuildCallAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = f()\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "f"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(call+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildCallAssignKwargRejected ensures codegen rejects keyword
+// arguments — they are not part of the modCallAssign shape.
+func TestBuildCallAssignKwargRejected(t *testing.T) {
+	src := []byte("x = f(k=a)\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 4},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "f"},
+				Keywords: []*ast.Keyword{
+					{Arg: "k", Value: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "a"}},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(call kwarg) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
