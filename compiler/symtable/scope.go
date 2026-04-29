@@ -254,14 +254,21 @@ func (s *Scope) LocalsPlusNames() []string {
 // CodeObject.LocalsPlusKinds. Each byte is the OR of FastX bits
 // matching the symbol's flags:
 //
-//   - param, no cell:  FastLocal | FastArg            (LocalsKindArg)
-//   - param, cell:     FastLocal | FastArg | FastCell (LocalsKindArgCell)
-//   - plain local:     FastLocal                      (LocalsKindLocal)
-//   - cell, not param: FastCell                       (LocalsKindCell)
-//   - free:            FastFree                       (LocalsKindFree)
+//   - posonly param:   FastLocal | FastArgPos             (0x22)
+//   - regular param:   FastLocal | FastArg                (0x26, LocalsKindArg)
+//   - kwonly param:    FastLocal | FastArgKw              (0x24)
+//   - *args param:     FastLocal | FastArgPos | FastArgVar (0x2a)
+//   - **kwargs param:  FastLocal | FastArgKw  | FastArgVar (0x2c)
+//   - any param + cell adds FastCell (0x40) onto the bits above
+//   - plain local:     FastLocal                          (LocalsKindLocal)
+//   - cell, not param: FastCell                           (LocalsKindCell)
+//   - free:            FastFree                           (LocalsKindFree)
 //
 // The slice length and ordering match LocalsPlusNames; call
 // LocalsPlusNames first or as part of the same pass.
+//
+// SOURCE: CPython 3.14 Python/compile.c compute_localsplus_info +
+// Include/internal/pycore_code.h CO_FAST_* flags.
 func (s *Scope) LocalsPlusKinds() []byte {
 	names := s.LocalsPlusNames()
 	out := make([]byte, len(names))
@@ -269,19 +276,41 @@ func (s *Scope) LocalsPlusKinds() []byte {
 	for _, f := range s.Frees {
 		freeSet[f] = true
 	}
-	paramSet := map[string]bool{}
-	for _, p := range s.Params {
-		paramSet[p] = true
+	// Compute each param's arg-kind bits from its position in Params.
+	// Params is laid out [PosOnly | Regular | KwOnly | Vararg | Kwarg]
+	// (see bindArgs in build.go).
+	paramKind := map[string]byte{}
+	varargIdx := s.ArgCount + s.KwOnlyCount
+	kwargIdx := varargIdx
+	if s.HasVararg {
+		kwargIdx++
+	}
+	for i, p := range s.Params {
+		var argBits byte
+		switch {
+		case i < s.PosOnlyCount:
+			argBits = bytecode.FastArgPos
+		case i < s.ArgCount:
+			argBits = bytecode.FastArgPos | bytecode.FastArgKw
+		case i < s.ArgCount+s.KwOnlyCount:
+			argBits = bytecode.FastArgKw
+		case s.HasVararg && i == varargIdx:
+			argBits = bytecode.FastArgPos | bytecode.FastArgVar
+		case s.HasKwarg && i == kwargIdx:
+			argBits = bytecode.FastArgKw | bytecode.FastArgVar
+		}
+		paramKind[p] = bytecode.FastLocal | argBits
 	}
 	for i, n := range names {
 		sym := s.Symbols[n]
+		bits, isParam := paramKind[n]
 		switch {
 		case freeSet[n]:
 			out[i] = bytecode.LocalsKindFree
-		case paramSet[n] && sym.Flags.Has(SymCell):
-			out[i] = bytecode.LocalsKindArgCell
-		case paramSet[n]:
-			out[i] = bytecode.LocalsKindArg
+		case isParam && sym.Flags.Has(SymCell):
+			out[i] = bits | bytecode.FastCell
+		case isParam:
+			out[i] = bits
 		case sym.Flags.Has(SymCell):
 			out[i] = bytecode.LocalsKindCell
 		default:

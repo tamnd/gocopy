@@ -341,6 +341,14 @@ func (b *builder) bindArgs(s *Scope, args *ast.Arguments) error {
 		s.Define(a.Name, SymParam|SymLocal|SymAssigned)
 		s.Params = append(s.Params, a.Name)
 	}
+	// CPython's co_varnames layout puts kw-only parameters BEFORE
+	// *args / **kwargs, even though `def f(*args, e)` reads vararg
+	// first in source. Append in the order Params drives
+	// LocalsPlusNames, since LocalsPlusNames feeds co_varnames and
+	// LOAD_FAST slot indexing.
+	//
+	// SOURCE: CPython 3.14 Python/symtable.c symtable_visit_function +
+	// Python/compile.c compiler_codegen_function_def.
 	for _, a := range args.PosOnly {
 		add(a)
 		s.PosOnlyCount++
@@ -350,13 +358,13 @@ func (b *builder) bindArgs(s *Scope, args *ast.Arguments) error {
 		add(a)
 		s.ArgCount++
 	}
-	if args.Vararg != nil {
-		add(args.Vararg)
-		s.HasVararg = true
-	}
 	for _, a := range args.KwOnly {
 		add(a)
 		s.KwOnlyCount++
+	}
+	if args.Vararg != nil {
+		add(args.Vararg)
+		s.HasVararg = true
 	}
 	if args.Kwarg != nil {
 		add(args.Kwarg)
