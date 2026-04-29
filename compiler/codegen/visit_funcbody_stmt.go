@@ -47,11 +47,35 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	args := s.Args
-	if args == nil || len(args.Defaults) != 0 {
+	if args == nil {
+		return bytecode.Loc{}, ErrNotImplemented
+	}
+	validateDefaultValue := func(e ast.Expr) bool {
+		switch v := e.(type) {
+		case *ast.Constant:
+			if v.P.Col > 255 {
+				return false
+			}
+			_, ok := constantValue(v)
+			return ok
+		case *ast.Name:
+			return v.P.Col <= 255 && len(v.Id) >= 1 && len(v.Id) <= 15
+		}
+		return false
+	}
+	for _, d := range args.Defaults {
+		if !validateDefaultValue(d) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+	}
+	if len(args.KwOnlyDef) != 0 && len(args.KwOnlyDef) != len(args.KwOnly) {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	for _, d := range args.KwOnlyDef {
-		if d != nil {
+		if d == nil {
+			continue
+		}
+		if !validateDefaultValue(d) {
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 	}
@@ -249,6 +273,65 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		EndCol:  bodyEndCol,
 	}
 
+	defaultValueLoc := func(e ast.Expr) bytecode.Loc {
+		switch v := e.(type) {
+		case *ast.Constant:
+			endCol := astExprEndCol(lines, v.P.Line, v)
+			return bytecode.Loc{
+				Line:    uint32(v.P.Line),
+				EndLine: uint32(v.P.Line),
+				Col:     uint16(v.P.Col),
+				EndCol:  uint16(endCol),
+			}
+		case *ast.Name:
+			return bytecode.Loc{
+				Line:    uint32(v.P.Line),
+				EndLine: uint32(v.P.Line),
+				Col:     uint16(v.P.Col),
+				EndCol:  uint16(v.P.Col) + uint16(len(v.Id)),
+			}
+		}
+		return outerLoc
+	}
+	emitDefaultLoad := func(e ast.Expr) {
+		loc := defaultValueLoc(e)
+		switch v := e.(type) {
+		case *ast.Constant:
+			val, _ := constantValue(v)
+			emitConstLoad(u, val, loc)
+		case *ast.Name:
+			u.emitNameLoad(v.Id, loc)
+		}
+	}
+
+	hasDefaults := len(args.Defaults) > 0
+	if hasDefaults {
+		for _, d := range args.Defaults {
+			emitDefaultLoad(d)
+		}
+		u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.BUILD_TUPLE, Arg: uint32(len(args.Defaults)), Loc: outerLoc},
+		)
+	}
+	kwdefCount := 0
+	for _, d := range args.KwOnlyDef {
+		if d != nil {
+			kwdefCount++
+		}
+	}
+	if kwdefCount > 0 {
+		for i, d := range args.KwOnlyDef {
+			if d == nil {
+				continue
+			}
+			emitConstLoad(u, args.KwOnly[i].Name, outerLoc)
+			emitDefaultLoad(d)
+		}
+		u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.BUILD_MAP, Arg: uint32(kwdefCount), Loc: outerLoc},
+		)
+	}
+
 	funcCodeIdx := u.addConst(funcCode)
 	funcNameIdx := u.addName(s.Name)
 
@@ -256,6 +339,18 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	block.Instrs = append(block.Instrs,
 		ir.Instr{Op: bytecode.LOAD_CONST, Arg: funcCodeIdx, Loc: outerLoc},
 		ir.Instr{Op: bytecode.MAKE_FUNCTION, Arg: 0, Loc: outerLoc},
+	)
+	if kwdefCount > 0 {
+		block.Instrs = append(block.Instrs,
+			ir.Instr{Op: bytecode.SET_FUNCTION_ATTRIBUTE, Arg: 2, Loc: outerLoc},
+		)
+	}
+	if hasDefaults {
+		block.Instrs = append(block.Instrs,
+			ir.Instr{Op: bytecode.SET_FUNCTION_ATTRIBUTE, Arg: 1, Loc: outerLoc},
+		)
+	}
+	block.Instrs = append(block.Instrs,
 		ir.Instr{Op: bytecode.STORE_NAME, Arg: funcNameIdx, Loc: outerLoc},
 	)
 

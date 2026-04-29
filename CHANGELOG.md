@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.10.8](changelog/v0.7.10.8.md) - positional + kw-only defaults (visitFuncBodyDef) + fold_tuple_of_constants 1:1 port (4 fixtures, 8 flowgraph tests) (2026-04-30)
 - [v0.7.10.7](changelog/v0.7.10.7.md) - extended args in funcbody: posonly / kwonly / *args / **kwargs (5 fixtures + 2 latent symtable bugs fixed) (2026-04-30)
 - [v0.7.10.6](changelog/v0.7.10.6.md) - optimize_load_const + remove_unused_consts 1:1 port; visitor stops planting first-int (2026-04-30)
 - [v0.7.10.5](changelog/v0.7.10.5.md) - funcbody fixtures: small-int return + is None / is not None + Compare with const (2026-04-30)

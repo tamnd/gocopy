@@ -30,13 +30,18 @@ func (u *compileUnit) pushChildUnit(name, qualName string, firstLineNo int32) *c
 // the caller is responsible for appending the CodeObject to its own
 // const pool.
 //
-// The const-pool passes (OptimizeLoadConst + RemoveUnusedConsts) run
-// before optimize.Run so that downstream passes (insert_super-
-// instructions, optimize_load_fast, resolve_jumps) see the
-// canonical opcode shape — LOAD_SMALL_INT instead of LOAD_CONST for
-// ints in 0..255. v0.7.10.6 ports these two passes from
-// Python/flowgraph.c:2168 basicblock_optimize_load_const and
-// Python/flowgraph.c:3174 remove_unused_consts.
+// The const-pool passes (OptimizeLoadConst + FoldTupleOfConstants +
+// RemoveUnusedConsts) run before optimize.Run so that downstream
+// passes (insert_superinstructions, optimize_load_fast, resolve_jumps)
+// see the canonical opcode shape — LOAD_SMALL_INT instead of
+// LOAD_CONST for ints in 0..255, and folded const tuples instead of
+// LOAD_CONST/LOAD_SMALL_INT chains followed by BUILD_TUPLE.
+//
+// v0.7.10.6 ported the LOAD_SMALL_INT and remove-unused passes
+// (Python/flowgraph.c:2168 basicblock_optimize_load_const and
+// :3174 remove_unused_consts).
+// v0.7.10.8 added the tuple fold (Python/flowgraph.c:1436
+// fold_tuple_of_constants).
 //
 // opts.Consts and opts.Names are overwritten with the child's
 // unit-level tables.
@@ -45,6 +50,7 @@ func (u *compileUnit) pushChildUnit(name, qualName string, firstLineNo int32) *c
 func (u *compileUnit) popChildUnit(child *compileUnit, opts assemble.Options) (*bytecode.CodeObject, error) {
 	child.finalizeDeferred()
 	flowgraph.OptimizeLoadConst(child.Seq, child.Consts)
+	child.Consts = flowgraph.FoldTupleOfConstants(child.Seq, child.Consts)
 	child.Consts = flowgraph.RemoveUnusedConsts(child.Seq, child.Consts)
 	seq := optimize.Run(child.Seq)
 	opts.Consts = child.Consts
