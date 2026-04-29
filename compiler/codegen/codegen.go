@@ -55,7 +55,14 @@
 // the same source line. First codegen path that is itself a
 // recursive walker rather than a closed-form template, and the
 // first to emit `LOAD_SMALL_INT`, `UNARY_NEGATIVE`, and
-// `UNARY_INVERT`.
+// `UNARY_INVERT`. v0.6.22 starts band B with modIfElse: a single
+// top-level `if cond: name = val [elif cond: name = val ...]
+// [else: name = val]` chain where every condition is a 1..15-char
+// Name and every body is a single `name = small_int` (0..255)
+// assignment. First codegen path that emits a multi-branch
+// forward-jump pattern; the no-else implicit-return-None tail
+// produces a LONG line-table entry pointing back to the first
+// condition's source position.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -151,6 +158,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if g, ok := classifyGenExprModule(mod, opts.Source); ok {
 		return buildGenExprModule(g, opts)
+	}
+	if ie, ok := classifyIfElseModule(mod, opts.Source); ok {
+		return buildIfElseModule(ie, opts)
 	}
 	return nil, ErrUnsupported
 }
