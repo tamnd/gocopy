@@ -264,17 +264,15 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 // emitFuncBodyAugAssign emits the IR for `target op= value` inside
 // a function body. Mirrors compiler/func_body.go's AugAssign arm:
 //
-//   - LOAD_FAST_BORROW target — Loc spans target's identifier.
-//     (When target and a Name RHS are both ≤ slot 15 the classifier
-//     fuses LFLBLFLB; that fusion happens automatically via
-//     visitFuncNameExpr's eager pair-fuse hook when the RHS recurse
-//     emits a second LOAD_FAST_BORROW.)
+//   - LOAD_FAST target — Loc spans target's identifier. The
+//     LOAD_FAST → LOAD_FAST_BORROW promotion (and the LFLF →
+//     LFLBLFLB promotion that follows when the pair fuses) is owned
+//     by the optimize_load_fast pass downstream.
 //   - Recurse RHS via visitFuncExpr.
 //   - BINARY_OP NbInplace* — Loc (target.startCol, rhs.endCol).
 //   - STORE_FAST target — Loc spans target's identifier.
 //
-// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_aug_assign +
-// optimize_load_fast (which the visitor pre-applies for byte parity).
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_aug_assign.
 func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) error {
 	target := a.Target.(*ast.Name)
 	oparg, ok := augOpargFromOp(a.Op)
@@ -291,7 +289,7 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 	}
 	block := u.currentBlock()
 	block.Instrs = append(block.Instrs, ir.Instr{
-		Op: bytecode.LOAD_FAST_BORROW, Arg: tgtArg, Loc: tgtLoc,
+		Op: bytecode.LOAD_FAST, Arg: tgtArg, Loc: tgtLoc,
 	})
 	_, rhsEnd, err := visitFuncExpr(u, a.Value, lines)
 	if err != nil {
@@ -395,20 +393,27 @@ func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) (uint16
 // of the Return handler:
 //
 //   - Pre-compute ternEnd from astExprEndCol(OrElse) before walking
-//     OrElse so both RETURN_VALUE Locs span (retCol, ternEnd) — the
-//     whole-ternary span CPython attributes RETURN_VALUE to.
+//     OrElse so the trailing RETURN_VALUE's Loc spans (retCol,
+//     ternEnd) — the whole-ternary span CPython attributes
+//     RETURN_VALUE to.
 //   - Walk Compare.Left + Comparators[0] via visitFuncExpr.
 //   - Emit COMPARE_OP / CONTAINS_OP with the conditional-context
 //     bit (oparg+16) at condLoc(left.start, right.end).
 //   - POP_JUMP_IF_FALSE → falseLabel.
 //   - True-branch block: NOT_TAKEN at condLoc, walk Body via
-//     visitFuncExpr, RETURN_VALUE at retLoc(retCol, ternEnd).
-//   - False-branch block bound to falseLabel: a *ast.Name whose
-//     resolveNameOp returns nameOpFast emits LOAD_FAST (move
-//     semantics) — the trailing RETURN_VALUE consumes the slot, so
-//     CPython's optimize_load_fast does NOT borrow. Other shapes
-//     fall back to visitFuncExpr.
-//   - RETURN_VALUE at retLoc(retCol, ternEnd).
+//     visitFuncExpr, JUMP_FORWARD → endLabel.
+//   - False-branch block bound to falseLabel: walk OrElse via
+//     visitFuncExpr (falls through to the merge block).
+//   - End-merge block bound to endLabel: RETURN_VALUE at
+//     retLoc(retCol, ternEnd).
+//
+// The end-merge block is the structural equivalent of CPython's
+// `end:` label after codegen_ifexp returns. inlineSmallExitBlocks
+// duplicates RETURN_VALUE into the JUMP_FORWARD predecessor (the
+// true branch) but keeps the merge block alive for the
+// fall-through (false) branch — that asymmetry is exactly what
+// makes optimize_load_fast leave the false branch's LOAD_FAST as
+// LOAD_FAST while promoting the true branch's to LOAD_FAST_BORROW.
 //
 // SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_expr_ifexp +
 // codegen_compare conditional-context specialisation.
@@ -435,6 +440,7 @@ func emitFuncBodyTernaryReturn(u *compileUnit, ret *ast.Return, ifexpr *ast.IfEx
 		Op: op, Arg: uint32(base + 16), Loc: condLoc,
 	})
 	falseLabel := u.Seq.AllocLabel()
+	endLabel := u.Seq.AllocLabel()
 	block.AddJump(bytecode.POP_JUMP_IF_FALSE, falseLabel, condLoc)
 
 	thenBlock := u.Seq.AddBlock()
@@ -449,33 +455,18 @@ func emitFuncBodyTernaryReturn(u *compileUnit, ret *ast.Return, ifexpr *ast.IfEx
 		Line: uint32(ret.P.Line), EndLine: uint32(ret.P.Line),
 		Col: uint16(ret.P.Col), EndCol: ternEnd,
 	}
-	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
-		Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc,
-	})
+	u.currentBlock().AddJump(bytecode.JUMP_FORWARD, endLabel, bytecode.Loc{})
 
 	falseBlock := u.Seq.AddBlock()
 	u.Seq.BindLabel(falseLabel, falseBlock)
 
-	if name, ok := ifexpr.OrElse.(*ast.Name); ok {
-		if kind, arg := u.resolveNameOp(name.Id); kind == nameOpFast {
-			nameLoc := bytecode.Loc{
-				Line: uint32(name.P.Line), EndLine: uint32(name.P.Line),
-				Col: uint16(name.P.Col), EndCol: uint16(name.P.Col) + uint16(len(name.Id)),
-			}
-			falseBlock.Instrs = append(falseBlock.Instrs, ir.Instr{
-				Op: bytecode.LOAD_FAST, Arg: arg, Loc: nameLoc,
-			})
-		} else {
-			if _, _, err := visitFuncExpr(u, ifexpr.OrElse, lines); err != nil {
-				return 0, err
-			}
-		}
-	} else {
-		if _, _, err := visitFuncExpr(u, ifexpr.OrElse, lines); err != nil {
-			return 0, err
-		}
+	if _, _, err := visitFuncExpr(u, ifexpr.OrElse, lines); err != nil {
+		return 0, err
 	}
-	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+
+	endBlock := u.Seq.AddBlock()
+	u.Seq.BindLabel(endLabel, endBlock)
+	endBlock.Instrs = append(endBlock.Instrs, ir.Instr{
 		Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc,
 	})
 	return ternEnd, nil

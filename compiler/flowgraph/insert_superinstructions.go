@@ -14,24 +14,17 @@ import (
 //
 // MIRRORS: Python/flowgraph.c:2588 insert_superinstructions.
 //
-// Deviation (v0.7.10.3-only): the gocopy visitor currently emits
-// LOAD_FAST_BORROW directly (the CPython form is plain LOAD_FAST,
-// later promoted to LOAD_FAST_BORROW by optimize_load_fast). To keep
-// byte-parity until v0.7.10.4 lands optimize_load_fast and the
-// visitor stops emitting LOAD_FAST_BORROW, this pass also fuses
-//
-//   - LOAD_FAST_BORROW + LOAD_FAST_BORROW → LOAD_FAST_BORROW_LOAD_FAST_BORROW
-//
-// v0.7.10.4 removes the borrow case from this pass once the visitor
-// emits raw LOAD_FAST and the CPython optimize_load_fast pass owns
-// the borrow promotion.
-//
 // The pass operates over each block's Instrs slice in place. The
 // CPython implementation replaces the second instruction of a fused
 // pair with NOP and runs remove_redundant_nops afterwards; the Go
 // version splices the pair into a single fused instruction directly,
-// which is equivalent for byte parity (no other pass introduces NOPs
-// in the v0.7.10.3 pipeline).
+// which is equivalent for byte parity (no other pass at this point
+// in the pipeline introduces NOPs).
+//
+// The LOAD_FAST → LOAD_FAST_BORROW promotion (and the LFLF →
+// LOAD_FAST_BORROW_LOAD_FAST_BORROW promotion that follows from it)
+// is owned by OptimizeLoadFast (Python/flowgraph.c:2776), which
+// runs immediately after this pass.
 func InsertSuperinstructions(seq *ir.InstrSeq) {
 	if seq == nil {
 		return
@@ -83,9 +76,6 @@ func makeSuperInstruction(a, b ir.Instr) (ir.Instr, bool) {
 		superOp = bytecode.STORE_FAST_LOAD_FAST
 	case a.Op == bytecode.STORE_FAST && b.Op == bytecode.STORE_FAST:
 		superOp = bytecode.STORE_FAST_STORE_FAST
-	case a.Op == bytecode.LOAD_FAST_BORROW && b.Op == bytecode.LOAD_FAST_BORROW:
-		// v0.7.10.3 bridge — see package-level comment.
-		superOp = bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW
 	default:
 		return ir.Instr{}, false
 	}

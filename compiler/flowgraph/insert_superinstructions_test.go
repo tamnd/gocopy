@@ -75,21 +75,23 @@ func TestInsertSuperinstructions_StoreFastStoreFast(t *testing.T) {
 	}
 }
 
-func TestInsertSuperinstructions_LfbPairBridge(t *testing.T) {
-	// v0.7.10.3 deviation: the visitor still emits LOAD_FAST_BORROW
-	// before optimize_load_fast lands. The pass fuses borrow pairs
-	// to keep byte-parity until v0.7.10.4.
+func TestInsertSuperinstructions_LfbPairNotFused(t *testing.T) {
+	// v0.7.10.4: insert_superinstructions no longer fuses
+	// LOAD_FAST_BORROW pairs (the v0.7.10.3 bridge case is gone).
+	// The visitor now emits raw LOAD_FAST and OptimizeLoadFast owns
+	// the borrow promotion downstream of this pass.
 	seq := mkSeq(
 		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: 1, Loc: locL(2)},
 		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: 2, Loc: locL(2)},
 	)
 	InsertSuperinstructions(seq)
 	got := seq.Blocks[0].Instrs
-	if len(got) != 1 || got[0].Op != bytecode.LOAD_FAST_BORROW_LOAD_FAST_BORROW {
-		t.Fatalf("got = %+v, want one LFLBLFLB", got)
+	if len(got) != 2 {
+		t.Fatalf("instrs = %d, want 2 (LFB+LFB no longer fused)", len(got))
 	}
-	if got[0].Arg != (1<<4)|2 {
-		t.Errorf("Arg = %d, want %d", got[0].Arg, (1<<4)|2)
+	if got[0].Op != bytecode.LOAD_FAST_BORROW || got[1].Op != bytecode.LOAD_FAST_BORROW {
+		t.Errorf("ops = (%s, %s), want (LOAD_FAST_BORROW, LOAD_FAST_BORROW)",
+			bytecode.MetaOf(got[0].Op).Name, bytecode.MetaOf(got[1].Op).Name)
 	}
 }
 
