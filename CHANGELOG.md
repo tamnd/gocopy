@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.9](changelog/v0.7.9.md) - closures (visit_ClosureDef + cell/free machinery) (2026-04-29)
 - [v0.7.8](changelog/v0.7.8.md) - compiler_enter_scope + visit_FunctionDef (band C opener) (2026-04-29)
 - [v0.7.7.1](changelog/v0.7.7.1.md) - visit_For (closes phase B loop shapes) (2026-04-29)
 - [v0.7.7](changelog/v0.7.7.md) - visit_While + JUMP_BACKWARD support in resolveJumps (2026-04-29)
