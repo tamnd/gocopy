@@ -20,9 +20,13 @@ import (
 // target as Arg = uint32(LabelID). Both invariants hold by
 // construction for visitor-emitted IR.
 //
-// At v0.7.4 only forward jumps are emitted — backward jumps land
-// at v0.7.6 with visit_While. A backward target panics, the
-// explicit "this case isn't wired yet" tripwire.
+// At v0.7.7 both forward jumps and backward jumps are supported.
+// JUMP_BACKWARD's Arg becomes (jumpEnd - target); every other jump
+// opcode's Arg becomes (target - jumpEnd). A JUMP_BACKWARD whose
+// target is at or after jumpEnd, or any other jump opcode whose
+// target is before jumpEnd, panics — both encode invariants the
+// visitor and CFG construction code never violate. A panic means a
+// bug upstream, not a valid CFG.
 //
 // The pass is a no-op when seq is nil, has at most one block, or
 // has no labelled blocks at all (the decoder / assembler
@@ -69,10 +73,17 @@ func resolveJumps(seq *ir.InstrSeq) {
 				continue
 			}
 			jumpEnd := off + units
-			if target < jumpEnd {
-				panic(fmt.Sprintf("optimize.resolveJumps: backward jump at block %d instr %d (target=%d jumpEnd=%d) — JUMP_BACKWARD lands at v0.7.6", i, k, target, jumpEnd))
+			if instr.Op == bytecode.JUMP_BACKWARD {
+				if target >= jumpEnd {
+					panic(fmt.Sprintf("optimize.resolveJumps: JUMP_BACKWARD with non-backward target at block %d instr %d (target=%d jumpEnd=%d)", i, k, target, jumpEnd))
+				}
+				instr.Arg = uint32(jumpEnd - target)
+			} else {
+				if target < jumpEnd {
+					panic(fmt.Sprintf("optimize.resolveJumps: forward-jump opcode %d with backward target at block %d instr %d (target=%d jumpEnd=%d)", instr.Op, i, k, target, jumpEnd))
+				}
+				instr.Arg = uint32(target - jumpEnd)
 			}
-			instr.Arg = uint32(target - jumpEnd)
 			off += units
 		}
 	}
