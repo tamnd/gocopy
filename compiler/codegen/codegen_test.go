@@ -1791,6 +1791,205 @@ func TestBuildCollectionWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildSubscriptLoad covers `x = a[b]`: BINARY_OP NbGetItem with
+// 5 cache words, names = [a, b, x], stacksize = 2.
+func TestBuildSubscriptLoad(t *testing.T) {
+	src := []byte("x = a[b]\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Subscript{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Slice: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(subscript load): %v", err)
+	}
+	wantBC := bytecode.SubscriptLoadBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.SubscriptLoadLineTable(1, 4, 5, 6, 7, 8, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildSubscriptLoadMultiCharNames exercises wider names and
+// columns to verify the column arithmetic in the line table.
+func TestBuildSubscriptLoadMultiCharNames(t *testing.T) {
+	// `result = arr[idx]`
+	//  0       9   13 14 17
+	src := []byte("result = arr[idx]\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.Subscript{
+				P:     ast.Pos{Line: 1, Col: 9},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "arr"},
+				Slice: &ast.Name{P: ast.Pos{Line: 1, Col: 13}, Id: "idx"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(subscript multichar): %v", err)
+	}
+	wantLT := bytecode.SubscriptLoadLineTable(1, 9, 12, 13, 16, 17, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "arr" || co.Names[1] != "idx" || co.Names[2] != "result" {
+		t.Fatalf("names = %v, want [arr idx result]", co.Names)
+	}
+}
+
+// TestBuildSubscriptLoadWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the SubscriptLoadBytecode helper has no slot for
+// them.
+func TestBuildSubscriptLoadWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a[b]\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Subscript{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Slice: &ast.Name{P: ast.Pos{Line: 1, Col: 6}, Id: "b"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(subscript+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildAttrLoad covers `x = a.b`: LOAD_ATTR with 9 cache words
+// (10-unit run split 8+2 in the line table), names = [a, b, x],
+// stacksize = 1.
+func TestBuildAttrLoad(t *testing.T) {
+	src := []byte("x = a.b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Attribute{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Attr:  "b",
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(attr load): %v", err)
+	}
+	wantBC := bytecode.AttrLoadBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.AttrLoadLineTable(1, 4, 5, 7, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 1 {
+		t.Fatalf("stacksize = %d, want >= 1", co.StackSize)
+	}
+}
+
+// TestBuildAttrLoadMultiCharNames exercises wider names and columns.
+func TestBuildAttrLoadMultiCharNames(t *testing.T) {
+	// `result = obj.field`
+	//  0       9   13 14
+	src := []byte("result = obj.field\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.Attribute{
+				P:     ast.Pos{Line: 1, Col: 9},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "obj"},
+				Attr:  "field",
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(attr multichar): %v", err)
+	}
+	wantLT := bytecode.AttrLoadLineTable(1, 9, 12, 18, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "obj" || co.Names[1] != "field" || co.Names[2] != "result" {
+		t.Fatalf("names = %v, want [obj field result]", co.Names)
+	}
+}
+
+// TestBuildAttrLoadWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the AttrLoadBytecode helper has no slot for them.
+func TestBuildAttrLoadWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a.b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.Attribute{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Value: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Attr:  "b",
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(attr+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
