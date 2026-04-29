@@ -82,11 +82,9 @@ func (u *compileUnit) resolveNameOp(name string) (nameOpKind, uint32) {
 
 // emitNameLoad appends the appropriate LOAD_* instruction for name
 // at loc into u's current block. For nameOpFast the instruction is
-// LOAD_FAST_BORROW — at v0.7.10 the visitor pre-computes the
-// LOAD_FAST → LOAD_FAST_BORROW rewrite that CPython runs as the
-// optimize_load_fast pass in Python/flowgraph.c. v0.7.15 lifts that
-// rewrite into compiler/optimize, at which point this function
-// reverts to plain LOAD_FAST.
+// plain LOAD_FAST; the LOAD_FAST → LOAD_FAST_BORROW promotion is
+// owned by the optimize_load_fast pass
+// (compiler/flowgraph/optimize_load_fast.go).
 //
 // For nameOpGlobal the oparg is the names-table index shifted left
 // by 1 with the low bit cleared (push_null = 0). Call-target uses
@@ -100,7 +98,7 @@ func (u *compileUnit) emitNameLoad(name string, loc bytecode.Loc) {
 	op := bytecode.LOAD_NAME
 	switch kind {
 	case nameOpFast:
-		op = bytecode.LOAD_FAST_BORROW
+		op = bytecode.LOAD_FAST
 	case nameOpDeref:
 		op = bytecode.LOAD_DEREF
 	case nameOpGlobal:
@@ -117,7 +115,10 @@ func (u *compileUnit) emitNameLoad(name string, loc bytecode.Loc) {
 // nameOpGlobal the LOAD_GLOBAL oparg gets its low bit set
 // (push_null = 1) so the runtime pushes the implicit NULL the
 // CALL opcode expects between callable and arg0. For every other
-// kind the emit is identical to emitNameLoad.
+// kind the emit is identical to emitNameLoad — including the
+// nameOpFast arm, which emits plain LOAD_FAST and defers the
+// LOAD_FAST_BORROW promotion to the optimize_load_fast pass
+// (compiler/flowgraph/optimize_load_fast.go).
 //
 // SOURCE: CPython 3.14 Python/codegen.c::compiler_load_global with
 // push_null=1.
@@ -126,7 +127,7 @@ func (u *compileUnit) emitNameLoadCall(name string, loc bytecode.Loc) {
 	op := bytecode.LOAD_NAME
 	switch kind {
 	case nameOpFast:
-		op = bytecode.LOAD_FAST_BORROW
+		op = bytecode.LOAD_FAST
 	case nameOpDeref:
 		op = bytecode.LOAD_DEREF
 	case nameOpGlobal:

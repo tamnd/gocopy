@@ -21,16 +21,18 @@ import (
 //
 //   - Push a child compileUnit linked to the parent. The child's
 //     Source/Filename are inherited; FirstLineNo is the def line.
-//   - Emit RESUME 0 + LOAD_FAST_BORROW 0 + RETURN_VALUE 0 into the
+//   - Emit RESUME 0 + LOAD_FAST 0 + RETURN_VALUE 0 into the
 //     child's first block. Locs are chosen so EncodeLineTable
 //     produces the same bytes as the classifier's
 //     bytecode.FuncReturnArgLineTable hand-built table:
 //       RESUME at Loc{defLine, defLine, 0, 0} — SHORT_FORM [0x80,
 //       0x00] (lineDelta=0 vs FirstLineNo, col=endCol=0).
-//       LOAD_FAST_BORROW at Loc{bodyLine, bodyLine, argCol, argEnd}
+//       LOAD_FAST at Loc{bodyLine, bodyLine, argCol, argEnd}
 //       — ONE_LINE_1 (lineDelta=1 from defLine).
 //       RETURN_VALUE at Loc{bodyLine, bodyLine, retKwCol, argEnd} —
 //       SHORT_FORM (lineDelta=0).
+//     The LOAD_FAST → LOAD_FAST_BORROW promotion is owned by the
+//     optimize_load_fast pass downstream.
 //   - Add nil to the child's Consts pool so co_consts[0] = None
 //     matches the classifier's funcCode.Consts shape (CPython's
 //     compiler_codegen plants the implicit-return-None const at
@@ -123,7 +125,7 @@ func visitFunctionDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	}
 	childBlock.Instrs = append(childBlock.Instrs,
 		ir.Instr{Op: bytecode.RESUME, Arg: 0, Loc: resumeLoc},
-		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: 0, Loc: argLoc},
+		ir.Instr{Op: bytecode.LOAD_FAST, Arg: 0, Loc: argLoc},
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc},
 	)
 	child.addConst(nil)

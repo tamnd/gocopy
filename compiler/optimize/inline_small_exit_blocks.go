@@ -7,14 +7,36 @@ import (
 
 // inlineSmallExitBlocks duplicates a small terminator block (one
 // ending in RETURN_VALUE, with at most maxInlineExitInstrs
-// instructions) into every predecessor that reaches it via
-// fall-through or unconditional JUMP_FORWARD, then removes the merge
-// block from seq.Blocks (and drops any consumed JUMP_FORWARD).
+// instructions) into every predecessor that reaches it via an
+// unconditional JUMP_FORWARD, replacing the JUMP_FORWARD with the
+// inlined tail. Predecessors that reach the candidate via
+// fall-through are LEFT alone — CPython's
+// basicblock_inline_small_or_no_lineno_blocks only acts on blocks
+// that end with an unconditional jump, so the structural depth at
+// the merge point matches CPython exactly: a block falling through
+// to a small RETURN_VALUE merge keeps its fallthrough edge, and the
+// merge block survives.
 //
-// At v0.7.6 this is a narrow specialisation of CPython 3.14
+// The merge block is removed from seq.Blocks only when every
+// predecessor was inlined (i.e. no fall-through pred remains). When
+// a fall-through pred survives, the merge block stays alive and
+// resolveJumps later linearises it as the contiguous bytecode tail.
+//
+// Why fall-through must NOT be inlined:
+// optimize_load_fast (CPython 3.14 Python/flowgraph.c:2776) is
+// per-block; refs still on the operand stack at end-of-block are
+// flagged REF_UNCONSUMED, which suppresses promotion of the
+// LOAD_FAST that produced them. Inlining the RETURN_VALUE into a
+// fall-through pred would consume the ref within the same block and
+// erroneously promote the LOAD_FAST to LOAD_FAST_BORROW — breaking
+// byte parity for ternary IfExp shapes whose else branch reaches
+// the merge by fall-through.
+//
+// At v0.7.10.4 this is a narrow specialisation of CPython 3.14
 // Python/flowgraph.c::inline_small_or_no_lineno_blocks for the
 // shapes the visitor emits (the BoolOp / IfExp merge tail of
-// STORE_NAME + LOAD_CONST None + RETURN_VALUE).
+// STORE_NAME + LOAD_CONST None + RETURN_VALUE, plus the IfExp
+// JUMP_FORWARD → end:RETURN_VALUE shape).
 //
 // Skip rules:
 //   - seq nil or len(seq.Blocks) <= 1 — nothing to inline.
@@ -29,7 +51,7 @@ import (
 // no-op. v0.7.6 calls it once; v0.7.13's full optimize_cfg loop
 // runs it together with the rest of the CFG passes.
 //
-// SOURCE: CPython 3.14 Python/flowgraph.c::inline_small_or_no_lineno_blocks.
+// SOURCE: CPython 3.14 Python/flowgraph.c::basicblock_inline_small_or_no_lineno_blocks.
 func inlineSmallExitBlocks(seq *ir.InstrSeq) {
 	if seq == nil || len(seq.Blocks) <= 1 {
 		return
@@ -40,16 +62,18 @@ func inlineSmallExitBlocks(seq *ir.InstrSeq) {
 			i++
 			continue
 		}
-		preds, ok := collectInlinablePredecessors(seq, i, b)
-		if !ok || len(preds) == 0 {
+		jumpPreds, hasFallthrough, ok := collectInlinablePredecessors(seq, i, b)
+		if !ok || len(jumpPreds) == 0 {
 			i++
 			continue
 		}
-		for _, p := range preds {
-			if p.viaJump {
-				p.block.Instrs = p.block.Instrs[:len(p.block.Instrs)-1]
-			}
+		for _, p := range jumpPreds {
+			p.block.Instrs = p.block.Instrs[:len(p.block.Instrs)-1]
 			p.block.Instrs = append(p.block.Instrs, cloneInstrs(b.Instrs)...)
+		}
+		if hasFallthrough {
+			i++
+			continue
 		}
 		seq.Blocks = append(seq.Blocks[:i], seq.Blocks[i+1:]...)
 	}
@@ -61,12 +85,12 @@ func inlineSmallExitBlocks(seq *ir.InstrSeq) {
 // in v0.7.5+ as new shapes need it.
 const maxInlineExitInstrs = 6
 
-// inlinePred describes one predecessor of an inline candidate.
-// viaJump records whether the predecessor reaches the candidate via
-// JUMP_FORWARD (true) or fall-through (false).
+// inlinePred describes one JUMP_FORWARD predecessor of an inline
+// candidate. (Fall-through predecessors are reported via the
+// hasFallthrough bool from collectInlinablePredecessors and are not
+// inlined.)
 type inlinePred struct {
-	block   *ir.Block
-	viaJump bool
+	block *ir.Block
 }
 
 // inlineExitCandidate reports whether b is eligible to be duplicated
@@ -82,19 +106,21 @@ func inlineExitCandidate(b *ir.Block) bool {
 	return b.Instrs[n-1].Op == bytecode.RETURN_VALUE
 }
 
-// collectInlinablePredecessors returns the predecessors of b at
-// seq.Blocks[idx] together with how they reach it. The second return
-// is false when at least one predecessor reaches b via a conditional
-// or backward jump — in that case the merge block must stay alive.
-func collectInlinablePredecessors(seq *ir.InstrSeq, idx int, b *ir.Block) ([]inlinePred, bool) {
-	var preds []inlinePred
+// collectInlinablePredecessors classifies the predecessors of b at
+// seq.Blocks[idx] by how they reach it. JUMP_FORWARD preds are
+// returned in jumpPreds and will be inlined; a fall-through pred
+// sets hasFallthrough = true. The third return is false when at
+// least one predecessor reaches b via a conditional or backward
+// jump — in that case the merge block must stay alive AND keep its
+// labelled identity (no inlining at all).
+func collectInlinablePredecessors(seq *ir.InstrSeq, idx int, b *ir.Block) (jumpPreds []inlinePred, hasFallthrough bool, ok bool) {
 	for j, p := range seq.Blocks {
 		if p == b {
 			continue
 		}
 		if len(p.Instrs) == 0 {
 			if j+1 == idx {
-				preds = append(preds, inlinePred{block: p})
+				hasFallthrough = true
 			}
 			continue
 		}
@@ -104,19 +130,19 @@ func collectInlinablePredecessors(seq *ir.InstrSeq, idx int, b *ir.Block) ([]inl
 				continue
 			}
 			if last.Op == bytecode.JUMP_FORWARD {
-				preds = append(preds, inlinePred{block: p, viaJump: true})
+				jumpPreds = append(jumpPreds, inlinePred{block: p})
 				continue
 			}
-			return nil, false
+			return nil, false, false
 		}
 		if isTerminatorOp(last.Op) {
 			continue
 		}
 		if j+1 == idx {
-			preds = append(preds, inlinePred{block: p})
+			hasFallthrough = true
 		}
 	}
-	return preds, true
+	return jumpPreds, hasFallthrough, true
 }
 
 // cloneInstrs returns a deep copy of instrs so duplication into

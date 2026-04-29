@@ -56,14 +56,19 @@ import (
 // assembly.
 //
 // Pipeline order (gocopy approximation of CPython 3.14
-// _PyCfg_OptimizeCodeUnit, Python/flowgraph.c:3659):
+// _PyCfg_OptimizeCodeUnit + _PyCfg_OptimizedCfgToInstructionSequence,
+// Python/flowgraph.c:3659 + 4033):
 //
 //  1. eliminateEmptyBlocks — drops empty labelled blocks.
 //  2. inlineSmallExitBlocks — duplicates RETURN_VALUE-tail blocks.
 //  3. flowgraph.InsertSuperinstructions — fuses LOAD_FAST/STORE_FAST
 //     pairs into super-instructions. v0.7.10.3 ports
 //     Python/flowgraph.c:2588 insert_superinstructions.
-//  4. resolveJumps — relocates labels to byte distances and flattens
+//  4. flowgraph.OptimizeLoadFast — strength-reduces LOAD_FAST and
+//     LOAD_FAST_LOAD_FAST into the borrowed-reference variants
+//     where per-block lifetime analysis proves the borrow is safe.
+//     v0.7.10.4 ports Python/flowgraph.c:2776 optimize_load_fast.
+//  5. resolveJumps — relocates labels to byte distances and flattens
 //     to a single block.
 func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 	if seq == nil {
@@ -72,6 +77,7 @@ func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 	eliminateEmptyBlocks(seq)
 	inlineSmallExitBlocks(seq)
 	flowgraph.InsertSuperinstructions(seq)
+	flowgraph.OptimizeLoadFast(seq)
 	resolveJumps(seq)
 	return seq
 }

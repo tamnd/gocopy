@@ -34,13 +34,14 @@ import (
 //     Flags=0x13 (CO_OPTIMIZED|CO_NEWLOCALS|CO_NESTED).
 //   - Outer unit:
 //
-//     MAKE_CELL 0 + RESUME 0 + LOAD_FAST_BORROW 0 + BUILD_TUPLE 1 +
+//     MAKE_CELL 0 + RESUME 0 + LOAD_FAST 0 + BUILD_TUPLE 1 +
 //     LOAD_CONST <innerCode> + MAKE_FUNCTION 0 +
-//     SET_FUNCTION_ATTRIBUTE 8 + STORE_FAST 1 + LOAD_FAST_BORROW 1 +
+//     SET_FUNCTION_ATTRIBUTE 8 + STORE_FAST 1 + LOAD_FAST 1 +
 //     RETURN_VALUE 0. co_consts=[innerCode] (NO None — every path
 //     returns explicitly via `return g`),
 //     LocalsPlusKinds=[LocalsKindArgCell, LocalsKindLocal],
-//     Flags=0x03.
+//     Flags=0x03. The LOAD_FAST → LOAD_FAST_BORROW promotion is
+//     owned by the optimize_load_fast pass downstream.
 //   - Module unit: emit LOAD_CONST <outerCode> + MAKE_FUNCTION 0 +
 //     STORE_NAME f at moduleOuterLoc; visitModule's trailing
 //     LOAD_CONST None + RETURN_VALUE share the same Loc and merge
@@ -210,13 +211,13 @@ func visitClosureDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast b
 	outerBlock.Instrs = append(outerBlock.Instrs,
 		ir.Instr{Op: bytecode.MAKE_CELL, Arg: 0, Loc: bytecode.Loc{}},
 		ir.Instr{Op: bytecode.RESUME, Arg: 0, Loc: outerResumeLoc},
-		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: 0, Loc: innerDefRunLoc},
+		ir.Instr{Op: bytecode.LOAD_FAST, Arg: 0, Loc: innerDefRunLoc},
 		ir.Instr{Op: bytecode.BUILD_TUPLE, Arg: 1, Loc: innerDefRunLoc},
 		ir.Instr{Op: bytecode.LOAD_CONST, Arg: innerCodeIdx, Loc: innerDefRunLoc},
 		ir.Instr{Op: bytecode.MAKE_FUNCTION, Arg: 0, Loc: innerDefRunLoc},
 		ir.Instr{Op: bytecode.SET_FUNCTION_ATTRIBUTE, Arg: 8, Loc: innerDefRunLoc},
 		ir.Instr{Op: bytecode.STORE_FAST, Arg: 1, Loc: innerDefRunLoc},
-		ir.Instr{Op: bytecode.LOAD_FAST_BORROW, Arg: 1, Loc: outerLoadGLoc},
+		ir.Instr{Op: bytecode.LOAD_FAST, Arg: 1, Loc: outerLoadGLoc},
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: outerReturnLoc},
 	)
 
