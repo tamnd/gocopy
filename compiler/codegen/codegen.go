@@ -37,13 +37,16 @@
 // dispatch arm are gone. visitWhileStmt is the first visitor that
 // emits a backward jump (JUMP_BACKWARD), and v0.7.7 lifts the
 // resolveJumps tripwire that previously panicked on backward
-// targets.
-// v0.6.24 closes band B with modFor: a single top-level
-// `for loopVar in iter: bodyVar = val` loop with no break/continue/
-// else, where iter and loopVar are 1..15-char Names and val is a
-// small int (0..255). Adds the FOR_ITER + END_FOR + POP_ITER opcode
-// trio; the trailing 4-cu loop-exit run is attributed back to the
-// for line via a LONG line-table entry.
+// targets. v0.7.8 closes phase B by promoting modFor — a single
+// top-level `for loopVar in iter: bodyVar = val` loop with no
+// break/continue/else, where iter and loopVar are 1..15-char Names
+// and val is a small int (0..255) — to the visitor pipeline as
+// visitForStmt; the v0.6.24 codegen classifier file (visit_for.go)
+// and Build dispatch arm are gone. visitForStmt is the first visitor
+// that emits FOR_ITER + GET_ITER + END_FOR + POP_ITER (the iterator
+// protocol opcodes) and the first whose CFG has both a forward
+// (FOR_ITER → exit) and a backward (JUMP_BACKWARD → top) labelled
+// edge sharing one body block.
 // v0.6.25 opens band C with modFuncDef: a single top-level
 // `def f(arg): return arg` definition where f and arg are 1..15-char
 // identifiers, the body is a single `return <argName>` statement,
@@ -98,9 +101,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if f, ok := classifyForModule(mod, opts.Source); ok {
-		return buildForModule(f, opts)
-	}
 	if f, ok := classifyFuncDefModule(mod, opts.Source); ok {
 		return buildFuncDefModule(f, opts)
 	}
