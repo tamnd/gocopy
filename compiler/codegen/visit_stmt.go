@@ -25,6 +25,8 @@ func visitStmt(u *compileUnit, stmt ast.Stmt, source []byte, isLast bool) (bytec
 		return visitIfStmt(u, s, source, isLast)
 	case *ast.While:
 		return visitWhileStmt(u, s, source, isLast)
+	case *ast.For:
+		return visitForStmt(u, s, source, isLast)
 	case *ast.Pass, *ast.ExprStmt:
 		loc, err := stmtNopLoc(stmt, source)
 		if err != nil {
