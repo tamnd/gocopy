@@ -71,7 +71,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	if !ok || ret.Value == nil {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
-	if ret.P.Col > 255 || !validateFuncBodyAssignRHS(ret.Value) {
+	if ret.P.Col > 255 || !validateFuncBodyReturnValue(ret.Value) {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
 	for i := range lastIdx {
@@ -319,7 +319,7 @@ func validateFuncBodyIf(ifs *ast.If) bool {
 	}
 	switch body := ifs.Body[0].(type) {
 	case *ast.Return:
-		return body.Value != nil && body.P.Col <= 255 && validateFuncBodyAssignRHS(body.Value)
+		return body.Value != nil && body.P.Col <= 255 && validateFuncBodyReturnValue(body.Value)
 	case *ast.Assign:
 		return validateFuncBodyAssign(body)
 	}
@@ -337,6 +337,36 @@ func validateFuncBodyAssign(a *ast.Assign) bool {
 		return false
 	}
 	return validateFuncBodyAssignRHS(a.Value)
+}
+
+// validateFuncBodyReturnValue reports whether e is a value the
+// function-body visitor accepts as a Return value. Returns are the
+// only position where a ternary IfExp is allowed: outside of return
+// position, the visitor falls through (the legacy classifier still
+// handles those rare shapes).
+//
+// Ternary IfExp must have a single-op single-comparator Compare
+// Test (non-IS_OP), and both Body and OrElse must validate as
+// ordinary RHS expressions.
+func validateFuncBodyReturnValue(e ast.Expr) bool {
+	if ifexpr, ok := e.(*ast.IfExp); ok {
+		if ifexpr.P.Col > 255 {
+			return false
+		}
+		cmp, ok := ifexpr.Test.(*ast.Compare)
+		if !ok || cmp.P.Col > 255 || len(cmp.Ops) != 1 || len(cmp.Comparators) != 1 {
+			return false
+		}
+		op, _, ok := cmpOpFromAstOp(cmp.Ops[0])
+		if !ok || op == bytecode.IS_OP {
+			return false
+		}
+		if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
+			return false
+		}
+		return validateFuncBodyAssignRHS(ifexpr.Body) && validateFuncBodyAssignRHS(ifexpr.OrElse)
+	}
+	return validateFuncBodyAssignRHS(e)
 }
 
 // emitFuncBodyIf emits the gated-then If shape inside a function
@@ -412,7 +442,14 @@ func emitFuncBodyIf(u *compileUnit, ifs *ast.If, lines [][]byte) error {
 // 3.14 attributes RETURN_VALUE to the constant's span instead of
 // the return-keyword span — matching that here keeps the linetable
 // byte-identical.
+//
+// *ast.IfExp is dispatched to emitFuncBodyTernaryReturn, which
+// expands `return Body if Test else OrElse` into a branched IR with
+// two RETURN_VALUE instructions.
 func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) (uint16, error) {
+	if ifexpr, ok := ret.Value.(*ast.IfExp); ok {
+		return emitFuncBodyTernaryReturn(u, ret, ifexpr, lines)
+	}
 	_, valEnd, err := visitFuncExpr(u, ret.Value, lines)
 	if err != nil {
 		return 0, err
@@ -430,6 +467,97 @@ func emitFuncBodyReturn(u *compileUnit, ret *ast.Return, lines [][]byte) (uint16
 		ir.Instr{Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc},
 	)
 	return valEnd, nil
+}
+
+// emitFuncBodyTernaryReturn lowers `return Body if Test else OrElse`
+// inside a function body. Mirrors compiler/func_body.go's IfExp arm
+// of the Return handler:
+//
+//   - Pre-compute ternEnd from astExprEndCol(OrElse) before walking
+//     OrElse so both RETURN_VALUE Locs span (retCol, ternEnd) — the
+//     whole-ternary span CPython attributes RETURN_VALUE to.
+//   - Walk Compare.Left + Comparators[0] via visitFuncExpr.
+//   - Emit COMPARE_OP / CONTAINS_OP with the conditional-context
+//     bit (oparg+16) at condLoc(left.start, right.end).
+//   - POP_JUMP_IF_FALSE → falseLabel.
+//   - True-branch block: NOT_TAKEN at condLoc, walk Body via
+//     visitFuncExpr, RETURN_VALUE at retLoc(retCol, ternEnd).
+//   - False-branch block bound to falseLabel: a *ast.Name whose
+//     resolveNameOp returns nameOpFast emits LOAD_FAST (move
+//     semantics) — the trailing RETURN_VALUE consumes the slot, so
+//     CPython's optimize_load_fast does NOT borrow. Other shapes
+//     fall back to visitFuncExpr.
+//   - RETURN_VALUE at retLoc(retCol, ternEnd).
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_expr_ifexp +
+// codegen_compare conditional-context specialisation.
+func emitFuncBodyTernaryReturn(u *compileUnit, ret *ast.Return, ifexpr *ast.IfExp, lines [][]byte) (uint16, error) {
+	ternEnd := uint16(astExprEndCol(lines, ret.P.Line, ifexpr.OrElse))
+
+	cmp := ifexpr.Test.(*ast.Compare)
+	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
+
+	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
+	if err != nil {
+		return 0, err
+	}
+	_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
+	if err != nil {
+		return 0, err
+	}
+	condLoc := bytecode.Loc{
+		Line: uint32(cmp.P.Line), EndLine: uint32(cmp.P.Line),
+		Col: lc, EndCol: re,
+	}
+	block := u.currentBlock()
+	block.Instrs = append(block.Instrs, ir.Instr{
+		Op: op, Arg: uint32(base + 16), Loc: condLoc,
+	})
+	falseLabel := u.Seq.AllocLabel()
+	block.AddJump(bytecode.POP_JUMP_IF_FALSE, falseLabel, condLoc)
+
+	thenBlock := u.Seq.AddBlock()
+	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
+		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
+	})
+
+	if _, _, err := visitFuncExpr(u, ifexpr.Body, lines); err != nil {
+		return 0, err
+	}
+	retLoc := bytecode.Loc{
+		Line: uint32(ret.P.Line), EndLine: uint32(ret.P.Line),
+		Col: uint16(ret.P.Col), EndCol: ternEnd,
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc,
+	})
+
+	falseBlock := u.Seq.AddBlock()
+	u.Seq.BindLabel(falseLabel, falseBlock)
+
+	if name, ok := ifexpr.OrElse.(*ast.Name); ok {
+		if kind, arg := u.resolveNameOp(name.Id); kind == nameOpFast {
+			nameLoc := bytecode.Loc{
+				Line: uint32(name.P.Line), EndLine: uint32(name.P.Line),
+				Col: uint16(name.P.Col), EndCol: uint16(name.P.Col) + uint16(len(name.Id)),
+			}
+			falseBlock.Instrs = append(falseBlock.Instrs, ir.Instr{
+				Op: bytecode.LOAD_FAST, Arg: arg, Loc: nameLoc,
+			})
+		} else {
+			if _, _, err := visitFuncExpr(u, ifexpr.OrElse, lines); err != nil {
+				return 0, err
+			}
+		}
+	} else {
+		if _, _, err := visitFuncExpr(u, ifexpr.OrElse, lines); err != nil {
+			return 0, err
+		}
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.RETURN_VALUE, Arg: 0, Loc: retLoc,
+	})
+	return ternEnd, nil
 }
 
 // validateFuncBodyAssignRHS reports whether e is an expression
