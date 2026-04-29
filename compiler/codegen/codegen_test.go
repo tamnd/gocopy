@@ -2741,6 +2741,178 @@ func TestBuildIfElseMultiVarFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildForSimple covers `for x in xs:\n    y = 1`. Verifies the
+// FOR_ITER+JUMP_BACKWARD pair, the 4-cu setup at iter location, the
+// 3-cu body-trailing run at bodyVar location, and the 4-cu loop-exit
+// tail attributed back to the for line via a LONG line-table entry.
+func TestBuildForSimple(t *testing.T) {
+	src := []byte("for x in xs:\n    y = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.For{
+			P:      ast.Pos{Line: 1, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "x"},
+			Iter:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "xs"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "xs" || co.Names[1] != "x" || co.Names[2] != "y" {
+		t.Fatalf("names = %v, want [xs x y]", co.Names)
+	}
+	if len(co.Consts) != 2 {
+		t.Fatalf("consts len = %d, want 2", len(co.Consts))
+	}
+	if iv, ok := co.Consts[0].(int64); !ok || iv != 1 {
+		t.Fatalf("consts[0] = %v, want int64(1)", co.Consts[0])
+	}
+	if co.Consts[1] != nil {
+		t.Fatalf("consts[1] = %v, want nil", co.Consts[1])
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildForSameNamesDedupe covers `for x in x: x = 1` — same
+// identifier as iter, loopVar and bodyVar collapses to a single
+// co_names entry via the insertion-order map.
+func TestBuildForSameNamesDedupe(t *testing.T) {
+	src := []byte("for x in x:\n    x = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.For{
+			P:      ast.Pos{Line: 1, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "x"},
+			Iter:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "x"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "x"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "x" {
+		t.Fatalf("names = %v, want [x] (dedupe)", co.Names)
+	}
+}
+
+// TestBuildForMultiVarFallsThrough rejects a body with two
+// assignments — the single-assign body rule.
+func TestBuildForMultiVarFallsThrough(t *testing.T) {
+	src := []byte("for x in xs:\n    y = 1\n    z = 2\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.For{
+			P:      ast.Pos{Line: 1, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "x"},
+			Iter:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "xs"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+				&ast.Assign{
+					P:       ast.Pos{Line: 3, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 3, Col: 4}, Id: "z"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 3, Col: 8}, Kind: "int", Value: int64(2)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(multi-stmt body) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildForWithElseFallsThrough rejects `for x in xs: y = 1 /
+// else: y = 2` — codegen does not own loops with else clauses.
+func TestBuildForWithElseFallsThrough(t *testing.T) {
+	src := []byte("for x in xs:\n    y = 1\nelse:\n    y = 2\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.For{
+			P:      ast.Pos{Line: 1, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "x"},
+			Iter:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "xs"},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+			Orelse: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 4, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 4, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 4, Col: 8}, Kind: "int", Value: int64(2)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(for+else) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildForNonNameIterFallsThrough rejects `for x in range(10):
+// y = 1` — the iter-must-be-Name rule.
+func TestBuildForNonNameIterFallsThrough(t *testing.T) {
+	src := []byte("for x in range(10):\n    y = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.For{
+			P:      ast.Pos{Line: 1, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "x"},
+			Iter: &ast.Call{
+				P:    ast.Pos{Line: 1, Col: 9},
+				Func: &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "range"},
+				Args: []ast.Expr{&ast.Constant{P: ast.Pos{Line: 1, Col: 15}, Kind: "int", Value: int64(10)}},
+			},
+			Body: []ast.Stmt{
+				&ast.Assign{
+					P:       ast.Pos{Line: 2, Col: 4},
+					Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 4}, Id: "y"}},
+					Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 8}, Kind: "int", Value: int64(1)},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(non-Name iter) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildWhileSimple covers `while a:\n    x = 1`. Verifies the
 // 8-cu condition run, JUMP_BACKWARD 12 after the body, and the
 // trailing implicit-return-None run attributed back to the condition
