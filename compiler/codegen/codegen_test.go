@@ -105,21 +105,27 @@ func TestBuildThreePass(t *testing.T) {
 	}
 }
 
-// TestBuildAssignReturnsErrUnsupported guarantees the driver's
-// fallback contract: shapes codegen does not yet own surface as
-// ErrUnsupported so the classifier path takes over.
-func TestBuildAssignReturnsErrUnsupported(t *testing.T) {
+// TestBuildChainedAssignReturnsErrUnsupported guarantees the
+// driver's fallback contract: shapes codegen does not yet own
+// surface as ErrUnsupported so the classifier path takes over.
+// Chained assignment (`a = b = 1`) is a separate modKind the
+// classifier still owns.
+func TestBuildChainedAssignReturnsErrUnsupported(t *testing.T) {
 	mod := &ast.Module{Body: []ast.Stmt{
 		&ast.Assign{
-			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
-			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1)},
+			P: ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{
+				&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "a"},
+				&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "b"},
+			},
+			Value: &ast.Constant{P: ast.Pos{Line: 1, Col: 8}, Kind: "int", Value: int64(1)},
 		},
 	}}
 	_, err := Build(mod, nil, Options{
-		Source: []byte("x = 1\n"), Name: "<module>", QualName: "<module>",
+		Source: []byte("a = b = 1\n"), Name: "<module>", QualName: "<module>",
 	})
 	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Build(assign) error = %v, want ErrUnsupported", err)
+		t.Fatalf("Build(chained assign) error = %v, want ErrUnsupported", err)
 	}
 }
 
@@ -233,6 +239,152 @@ func TestBuildDocstringNonAsciiRejected(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Build(non-ascii) error = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildAssignSmallInt covers the simplest int-assign shape:
+// `x = 1` lowers to LOAD_SMALL_INT (oparg = the int value).
+func TestBuildAssignSmallInt(t *testing.T) {
+	src := []byte("x = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(small int): %v", err)
+	}
+	wantBC := bytecode.AssignSmallIntBytecode(1, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.AssignLineTable(1, 1, 4, 5, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != int64(1) || co.Consts[1] != nil {
+		t.Fatalf("consts = %v, want [1, nil]", co.Consts)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "x" {
+		t.Fatalf("names = %v, want [x]", co.Names)
+	}
+}
+
+// TestBuildAssignLargeInt covers the LOAD_CONST path: an int >= 256
+// can't fit in LOAD_SMALL_INT's byte oparg.
+func TestBuildAssignLargeInt(t *testing.T) {
+	src := []byte("x = 1000\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1000)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(large int): %v", err)
+	}
+	wantBC := bytecode.AssignBytecode(1, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.AssignLineTable(1, 1, 4, 8, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildAssignNone covers the consts-collapsed shape: `x = None`
+// consts is just [nil] — both LOAD_CONSTs reference index 0.
+func TestBuildAssignNone(t *testing.T) {
+	src := []byte("x = None\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "None"},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(None): %v", err)
+	}
+	wantBC := bytecode.AssignBytecode(0, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+}
+
+// TestBuildAssignWithTail covers a string assignment followed by
+// trailing no-op statements.
+func TestBuildAssignWithTail(t *testing.T) {
+	src := []byte("name = \"hi\"\npass\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "name"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 7}, Kind: "str", Value: "hi"},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+		&ast.Pass{P: ast.Pos{Line: 3}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(assign+tail): %v", err)
+	}
+	wantBC := bytecode.AssignBytecode(1, 2)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.AssignLineTable(1, 4, 7, 11, []bytecode.NoOpStmt{
+		{Line: 2, EndCol: 4},
+		{Line: 3, EndCol: 4},
+	})
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildAssignNegLiteralFallsThrough ensures codegen rejects
+// negative-literal assignments (UnaryOp wrapping a Constant) so the
+// classifier's negLiteral path keeps owning that sub-shape.
+func TestBuildAssignNegLiteralFallsThrough(t *testing.T) {
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 4},
+				Op:      "USub",
+				Operand: &ast.Constant{P: ast.Pos{Line: 1, Col: 5}, Kind: "int", Value: int64(1)},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: []byte("x = -1\n"), Filename: "x.py",
+		Name: "<module>", QualName: "<module>",
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(neg literal) error = %v, want ErrUnsupported", err)
 	}
 }
 

@@ -103,6 +103,30 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			[]any{cls.docText, nil},
 			[]string{"__doc__"},
 		)
+	case modAssign:
+		lt := bytecode.AssignLineTable(cls.asgnLine, cls.asgnNameLen, cls.asgnValStart, cls.asgnValEnd, cls.stmts)
+		if iv, ok := cls.asgnValue.(int64); ok {
+			if iv >= 0 && iv <= 255 {
+				return module(filename,
+					bytecode.AssignSmallIntBytecode(byte(iv), len(cls.stmts)),
+					lt, []any{iv, nil}, []string{cls.asgnName},
+				)
+			}
+			return module(filename,
+				bytecode.AssignBytecode(1, len(cls.stmts)),
+				lt, []any{iv, nil}, []string{cls.asgnName},
+			)
+		}
+		consts := []any{cls.asgnValue, nil}
+		noneIdx := byte(1)
+		if cls.asgnValue == nil {
+			consts = []any{nil}
+			noneIdx = 0
+		}
+		return module(filename,
+			bytecode.AssignBytecode(noneIdx, len(cls.stmts)),
+			lt, consts, []string{cls.asgnName},
+		)
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil

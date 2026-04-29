@@ -3,8 +3,10 @@
 // running it through the v0.6.5 assembler.
 //
 // At v0.6.6 codegen owned the empty-module shape. v0.6.7 added the
-// modNoOps shape (N >= 1 no-op statements). v0.6.8 adds the
+// modNoOps shape (N >= 1 no-op statements). v0.6.8 added the
 // modDocstring shape: a leading string literal followed by zero or
+// more no-op statements. v0.6.9 adds the simple-constant modAssign
+// shape: `<name> = <const>` (non-folded value) followed by zero or
 // more no-op statements. Anything else returns ErrUnsupported and
 // the caller falls back to the classifier.
 //
@@ -52,6 +54,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if d, ok := classifyDocstringModule(mod, opts.Source); ok {
 		return buildDocstringModule(d, opts)
+	}
+	if a, ok := classifyAssignModule(mod, opts.Source); ok {
+		return buildAssignModule(a, opts)
 	}
 	return nil, ErrUnsupported
 }
