@@ -28,6 +28,8 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 		return visitFuncBinOpExpr(u, v, lines)
 	case *ast.Compare:
 		return visitFuncCompareExpr(u, v, lines)
+	case *ast.Call:
+		return visitFuncCallExpr(u, v, lines)
 	}
 	return 0, 0, ErrNotImplemented
 }
@@ -168,6 +170,65 @@ func visitFuncCompareExpr(u *compileUnit, c *ast.Compare, lines [][]byte) (uint1
 		Op: op, Arg: uint32(base), Loc: loc,
 	})
 	return lc, re, nil
+}
+
+// visitFuncCallExpr emits a positional-only Call in function-body
+// scope. The callee is loaded via emitNameLoadCall — for a global
+// or builtin Name that means LOAD_GLOBAL with bit 0 of the oparg
+// set (the "push NULL before call" hint that replaces the explicit
+// PUSH_NULL the module-scope visitor emits). Args are recursed in
+// order; fuseLflblflbTail collapses the trailing pair if both are
+// LOAD_FAST_BORROW with slot ≤ 15.
+//
+// Keyword args, *args, and **kwargs land in later steps. Func
+// shapes other than *ast.Name (e.g. Attribute method calls) also
+// land later.
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_call (positional
+// fast path).
+func visitFuncCallExpr(u *compileUnit, c *ast.Call, lines [][]byte) (uint16, uint16, error) {
+	if len(c.Keywords) != 0 {
+		return 0, 0, ErrNotImplemented
+	}
+	fn, ok := c.Func.(*ast.Name)
+	if !ok {
+		return 0, 0, ErrNotImplemented
+	}
+	if len(fn.Id) < 1 || len(fn.Id) > 15 || fn.P.Col > 255 {
+		return 0, 0, ErrNotImplemented
+	}
+	funcCol := uint16(fn.P.Col)
+	funcEnd := funcCol + uint16(len(fn.Id))
+	funcLoc := bytecode.Loc{
+		Line: uint32(fn.P.Line), EndLine: uint32(fn.P.Line),
+		Col: funcCol, EndCol: funcEnd,
+	}
+	u.emitNameLoadCall(fn.Id, funcLoc)
+
+	scanFrom := funcEnd
+	for _, e := range c.Args {
+		_, argEnd, err := visitFuncExpr(u, e, lines)
+		if err != nil {
+			return 0, 0, err
+		}
+		scanFrom = argEnd
+	}
+	if len(c.Args) >= 2 {
+		fuseLflblflbTail(u)
+	}
+
+	closeEnd := scanCallEnd(lines, c.P.Line, byte(scanFrom))
+	if closeEnd == byte(scanFrom) {
+		return 0, 0, ErrNotImplemented
+	}
+	loc := bytecode.Loc{
+		Line: uint32(c.P.Line), EndLine: uint32(c.P.Line),
+		Col: funcCol, EndCol: uint16(closeEnd),
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: bytecode.CALL, Arg: uint32(len(c.Args)), Loc: loc,
+	})
+	return funcCol, uint16(closeEnd), nil
 }
 
 // fuseLflblflbTail scans the current block's last few instructions
