@@ -68,6 +68,12 @@
 // (0..255). First codegen path that emits a backward jump
 // (`JUMP_BACKWARD 12`); the trailing implicit-return-None run is
 // attributed back to the condition line, mirroring modIfElse.
+// v0.6.24 closes band B with modFor: a single top-level
+// `for loopVar in iter: bodyVar = val` loop with no break/continue/
+// else, where iter and loopVar are 1..15-char Names and val is a
+// small int (0..255). Adds the FOR_ITER + END_FOR + POP_ITER opcode
+// trio; the trailing 4-cu loop-exit run is attributed back to the
+// for line via a LONG line-table entry.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -169,6 +175,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if w, ok := classifyWhileModule(mod, opts.Source); ok {
 		return buildWhileModule(w, opts)
+	}
+	if f, ok := classifyForModule(mod, opts.Source); ok {
+		return buildForModule(f, opts)
 	}
 	return nil, ErrUnsupported
 }
