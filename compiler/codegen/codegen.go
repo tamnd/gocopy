@@ -47,14 +47,17 @@
 // protocol opcodes) and the first whose CFG has both a forward
 // (FOR_ITER → exit) and a backward (JUMP_BACKWARD → top) labelled
 // edge sharing one body block.
-// v0.6.25 opens band C with modFuncDef: a single top-level
+// v0.7.8 opens band C by promoting modFuncDef — a single top-level
 // `def f(arg): return arg` definition where f and arg are 1..15-char
 // identifiers, the body is a single `return <argName>` statement,
 // and there are no decorators/annotations/type-params/defaults/
-// vararg/kwarg. First codegen path that emits a nested code object;
-// the inner function CodeObject is hand-built mirroring the
-// classifier's `compileFuncDef` byte-for-byte rather than routed
-// through assemble.Assemble.
+// vararg/kwarg — to the visitor pipeline as visitFunctionDef; the
+// v0.6.25 codegen classifier file (visit_funcdef.go) and Build
+// dispatch arm are gone. visitFunctionDef is the first visitor that
+// pushes a nested compileUnit (compiler_enter_scope /
+// compiler_exit_scope) and the first to route a non-module unit
+// through optimize.Run + assemble.Assemble. It is also the first
+// visitor that emits LOAD_FAST_BORROW + MAKE_FUNCTION.
 // v0.6.26 adds modClosureDef: a single top-level
 // `def f(x): def g(): return x; return g` definition where f, x, and
 // g are 1..15-char identifiers and the inner function captures x as
@@ -101,9 +104,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if f, ok := classifyFuncDefModule(mod, opts.Source); ok {
-		return buildFuncDefModule(f, opts)
-	}
 	if c, ok := classifyClosureDefModule(mod, opts.Source); ok {
 		return buildClosureDefModule(c, opts)
 	}

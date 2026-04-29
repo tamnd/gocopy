@@ -55,6 +55,7 @@ type compileUnit struct {
 
 	Source []byte
 
+	Filename    string
 	Name        string
 	QualName    string
 	FirstLineNo int32
@@ -195,6 +196,7 @@ func Generate(mod *ast.Module, scope *symtable.Scope, opts GenerateOptions) (*ir
 	u := newCompileUnit(scope, opts.Name, opts.QualName, opts.FirstLineNo, nil)
 	u.Seq.FirstLineNo = opts.FirstLineNo
 	u.Source = opts.Source
+	u.Filename = opts.Filename
 	if err := visitModule(u, mod); err != nil {
 		return nil, nil, nil, err
 	}
