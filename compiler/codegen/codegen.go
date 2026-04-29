@@ -2,10 +2,11 @@
 // a fully-formed *bytecode.CodeObject by emitting an InstrSeq IR and
 // running it through the v0.6.5 assembler.
 //
-// At v0.6.6 codegen owned the empty-module shape. v0.6.7 extends to
-// modules whose body is N >= 1 no-op statements (`pass`, non-string
-// `Constant` expression statements). Anything else returns
-// ErrUnsupported and the caller falls back to the classifier.
+// At v0.6.6 codegen owned the empty-module shape. v0.6.7 added the
+// modNoOps shape (N >= 1 no-op statements). v0.6.8 adds the
+// modDocstring shape: a leading string literal followed by zero or
+// more no-op statements. Anything else returns ErrUnsupported and
+// the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -48,6 +49,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if stmts, ok := classifyNoOpModule(mod, opts.Source); ok {
 		return buildNoOpsModule(stmts, opts)
+	}
+	if d, ok := classifyDocstringModule(mod, opts.Source); ok {
+		return buildDocstringModule(d, opts)
 	}
 	return nil, ErrUnsupported
 }
