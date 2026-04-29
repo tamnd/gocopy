@@ -105,27 +105,36 @@ func TestBuildThreePass(t *testing.T) {
 	}
 }
 
-// TestBuildChainedAssignReturnsErrUnsupported guarantees the
-// driver's fallback contract: shapes codegen does not yet own
-// surface as ErrUnsupported so the classifier path takes over.
-// Chained assignment (`a = b = 1`) is a separate modKind the
-// classifier still owns.
-func TestBuildChainedAssignReturnsErrUnsupported(t *testing.T) {
+// TestBuildTupleAssignFallsThrough guarantees the driver's
+// fallback contract: shapes codegen does not yet own surface as
+// ErrUnsupported so the classifier path takes over. Tuple
+// unpacking (`x, y = 1, 2`) has a single Tuple target, not a
+// Name; the classifier still owns it.
+func TestBuildTupleAssignFallsThrough(t *testing.T) {
 	mod := &ast.Module{Body: []ast.Stmt{
 		&ast.Assign{
 			P: ast.Pos{Line: 1, Col: 0},
-			Targets: []ast.Expr{
-				&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "a"},
-				&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "b"},
+			Targets: []ast.Expr{&ast.Tuple{
+				P: ast.Pos{Line: 1, Col: 0},
+				Elts: []ast.Expr{
+					&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"},
+					&ast.Name{P: ast.Pos{Line: 1, Col: 3}, Id: "y"},
+				},
+			}},
+			Value: &ast.Tuple{
+				P: ast.Pos{Line: 1, Col: 7},
+				Elts: []ast.Expr{
+					&ast.Constant{P: ast.Pos{Line: 1, Col: 7}, Kind: "int", Value: int64(1)},
+					&ast.Constant{P: ast.Pos{Line: 1, Col: 10}, Kind: "int", Value: int64(2)},
+				},
 			},
-			Value: &ast.Constant{P: ast.Pos{Line: 1, Col: 8}, Kind: "int", Value: int64(1)},
 		},
 	}}
 	_, err := Build(mod, nil, Options{
-		Source: []byte("a = b = 1\n"), Name: "<module>", QualName: "<module>",
+		Source: []byte("x, y = 1, 2\n"), Name: "<module>", QualName: "<module>",
 	})
 	if !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Build(chained assign) error = %v, want ErrUnsupported", err)
+		t.Fatalf("Build(tuple assign) error = %v, want ErrUnsupported", err)
 	}
 }
 
@@ -395,5 +404,198 @@ func TestBuildNilModule(t *testing.T) {
 	}
 	if errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Build(nil) returned ErrUnsupported, want a distinct error")
+	}
+}
+
+// TestBuildMultiAssignTwoSmallInts covers the simplest multi-assign
+// shape: two `<name> = <small int>` statements. Both lower to
+// LOAD_SMALL_INT; consts has a phantom slot for the first value.
+func TestBuildMultiAssignTwoSmallInts(t *testing.T) {
+	src := []byte("x = 1\ny = 2\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1)},
+		},
+		&ast.Assign{
+			P:       ast.Pos{Line: 2, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "y"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 4}, Kind: "int", Value: int64(2)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(multi small ints): %v", err)
+	}
+	wantLT := bytecode.MultiAssignLineTable([]bytecode.AssignInfo{
+		{Line: 1, NameLen: 1, ValStart: 4, ValEnd: 5},
+		{Line: 2, NameLen: 1, ValStart: 4, ValEnd: 5},
+	}, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != int64(1) || co.Consts[1] != nil {
+		t.Fatalf("consts = %v, want [1, nil]", co.Consts)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "x" || co.Names[1] != "y" {
+		t.Fatalf("names = %v, want [x y]", co.Names)
+	}
+}
+
+// TestBuildMultiAssignNoneAndString covers consts dedup and mixed
+// non-int types: `x = None\ny = "hi"`.
+func TestBuildMultiAssignNoneAndString(t *testing.T) {
+	src := []byte("x = None\ny = \"hi\"\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "None"},
+		},
+		&ast.Assign{
+			P:       ast.Pos{Line: 2, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "y"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 4}, Kind: "str", Value: "hi"},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(multi None+str): %v", err)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != nil || co.Consts[1] != "hi" {
+		t.Fatalf("consts = %v, want [nil, \"hi\"]", co.Consts)
+	}
+}
+
+// TestBuildMultiAssignWithTail covers multi-assign followed by
+// trailing pass statements.
+func TestBuildMultiAssignWithTail(t *testing.T) {
+	src := []byte("x = 1\ny = 2\npass\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1)},
+		},
+		&ast.Assign{
+			P:       ast.Pos{Line: 2, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "y"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 2, Col: 4}, Kind: "int", Value: int64(2)},
+		},
+		&ast.Pass{P: ast.Pos{Line: 3}},
+		&ast.Pass{P: ast.Pos{Line: 4}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(multi+tail): %v", err)
+	}
+	wantLT := bytecode.MultiAssignLineTable([]bytecode.AssignInfo{
+		{Line: 1, NameLen: 1, ValStart: 4, ValEnd: 5},
+		{Line: 2, NameLen: 1, ValStart: 4, ValEnd: 5},
+	}, []bytecode.NoOpStmt{
+		{Line: 3, EndCol: 4},
+		{Line: 4, EndCol: 4},
+	})
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildChainedAssignTwoTargets covers `x = y = 1`. CPython
+// emits LOAD_SMALL_INT, COPY 1, STORE_NAME x, STORE_NAME y, then
+// the trailing return pair. StackSize is 2.
+func TestBuildChainedAssignTwoTargets(t *testing.T) {
+	src := []byte("x = y = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P: ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{
+				&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"},
+				&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "y"},
+			},
+			Value: &ast.Constant{P: ast.Pos{Line: 1, Col: 8}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(chain 2): %v", err)
+	}
+	wantLT := bytecode.ChainedAssignLineTable(1, []bytecode.ChainedTarget{
+		{NameStart: 0, NameLen: 1},
+		{NameStart: 4, NameLen: 1},
+	}, 8, 9, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+	if len(co.Names) != 2 || co.Names[0] != "x" || co.Names[1] != "y" {
+		t.Fatalf("names = %v, want [x y]", co.Names)
+	}
+}
+
+// TestBuildChainedAssignThreeTargets covers `a = b = c = 1`.
+func TestBuildChainedAssignThreeTargets(t *testing.T) {
+	src := []byte("a = b = c = 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P: ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{
+				&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "a"},
+				&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "b"},
+				&ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "c"},
+			},
+			Value: &ast.Constant{P: ast.Pos{Line: 1, Col: 12}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(chain 3): %v", err)
+	}
+	if len(co.Names) != 3 {
+		t.Fatalf("names = %v, want 3 entries", co.Names)
+	}
+}
+
+// TestBuildChainedAssignNone covers consts collapse: `x = y = None`
+// has consts = [nil] (LOAD_CONST 0 reused for the trailing return).
+func TestBuildChainedAssignNone(t *testing.T) {
+	src := []byte("x = y = None\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P: ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{
+				&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"},
+				&ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "y"},
+			},
+			Value: &ast.Constant{P: ast.Pos{Line: 1, Col: 8}, Kind: "None"},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(chain None): %v", err)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
 	}
 }

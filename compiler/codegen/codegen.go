@@ -5,10 +5,13 @@
 // At v0.6.6 codegen owned the empty-module shape. v0.6.7 added the
 // modNoOps shape (N >= 1 no-op statements). v0.6.8 added the
 // modDocstring shape: a leading string literal followed by zero or
-// more no-op statements. v0.6.9 adds the simple-constant modAssign
+// more no-op statements. v0.6.9 added the simple-constant modAssign
 // shape: `<name> = <const>` (non-folded value) followed by zero or
-// more no-op statements. Anything else returns ErrUnsupported and
-// the caller falls back to the classifier.
+// more no-op statements. v0.6.10 adds two natural extensions of
+// modAssign: modMultiAssign (N >= 2 independent simple-constant
+// assignments) and modChainedAssign (`t0 = t1 = ... = tN-1 =
+// <const>`). Anything else returns ErrUnsupported and the caller
+// falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -57,6 +60,12 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if a, ok := classifyAssignModule(mod, opts.Source); ok {
 		return buildAssignModule(a, opts)
+	}
+	if m, ok := classifyMultiAssignModule(mod, opts.Source); ok {
+		return buildMultiAssignModule(m, opts)
+	}
+	if c, ok := classifyChainedAssignModule(mod, opts.Source); ok {
+		return buildChainedAssignModule(c, opts)
 	}
 	return nil, ErrUnsupported
 }
