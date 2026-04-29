@@ -76,7 +76,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 		ret = last
 	case *ast.If:
-		if !validateFuncBodyTerminatingIf(last) {
+		if !validateIfStmt(last, true) {
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 		termIf = last
@@ -108,7 +108,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		case *ast.If:
-			if !validateFuncBodyIf(st) {
+			if !validateIfStmt(st, false) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		default:
@@ -162,7 +162,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 				return bytecode.Loc{}, err
 			}
 		case *ast.If:
-			if err := emitFuncBodyIf(child, st, lines); err != nil {
+			if _, _, _, err := codegenIf(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
 		}
@@ -177,7 +177,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		bodyEndCol = c
 		bodyEndLine = ret.P.Line
 	} else {
-		c, line, err := emitFuncBodyTerminatingIf(child, termIf, lines)
+		c, line, _, err := codegenIf(child, termIf, lines)
 		if err != nil {
 			return bytecode.Loc{}, err
 		}
@@ -308,61 +308,6 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 	return nil
 }
 
-// validateFuncBodyIf reports whether ifs is one of the if-statement
-// shapes the v0.7.10 visitor accepts:
-//
-//   - Orelse is empty (trailing function-body return supplies the
-//     "else"), OR Orelse is a single *ast.If that itself validates
-//     (the elif chain).
-//   - Body is exactly one *ast.Return with a non-nil value, OR a
-//     single *ast.Assign with one Name target (validated via
-//     validateFuncBodyAssign).
-//   - Test is a single-op single-comparator *ast.Compare whose op
-//     resolves via cmpOpFromAstOp and is not IS_OP (None checks
-//     emit POP_JUMP_IF_NONE / POP_JUMP_IF_NOT_NONE in a separate
-//     specialised path; not yet ported).
-//   - Both Compare operands validate via validateFuncBodyAssignRHS,
-//     as does the body's value when it is a Return.
-func validateFuncBodyIf(ifs *ast.If) bool {
-	if ifs.P.Col > 255 || len(ifs.Body) != 1 {
-		return false
-	}
-	cmp, ok := ifs.Test.(*ast.Compare)
-	if !ok || cmp.P.Col > 255 || len(cmp.Ops) != 1 || len(cmp.Comparators) != 1 {
-		return false
-	}
-	op, _, ok := cmpOpFromAstOp(cmp.Ops[0])
-	if !ok || op == bytecode.IS_OP {
-		return false
-	}
-	if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
-		return false
-	}
-	switch body := ifs.Body[0].(type) {
-	case *ast.Return:
-		if body.Value == nil || body.P.Col > 255 || !validateFuncBodyReturnValue(body.Value) {
-			return false
-		}
-	case *ast.Assign:
-		if !validateFuncBodyAssign(body) {
-			return false
-		}
-	default:
-		return false
-	}
-	switch len(ifs.Orelse) {
-	case 0:
-		return true
-	case 1:
-		elif, ok := ifs.Orelse[0].(*ast.If)
-		if !ok {
-			return false
-		}
-		return validateFuncBodyIf(elif)
-	}
-	return false
-}
-
 // validateFuncBodyAssign reports whether a is a single-Name-target
 // assignment with an RHS the function-body visitor accepts.
 func validateFuncBodyAssign(a *ast.Assign) bool {
@@ -404,162 +349,6 @@ func validateFuncBodyReturnValue(e ast.Expr) bool {
 		return validateFuncBodyAssignRHS(ifexpr.Body) && validateFuncBodyAssignRHS(ifexpr.OrElse)
 	}
 	return validateFuncBodyAssignRHS(e)
-}
-
-// validateFuncBodyTerminatingIf reports whether ifs is an if/elif/else
-// chain whose every leaf branch is a Return — i.e. an If statement
-// that fully replaces the trailing function-body Return. Used when
-// the LAST statement of a function body is *ast.If rather than
-// *ast.Return.
-//
-// Each branch's Body must be a single Return (not Assign — Assigns
-// fall through). Orelse must be either a nested terminating If or a
-// single Return. An empty Orelse is rejected because there is no
-// trailing function-body Return to fall through to.
-func validateFuncBodyTerminatingIf(ifs *ast.If) bool {
-	if ifs.P.Col > 255 || len(ifs.Body) != 1 || len(ifs.Orelse) != 1 {
-		return false
-	}
-	cmp, ok := ifs.Test.(*ast.Compare)
-	if !ok || cmp.P.Col > 255 || len(cmp.Ops) != 1 || len(cmp.Comparators) != 1 {
-		return false
-	}
-	op, _, ok := cmpOpFromAstOp(cmp.Ops[0])
-	if !ok || op == bytecode.IS_OP {
-		return false
-	}
-	if !validateFuncBodyAssignRHS(cmp.Left) || !validateFuncBodyAssignRHS(cmp.Comparators[0]) {
-		return false
-	}
-	body, ok := ifs.Body[0].(*ast.Return)
-	if !ok || body.Value == nil || body.P.Col > 255 || !validateFuncBodyReturnValue(body.Value) {
-		return false
-	}
-	if elif, ok := ifs.Orelse[0].(*ast.If); ok {
-		return validateFuncBodyTerminatingIf(elif)
-	}
-	if ret, ok := ifs.Orelse[0].(*ast.Return); ok {
-		return ret.Value != nil && ret.P.Col <= 255 && validateFuncBodyReturnValue(ret.Value)
-	}
-	return false
-}
-
-// emitFuncBodyTerminatingIf lowers a terminating if/elif/else chain.
-// Mirrors emitFuncBodyIf but every branch terminates in a Return, so
-// no merge block is bound after the chain. Returns (bodyEndCol,
-// bodyEndLine) — the (EndCol, Line) of the deepest Return value,
-// which the caller uses for the outer LOAD_CONST/MAKE_FUNCTION/
-// STORE_NAME Loc on the module-level instructions.
-func emitFuncBodyTerminatingIf(u *compileUnit, ifs *ast.If, lines [][]byte) (uint16, int, error) {
-	cmp := ifs.Test.(*ast.Compare)
-	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
-	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
-	if err != nil {
-		return 0, 0, err
-	}
-	_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
-	if err != nil {
-		return 0, 0, err
-	}
-	condLoc := bytecode.Loc{
-		Line: uint32(cmp.P.Line), EndLine: uint32(cmp.P.Line),
-		Col: lc, EndCol: re,
-	}
-	block := u.currentBlock()
-	block.Instrs = append(block.Instrs, ir.Instr{
-		Op: op, Arg: uint32(base + 16), Loc: condLoc,
-	})
-	falseLabel := u.Seq.AllocLabel()
-	block.AddJump(bytecode.POP_JUMP_IF_FALSE, falseLabel, condLoc)
-
-	thenBlock := u.Seq.AddBlock()
-	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
-		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
-	})
-
-	bodyRet := ifs.Body[0].(*ast.Return)
-	if _, err := emitFuncBodyReturn(u, bodyRet, lines); err != nil {
-		return 0, 0, err
-	}
-
-	elseBlock := u.Seq.AddBlock()
-	u.Seq.BindLabel(falseLabel, elseBlock)
-
-	if elif, ok := ifs.Orelse[0].(*ast.If); ok {
-		return emitFuncBodyTerminatingIf(u, elif, lines)
-	}
-	elseRet := ifs.Orelse[0].(*ast.Return)
-	endCol, err := emitFuncBodyReturn(u, elseRet, lines)
-	if err != nil {
-		return 0, 0, err
-	}
-	return endCol, elseRet.P.Line, nil
-}
-
-// emitFuncBodyIf emits the gated-then If shape inside a function
-// body. Mirrors compiler/func_body.go::isIfReturn / isIfAssign for
-// the COMPARE_OP path:
-//
-//   - Walk Compare.Left and Compare.Comparators[0] via
-//     visitFuncExpr (which produces LFLBLFLB for two-Name pairs).
-//   - Emit COMPARE_OP with the conditional-context bit (oparg+16)
-//     at Loc(condStart, condEnd).
-//   - Emit POP_JUMP_IF_FALSE → afterThenLabel at the same Loc.
-//   - AddBlock for the then-branch. Emit NOT_TAKEN at condLoc, then
-//     the body Return / Assign.
-//   - AddBlock + BindLabel(afterThenLabel) so the next body
-//     statement (or trailing Return) emits into the kept-merge
-//     block.
-//
-// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt_if +
-// the conditional-context COMPARE_OP specialisation in codegen_compare.
-func emitFuncBodyIf(u *compileUnit, ifs *ast.If, lines [][]byte) error {
-	cmp := ifs.Test.(*ast.Compare)
-	op, base, _ := cmpOpFromAstOp(cmp.Ops[0])
-	lc, _, err := visitFuncExpr(u, cmp.Left, lines)
-	if err != nil {
-		return err
-	}
-	_, re, err := visitFuncExpr(u, cmp.Comparators[0], lines)
-	if err != nil {
-		return err
-	}
-	condLoc := bytecode.Loc{
-		Line: uint32(cmp.P.Line), EndLine: uint32(cmp.P.Line),
-		Col: lc, EndCol: re,
-	}
-	block := u.currentBlock()
-	block.Instrs = append(block.Instrs, ir.Instr{
-		Op: op, Arg: uint32(base + 16), Loc: condLoc,
-	})
-	afterThenLabel := u.Seq.AllocLabel()
-	block.AddJump(bytecode.POP_JUMP_IF_FALSE, afterThenLabel, condLoc)
-
-	thenBlock := u.Seq.AddBlock()
-	thenBlock.Instrs = append(thenBlock.Instrs, ir.Instr{
-		Op: bytecode.NOT_TAKEN, Arg: 0, Loc: condLoc,
-	})
-	switch body := ifs.Body[0].(type) {
-	case *ast.Return:
-		if _, err := emitFuncBodyReturn(u, body, lines); err != nil {
-			return err
-		}
-	case *ast.Assign:
-		if err := emitFuncBodyAssign(u, body, lines); err != nil {
-			return err
-		}
-	default:
-		return ErrNotImplemented
-	}
-
-	afterBlock := u.Seq.AddBlock()
-	u.Seq.BindLabel(afterThenLabel, afterBlock)
-	if len(ifs.Orelse) == 1 {
-		if elif, ok := ifs.Orelse[0].(*ast.If); ok {
-			return emitFuncBodyIf(u, elif, lines)
-		}
-	}
-	return nil
 }
 
 // emitFuncBodyReturn emits the IR for `return <expr>` inside a
