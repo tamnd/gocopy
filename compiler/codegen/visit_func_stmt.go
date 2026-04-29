@@ -67,11 +67,13 @@ func visitFuncNameExpr(u *compileUnit, n *ast.Name) (uint16, uint16, error) {
 }
 
 // visitFuncConstantExpr emits a constant load in function-body
-// context. int 0..255 emits LOAD_SMALL_INT (no co_consts entry
-// unless this is the first int seen with no other constant in the
-// pool — the CPython 3.14 quirk that places the literal at
-// co_consts[0] anyway, mirrored from
-// compiler/func_body.go::loadConst).
+// context as the canonical LOAD_CONST + addConst pair. The
+// LOAD_CONST → LOAD_SMALL_INT rewrite for ints in 0..255 is
+// performed by flowgraph.OptimizeLoadConst during popChildUnit,
+// which then runs flowgraph.RemoveUnusedConsts to condense the
+// pool. v0.7.10.6 lifted both halves of the visitor's old
+// "first-int quirk" into post-emit passes; the visitor's only job
+// here is to mirror CPython's codegen_addop_load_const.
 func visitFuncConstantExpr(u *compileUnit, c *ast.Constant, lines [][]byte) (uint16, uint16, error) {
 	if c.P.Col > 255 {
 		return 0, 0, ErrNotImplemented
@@ -87,34 +89,20 @@ func visitFuncConstantExpr(u *compileUnit, c *ast.Constant, lines [][]byte) (uin
 		Line: uint32(c.P.Line), EndLine: uint32(c.P.Line),
 		Col: col, EndCol: end,
 	}
-	emitFuncBodyConstLoadFirstInt(u, val, loc)
+	emitFuncBodyConstLoad(u, val, loc)
 	return col, end, nil
 }
 
-// emitFuncBodyConstLoadFirstInt is emitFuncBodyConstLoad with the
-// first-int quirk: if v is an int 0..255 and it's the first
-// constant the function loads (and the function is not a
-// noneCheckFunc), we plant the literal in co_consts[0] in addition
-// to emitting LOAD_SMALL_INT. This mirrors
-// compiler/func_body.go::loadConst's intConstSeen guard, which
-// matches CPython 3.14 Python/compile.c's pool layout for
-// LOAD_SMALL_INT-only functions.
+// emitFuncBodyConstLoad emits LOAD_CONST + addConst for v in the
+// active block, mirroring CPython's codegen_addop_load_const. The
+// LOAD_CONST → LOAD_SMALL_INT rewrite for ints in 0..255 is the
+// flowgraph.OptimizeLoadConst pass's job; the unused entries are
+// then condensed by flowgraph.RemoveUnusedConsts.
 //
-// v0.7.14's trim_unused_consts pass will absorb this, at which
-// point this helper reverts to the simpler emitFuncBodyConstLoad.
-func emitFuncBodyConstLoadFirstInt(u *compileUnit, v any, loc bytecode.Loc) {
-	block := u.currentBlock()
-	if iv, ok := v.(int64); ok && iv >= 0 && iv <= 255 {
-		if len(u.Consts) == 0 {
-			u.addConst(iv)
-		}
-		block.Instrs = append(block.Instrs, ir.Instr{
-			Op: bytecode.LOAD_SMALL_INT, Arg: uint32(iv), Loc: loc,
-		})
-		return
-	}
+// MIRRORS: Python/codegen.c codegen_addop_load_const.
+func emitFuncBodyConstLoad(u *compileUnit, v any, loc bytecode.Loc) {
 	idx := u.addConst(v)
-	block.Instrs = append(block.Instrs, ir.Instr{
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
 		Op: bytecode.LOAD_CONST, Arg: idx, Loc: loc,
 	})
 }

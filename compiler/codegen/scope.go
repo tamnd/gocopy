@@ -3,6 +3,7 @@ package codegen
 import (
 	"github.com/tamnd/gocopy/bytecode"
 	"github.com/tamnd/gocopy/compiler/assemble"
+	"github.com/tamnd/gocopy/compiler/flowgraph"
 	"github.com/tamnd/gocopy/compiler/optimize"
 )
 
@@ -23,10 +24,19 @@ func (u *compileUnit) pushChildUnit(name, qualName string, firstLineNo int32) *c
 	return child
 }
 
-// popChildUnit finalizes child by running optimize.Run on its Seq and
-// assemble.Assemble with the supplied options. Returns the resulting
-// CodeObject. The child is discarded after this call; the caller is
-// responsible for appending the CodeObject to its own const pool.
+// popChildUnit finalizes child by running the optimizer pipeline on
+// its Seq and assemble.Assemble with the supplied options. Returns
+// the resulting CodeObject. The child is discarded after this call;
+// the caller is responsible for appending the CodeObject to its own
+// const pool.
+//
+// The const-pool passes (OptimizeLoadConst + RemoveUnusedConsts) run
+// before optimize.Run so that downstream passes (insert_super-
+// instructions, optimize_load_fast, resolve_jumps) see the
+// canonical opcode shape — LOAD_SMALL_INT instead of LOAD_CONST for
+// ints in 0..255. v0.7.10.6 ports these two passes from
+// Python/flowgraph.c:2168 basicblock_optimize_load_const and
+// Python/flowgraph.c:3174 remove_unused_consts.
 //
 // opts.Consts and opts.Names are overwritten with the child's
 // unit-level tables.
@@ -34,6 +44,8 @@ func (u *compileUnit) pushChildUnit(name, qualName string, firstLineNo int32) *c
 // SOURCE: CPython 3.14 Python/compile.c::compiler_exit_scope.
 func (u *compileUnit) popChildUnit(child *compileUnit, opts assemble.Options) (*bytecode.CodeObject, error) {
 	child.finalizeDeferred()
+	flowgraph.OptimizeLoadConst(child.Seq, child.Consts)
+	child.Consts = flowgraph.RemoveUnusedConsts(child.Seq, child.Consts)
 	seq := optimize.Run(child.Seq)
 	opts.Consts = child.Consts
 	if opts.Consts == nil {
