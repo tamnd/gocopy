@@ -9,9 +9,6 @@ type modKind uint8
 
 const (
 	modUnsupported modKind = iota
-	modEmpty
-	modNoOps
-	modDocstring
 	modAssign
 	modMultiAssign
 	modChainedAssign
@@ -46,15 +43,9 @@ const (
 
 type classification struct {
 	kind modKind
-	// modNoOps: every statement, in source order.
-	// modDocstring / modAssign / modMultiAssign: the no-op tail, after
-	// the leading docstring or assignment(s).
+	// modAssign / modMultiAssign: the no-op tail, after
+	// the leading assignment(s).
 	stmts []bytecode.NoOpStmt
-	// modDocstring fields:
-	docLine    int
-	docEndLine int
-	docCol     byte
-	docText    string
 	// modAssign fields:
 	asgnLine     int
 	asgnName     string
@@ -697,7 +688,9 @@ type whileAssign struct {
 // after header constructs are all no-ops.
 func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 	if len(stmts) == 0 {
-		return classification{kind: modEmpty}, true
+		// v0.7.1: empty modules are handled by the visitor pipeline
+		// before classifyAST is reached; this branch is unreachable.
+		return classification{}, false
 	}
 	for _, kind := range []rawStmtKind{stmtSubscriptLoad, stmtSubscriptStore, stmtAttrLoad, stmtAttrStore, stmtCallAssign} {
 		if stmts[0].kind != kind {
@@ -1165,23 +1158,6 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		}
 	}
 
-	if first := stmts[0]; first.kind == stmtString {
-		tail := make([]bytecode.NoOpStmt, 0, len(stmts)-1)
-		for _, s := range stmts[1:] {
-			if s.kind != stmtNoOp {
-				return classification{}, false
-			}
-			tail = append(tail, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
-		}
-		return classification{
-			kind:       modDocstring,
-			stmts:      tail,
-			docLine:    first.line,
-			docEndLine: first.endLine,
-			docCol:     first.endCol,
-			docText:    first.text,
-		}, true
-	}
 	if first := stmts[0]; first.kind == stmtAssign {
 		numAsgn := 0
 		for _, s := range stmts {
@@ -1275,17 +1251,7 @@ func stmtsToClassification(stmts []rawStmt) (classification, bool) {
 		}
 	}
 
-	out := make([]bytecode.NoOpStmt, 0, len(stmts))
-	for _, s := range stmts {
-		// stmtString is a no-op when it is not the first statement (the
-		// docstring path is handled above). Reject anything else (assigns,
-		// aug-assigns) in the no-op block.
-		if s.kind != stmtNoOp && s.kind != stmtString {
-			return classification{}, false
-		}
-		out = append(out, bytecode.NoOpStmt{Line: s.line, EndCol: s.endCol})
-	}
-	return classification{kind: modNoOps, stmts: out}, true
+	return classification{}, false
 }
 
 // splitLines splits src on '\n'. A trailing newline does NOT produce an

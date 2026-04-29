@@ -82,12 +82,14 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		scope = nil
 	}
 
-	// v0.7.0: run the new visitor pipeline (codegen.Generate →
-	// optimize.Run → assemble.Assemble) as a shadow pass. The
-	// returned CodeObject is discarded; the legacy classifier path
-	// below stays authoritative until each shape is promoted in
-	// v0.7.1+ (commit 2 of v0.7.1 makes this routing live).
-	_ = runVisitorShadow(mod, scope, source, opts)
+	// v0.7.x: run the new visitor pipeline (codegen.Generate →
+	// optimize.Run → assemble.Assemble). When the visitor produces a
+	// CodeObject the result is authoritative for that shape and the
+	// classifier path below is bypassed. Shapes the visitor does not
+	// yet know surface as nil here and fall through to the classifier.
+	if co := runVisitorShadow(mod, scope, source, opts); co != nil {
+		return co, nil
+	}
 
 	// v0.6.6: try codegen first; on ErrUnsupported, fall back to the
 	// classifier. Other codegen errors (a malformed IR is a bug, not
@@ -109,25 +111,6 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 		return nil, ErrUnsupportedSource
 	}
 	switch cls.kind {
-	case modEmpty:
-		return module(opts.Filename,
-			bytecode.NoOpBytecode(1),
-			bytecode.LineTableEmpty(),
-			[]any{nil}, nil,
-		), nil
-	case modNoOps:
-		return module(opts.Filename,
-			bytecode.NoOpBytecode(len(cls.stmts)),
-			bytecode.LineTableNoOps(cls.stmts),
-			[]any{nil}, nil,
-		), nil
-	case modDocstring:
-		return module(opts.Filename,
-			bytecode.DocstringBytecode(len(cls.stmts)),
-			bytecode.DocstringLineTable(cls.docLine, cls.docEndLine, cls.docCol, cls.stmts),
-			[]any{cls.docText, nil},
-			[]string{"__doc__"},
-		), nil
 	case modAssign:
 		// Integer RHS: small ints (0..255) use LOAD_SMALL_INT; larger ints
 		// use LOAD_CONST. Either way consts = (int_val, None).
