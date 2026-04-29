@@ -38,8 +38,13 @@
 // line. modSubscriptLoad is the first codegen path to emit
 // `BINARY_OP NbGetItem` and modAttrLoad is the first to emit
 // `LOAD_ATTR` with a 10-code-unit run split 8+2 in the line table.
-// Anything else returns ErrUnsupported and the caller falls back to
-// the classifier.
+// v0.6.19 adds modSubscriptStore and modAttrStore: a single
+// `<obj>[<key>] = <val>` or `<obj>.<attr> = <val>` where every
+// operand is a Name (and `attr` is an identifier) of 1..15 ASCII
+// chars on the same source line. These are the first codegen paths
+// to emit `STORE_SUBSCR` (1 cache word) and `STORE_ATTR` (4 cache
+// words). Anything else returns ErrUnsupported and the caller falls
+// back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -121,6 +126,12 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if a, ok := classifyAttrLoadModule(mod, opts.Source); ok {
 		return buildAttrLoadModule(a, opts)
+	}
+	if s, ok := classifySubscriptStoreModule(mod, opts.Source); ok {
+		return buildSubscriptStoreModule(s, opts)
+	}
+	if a, ok := classifyAttrStoreModule(mod, opts.Source); ok {
+		return buildAttrStoreModule(a, opts)
 	}
 	return nil, ErrUnsupported
 }

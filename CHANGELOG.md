@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.19](changelog/v0.6.19.md) - codegen module-level: subscript + attribute store (2026-04-29)
 - [v0.6.18](changelog/v0.6.18.md) - codegen module-level: subscript + attribute load (2026-04-29)
 - [v0.6.17](changelog/v0.6.17.md) - codegen module-level: collection literals (2026-04-29)
 - [v0.6.16](changelog/v0.6.16.md) - codegen module-level: ternary assignment (2026-04-29)

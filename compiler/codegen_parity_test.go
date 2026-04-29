@@ -193,6 +193,18 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			t.Fatalf("classifier compileAttrLoad: %v", err)
 		}
 		return co
+	case modSubscriptStore:
+		co, err := compileSubscriptStore(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileSubscriptStore: %v", err)
+		}
+		return co
+	case modAttrStore:
+		co, err := compileAttrStore(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileAttrStore: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
