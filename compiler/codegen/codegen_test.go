@@ -123,6 +123,119 @@ func TestBuildAssignReturnsErrUnsupported(t *testing.T) {
 	}
 }
 
+// TestBuildSingleDocstring covers the simplest docstring shape: one
+// string literal, no tail. All four post-RESUME instructions share
+// the docstring's Loc — the encoder run-merges them into a single
+// 4-unit entry that byte-equals bytecode.DocstringLineTable.
+func TestBuildSingleDocstring(t *testing.T) {
+	src := []byte("\"hi\"\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.ExprStmt{P: ast.Pos{Line: 1}, Value: &ast.Constant{
+			P: ast.Pos{Line: 1, Col: 0}, Kind: "str", Value: "hi",
+		}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(single docstring): %v", err)
+	}
+	wantBC := bytecode.DocstringBytecode(0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.DocstringLineTable(1, 1, 4, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != "hi" || co.Consts[1] != nil {
+		t.Fatalf("consts = %v, want [\"hi\", nil]", co.Consts)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "__doc__" {
+		t.Fatalf("names = %v, want [__doc__]", co.Names)
+	}
+}
+
+// TestBuildDocstringWithTail covers a docstring followed by trailing
+// no-op statements. The trailing pair (LOAD_CONST None + RETURN_VALUE)
+// shares the last tail stmt's Loc, not the docstring's.
+func TestBuildDocstringWithTail(t *testing.T) {
+	src := []byte("\"hi\"\npass\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.ExprStmt{P: ast.Pos{Line: 1}, Value: &ast.Constant{
+			P: ast.Pos{Line: 1, Col: 0}, Kind: "str", Value: "hi",
+		}},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+		&ast.Pass{P: ast.Pos{Line: 3}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(docstring+tail): %v", err)
+	}
+	wantBC := bytecode.DocstringBytecode(2)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.DocstringLineTable(1, 1, 4, []bytecode.NoOpStmt{
+		{Line: 2, EndCol: 4},
+		{Line: 3, EndCol: 4},
+	})
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildMultiLineDocstring covers a triple-quoted docstring that
+// spans several source lines. The docstring entry must be a LONG
+// PEP 626 record (end_line != line) — the encoder picks this up
+// automatically from the Loc the classifier reports.
+func TestBuildMultiLineDocstring(t *testing.T) {
+	src := []byte("\"\"\"line one\nline two\"\"\"\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.ExprStmt{P: ast.Pos{Line: 1}, Value: &ast.Constant{
+			P: ast.Pos{Line: 1, Col: 0}, Kind: "str", Value: "line one\nline two",
+		}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(multi-line docstring): %v", err)
+	}
+	wantBC := bytecode.DocstringBytecode(0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.DocstringLineTable(1, 2, 11, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildDocstringNonAsciiRejected ensures codegen mirrors the
+// classifier's ASCII-only constraint: a non-ASCII docstring must
+// fall back to the classifier path (ErrUnsupported) rather than
+// produce a CodeObject.
+func TestBuildDocstringNonAsciiRejected(t *testing.T) {
+	src := []byte("\"héllo\"\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.ExprStmt{P: ast.Pos{Line: 1}, Value: &ast.Constant{
+			P: ast.Pos{Line: 1, Col: 0}, Kind: "str", Value: "héllo",
+		}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>", QualName: "<module>",
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(non-ascii) error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestBuildNilModule(t *testing.T) {
 	_, err := Build(nil, nil, Options{})
 	if err == nil {
