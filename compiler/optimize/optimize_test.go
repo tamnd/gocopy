@@ -165,10 +165,12 @@ func TestRunIfExpShape(t *testing.T) {
 	}
 }
 
-// TestRunRejectsBackwardJump asserts the v0.7.4 tripwire: backward
-// jumps panic in resolveJumps until JUMP_BACKWARD lands at v0.7.6
-// with visit_While.
-func TestRunRejectsBackwardJump(t *testing.T) {
+// TestRunResolvesJumpBackward asserts v0.7.7's lifted tripwire:
+// JUMP_BACKWARD's Arg is rewritten to (jumpEnd - target), the
+// positive backward distance the encoder consumes. The matching
+// invariant — non-JUMP_BACKWARD opcodes never carry backward
+// targets — is asserted by TestRunPanicsOnForwardJumpBackwardTarget.
+func TestRunResolvesJumpBackward(t *testing.T) {
 	seq := ir.NewInstrSeq()
 	b0 := seq.AddBlock()
 	b1 := seq.AddBlock()
@@ -182,9 +184,42 @@ func TestRunRejectsBackwardJump(t *testing.T) {
 	}
 	b1.AddJump(bytecode.JUMP_BACKWARD, loopLabel, bytecode.Loc{})
 
+	got := Run(seq)
+	if len(got.Blocks) != 1 {
+		t.Fatalf("expected single flattened block, got %d", len(got.Blocks))
+	}
+	want := []ir.Instr{
+		{Op: bytecode.RESUME, Arg: 0},
+		{Op: bytecode.LOAD_CONST, Arg: 0},
+		{Op: bytecode.JUMP_BACKWARD, Arg: 4}, // jumpEnd=4 (RESUME 1 + LOAD_CONST 1 + JUMP_BACKWARD 2), target=0
+	}
+	if !reflect.DeepEqual(got.Blocks[0].Instrs, want) {
+		t.Fatalf("JUMP_BACKWARD resolution mismatch:\n  got  %v\n  want %v", got.Blocks[0].Instrs, want)
+	}
+}
+
+// TestRunPanicsOnForwardJumpBackwardTarget asserts the v0.7.7
+// invariant: a forward-jump opcode (POP_JUMP_IF_FALSE,
+// JUMP_FORWARD, etc.) whose target lands before its jumpEnd is a
+// programmer error in the visitor or CFG construction code, not a
+// valid CFG.
+func TestRunPanicsOnForwardJumpBackwardTarget(t *testing.T) {
+	seq := ir.NewInstrSeq()
+	b0 := seq.AddBlock()
+	b1 := seq.AddBlock()
+	loopLabel := seq.AllocLabel()
+	seq.BindLabel(loopLabel, b0)
+	b0.Instrs = []ir.Instr{
+		{Op: bytecode.RESUME, Arg: 0},
+	}
+	b1.Instrs = []ir.Instr{
+		{Op: bytecode.LOAD_CONST, Arg: 0},
+	}
+	b1.AddJump(bytecode.JUMP_FORWARD, loopLabel, bytecode.Loc{})
+
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("expected panic from backward jump, got none")
+			t.Fatal("expected panic from forward-jump opcode with backward target, got none")
 		}
 	}()
 	_ = Run(seq)
