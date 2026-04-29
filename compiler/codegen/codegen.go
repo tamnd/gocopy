@@ -62,7 +62,12 @@
 // assignment. First codegen path that emits a multi-branch
 // forward-jump pattern; the no-else implicit-return-None tail
 // produces a LONG line-table entry pointing back to the first
-// condition's source position.
+// condition's source position. v0.6.23 adds modWhile: a single
+// top-level `while cond: name = val` loop with no break/continue/
+// else, where cond is a 1..15-char Name and val is a small int
+// (0..255). First codegen path that emits a backward jump
+// (`JUMP_BACKWARD 12`); the trailing implicit-return-None run is
+// attributed back to the condition line, mirroring modIfElse.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -161,6 +166,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if ie, ok := classifyIfElseModule(mod, opts.Source); ok {
 		return buildIfElseModule(ie, opts)
+	}
+	if w, ok := classifyWhileModule(mod, opts.Source); ok {
+		return buildWhileModule(w, opts)
 	}
 	return nil, ErrUnsupported
 }
