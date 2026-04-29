@@ -30,6 +30,19 @@ func visitAssignStmt(u *compileUnit, a *ast.Assign, source []byte, _ bool) (byte
 	if len(a.Targets) == 0 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
+	line := uint32(a.P.Line)
+	if line < 1 {
+		return bytecode.Loc{}, ErrNotImplemented
+	}
+
+	if len(a.Targets) == 1 {
+		switch t := a.Targets[0].(type) {
+		case *ast.Subscript:
+			return emitSubscriptStore(u, t, a.Value, line)
+		case *ast.Attribute:
+			return emitAttributeStore(u, t, a.Value, line)
+		}
+	}
 
 	type targetInfo struct {
 		Name string
@@ -52,10 +65,6 @@ func visitAssignStmt(u *compileUnit, a *ast.Assign, source []byte, _ bool) (byte
 		targets[i] = targetInfo{Name: n.Id, Col: uint16(n.P.Col), Len: uint16(nl)}
 	}
 
-	line := uint32(a.P.Line)
-	if line < 1 {
-		return bytecode.Loc{}, ErrNotImplemented
-	}
 	lines := splitLines(source)
 	lec, ok := lineEndCol(lines, int(line))
 	if !ok {
@@ -161,6 +170,14 @@ func emitAssignValue(u *compileUnit, e ast.Expr, line uint32, lineEnd uint16, ch
 			return ErrNotImplemented
 		}
 		return emitIfExpValue(u, v, line, lineEnd)
+
+	case *ast.List, *ast.Tuple, *ast.Set, *ast.Dict,
+		*ast.Subscript, *ast.Attribute, *ast.Call, *ast.Name:
+		if chained {
+			return ErrNotImplemented
+		}
+		_, _, err := visitExpr(u, e, line)
+		return err
 	}
 	return ErrNotImplemented
 }
@@ -171,8 +188,11 @@ func emitAssignValue(u *compileUnit, e ast.Expr, line uint32, lineEnd uint16, ch
 //     phantom-add the leftVal, then either LOAD_SMALL_INT (when the
 //     fold result fits 0..255) or a deferred LOAD_CONST that finalize
 //     rewrites to land AFTER None.
-//   - BinOp(Name, op, Name) with 1..15-char Names: emit LOAD_NAME +
-//     LOAD_NAME + BINARY_OP. The BINARY_OP arg is the NB_* enum.
+//   - Anything else: delegate to visitBinOpExpr, which recurses both
+//     operands through visitExpr and emits BINARY_OP at the composite
+//     span. v0.7.5 widened this from the v0.7.2 Name+Name closed form
+//     so modGenExpr-shape inputs (`x = a + 5`, `x = a + b * c`) lower
+//     through the visitor.
 func emitBinOpValue(u *compileUnit, b *ast.BinOp, line uint32, lineEnd uint16) error {
 	if lc, ok := b.Left.(*ast.Constant); ok {
 		if rc, ok := b.Right.(*ast.Constant); ok {
@@ -207,43 +227,8 @@ func emitBinOpValue(u *compileUnit, b *ast.BinOp, line uint32, lineEnd uint16) e
 		}
 	}
 
-	ln, lok := b.Left.(*ast.Name)
-	rn, rok := b.Right.(*ast.Name)
-	if !lok || !rok {
-		return ErrNotImplemented
-	}
-	if l := len(ln.Id); l < 1 || l > 15 {
-		return ErrNotImplemented
-	}
-	if l := len(rn.Id); l < 1 || l > 15 {
-		return ErrNotImplemented
-	}
-	if ln.P.Col > 255 || rn.P.Col > 255 {
-		return ErrNotImplemented
-	}
-	oparg, ok := binOpargFromOp(b.Op)
-	if !ok {
-		return ErrNotImplemented
-	}
-	leftLoc := bytecode.Loc{
-		Line: line, EndLine: line,
-		Col: uint16(ln.P.Col), EndCol: uint16(ln.P.Col) + uint16(len(ln.Id)),
-	}
-	rightLoc := bytecode.Loc{
-		Line: line, EndLine: line,
-		Col: uint16(rn.P.Col), EndCol: uint16(rn.P.Col) + uint16(len(rn.Id)),
-	}
-	binOpLoc := bytecode.Loc{
-		Line: line, EndLine: line,
-		Col: uint16(ln.P.Col), EndCol: uint16(rn.P.Col) + uint16(len(rn.Id)),
-	}
-	block := u.currentBlock()
-	block.Instrs = append(block.Instrs,
-		ir.Instr{Op: bytecode.LOAD_NAME, Arg: u.addName(ln.Id), Loc: leftLoc},
-		ir.Instr{Op: bytecode.LOAD_NAME, Arg: u.addName(rn.Id), Loc: rightLoc},
-		ir.Instr{Op: bytecode.BINARY_OP, Arg: uint32(oparg), Loc: binOpLoc},
-	)
-	return nil
+	_, _, err := visitBinOpExpr(u, b, line)
+	return err
 }
 
 // emitUnaryOpValue handles UnaryOp RHS in two flavors:
@@ -251,8 +236,10 @@ func emitBinOpValue(u *compileUnit, b *ast.BinOp, line uint32, lineEnd uint16) e
 //   - UnaryOp(USub, Constant) with int64/float64 operand: phantom-add
 //     the positive operand, then emit a deferred LOAD_CONST that
 //     finalize rewrites to land AFTER None for the negative result.
-//   - UnaryOp(USub|Invert|Not, Name): emit LOAD_NAME + UNARY_NEGATIVE/
-//     UNARY_INVERT, or LOAD_NAME + TO_BOOL + UNARY_NOT for `not`.
+//   - Anything else: delegate to visitUnaryOpExpr, which recurses the
+//     operand through visitExpr and emits UNARY_NEGATIVE / UNARY_INVERT
+//     (or TO_BOOL + UNARY_NOT for Not) at the composite span. Widened
+//     in v0.7.5 from the v0.7.2 Name-only closed form.
 func emitUnaryOpValue(u *compileUnit, un *ast.UnaryOp, line uint32, lineEnd uint16) error {
 	if un.Op == "USub" {
 		if c, ok := un.Operand.(*ast.Constant); ok {
@@ -288,47 +275,8 @@ func emitUnaryOpValue(u *compileUnit, un *ast.UnaryOp, line uint32, lineEnd uint
 		}
 	}
 
-	n, ok := un.Operand.(*ast.Name)
-	if !ok {
-		return ErrNotImplemented
-	}
-	nl := len(n.Id)
-	if nl < 1 || nl > 15 {
-		return ErrNotImplemented
-	}
-	if n.P.Col > 255 || un.P.Col > 255 {
-		return ErrNotImplemented
-	}
-	operandLoc := bytecode.Loc{
-		Line: line, EndLine: line,
-		Col: uint16(n.P.Col), EndCol: uint16(n.P.Col) + uint16(nl),
-	}
-	opLoc := bytecode.Loc{
-		Line: line, EndLine: line,
-		Col: uint16(un.P.Col), EndCol: uint16(n.P.Col) + uint16(nl),
-	}
-	block := u.currentBlock()
-	block.Instrs = append(block.Instrs, ir.Instr{
-		Op: bytecode.LOAD_NAME, Arg: u.addName(n.Id), Loc: operandLoc,
-	})
-	switch un.Op {
-	case "USub":
-		block.Instrs = append(block.Instrs, ir.Instr{
-			Op: bytecode.UNARY_NEGATIVE, Arg: 0, Loc: opLoc,
-		})
-	case "Invert":
-		block.Instrs = append(block.Instrs, ir.Instr{
-			Op: bytecode.UNARY_INVERT, Arg: 0, Loc: opLoc,
-		})
-	case "Not":
-		block.Instrs = append(block.Instrs,
-			ir.Instr{Op: bytecode.TO_BOOL, Arg: 0, Loc: opLoc},
-			ir.Instr{Op: bytecode.UNARY_NOT, Arg: 0, Loc: opLoc},
-		)
-	default:
-		return ErrNotImplemented
-	}
-	return nil
+	_, _, err := visitUnaryOpExpr(u, un, line)
+	return err
 }
 
 // visitAugAssignStmt lowers `<name> <op>= <value>` to IR. Only the

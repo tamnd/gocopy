@@ -14,36 +14,14 @@
 // entries) to the visitor pipeline together with the first two
 // real optimizer passes (inline_small_exit_blocks and
 // resolve_jumps); their classifier files are gone and Build no
-// longer dispatches them. v0.6.17 adds
-// modCollection: a single `<target> = [...]`, `<target> = (...)`,
-// `<target> = {...}` (set), or `<target> = {k: v, ...}` (dict)
-// where every element is a Name on the same source line, plus the
-// empty `[]`, `()`, and `{}` (dict) cases. v0.6.18 adds
-// modSubscriptLoad and modAttrLoad: a single `<target> = <obj>[<key>]`
-// or `<target> = <obj>.<attr>` where every operand is a Name (and
-// `attr` is an identifier) of 1..15 ASCII chars on the same source
-// line. modSubscriptLoad is the first codegen path to emit
-// `BINARY_OP NbGetItem` and modAttrLoad is the first to emit
-// `LOAD_ATTR` with a 10-code-unit run split 8+2 in the line table.
-// v0.6.19 adds modSubscriptStore and modAttrStore: a single
-// `<obj>[<key>] = <val>` or `<obj>.<attr> = <val>` where every
-// operand is a Name (and `attr` is an identifier) of 1..15 ASCII
-// chars on the same source line. These are the first codegen paths
-// to emit `STORE_SUBSCR` (1 cache word) and `STORE_ATTR` (4 cache
-// words). v0.6.20 adds modCallAssign: a single
-// `<target> = <func>(<arg0>, ..., <argN-1>)` where target, func and
-// every positional arg are Names of 1..15 ASCII chars on the same
-// source line. N >= 0; keyword args and unpacking are out of scope.
-// First codegen path to emit `PUSH_NULL` and `CALL` (3 cache words).
-// v0.6.21 closes band A with modGenExpr: a single
-// `<target> = <expr>` where the right-hand side is recursively
-// composed of Name, small-int Constant (0..255), BinOp (any of the
-// 13 supported operators), or UnaryOp (USub or Invert) — all on
-// the same source line. First codegen path that is itself a
-// recursive walker rather than a closed-form template, and the
-// first to emit `LOAD_SMALL_INT`, `UNARY_NEGATIVE`, and
-// `UNARY_INVERT`. v0.6.22 starts band B with modIfElse: a single
-// top-level `if cond: name = val [elif cond: name = val ...]
+// longer dispatches them. v0.7.5 closes phase A by promoting
+// modCollection, modSubscriptLoad, modSubscriptStore, modAttrLoad,
+// modAttrStore, modCallAssign, and modGenExpr (the v0.6.17-v0.6.21
+// entries) to the visitor pipeline as cases of the new central
+// `visitExpr` recursive dispatcher; their classifier files and
+// Build dispatch arms are gone. v0.6.22 starts band B with
+// modIfElse: a single top-level
+// `if cond: name = val [elif cond: name = val ...]
 // [else: name = val]` chain where every condition is a 1..15-char
 // Name and every body is a single `name = small_int` (0..255)
 // assignment. First codegen path that emits a multi-branch
@@ -115,27 +93,6 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	_ = scope // reserved for the function-codegen release
 
-	if c, ok := classifyCollectionModule(mod, opts.Source); ok {
-		return buildCollectionModule(c, opts)
-	}
-	if s, ok := classifySubscriptLoadModule(mod, opts.Source); ok {
-		return buildSubscriptLoadModule(s, opts)
-	}
-	if a, ok := classifyAttrLoadModule(mod, opts.Source); ok {
-		return buildAttrLoadModule(a, opts)
-	}
-	if s, ok := classifySubscriptStoreModule(mod, opts.Source); ok {
-		return buildSubscriptStoreModule(s, opts)
-	}
-	if a, ok := classifyAttrStoreModule(mod, opts.Source); ok {
-		return buildAttrStoreModule(a, opts)
-	}
-	if c, ok := classifyCallAssignModule(mod, opts.Source); ok {
-		return buildCallAssignModule(c, opts)
-	}
-	if g, ok := classifyGenExprModule(mod, opts.Source); ok {
-		return buildGenExprModule(g, opts)
-	}
 	if ie, ok := classifyIfElseModule(mod, opts.Source); ok {
 		return buildIfElseModule(ie, opts)
 	}
