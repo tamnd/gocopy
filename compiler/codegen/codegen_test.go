@@ -3118,3 +3118,204 @@ func TestBuildIfElseNonNameCondFallsThrough(t *testing.T) {
 		t.Fatalf("Build(non-Name cond) = %v, want ErrUnsupported", err)
 	}
 }
+
+// TestBuildFuncDefSimple covers `def f(x):\n    return x`. Verifies
+// the dual-CodeObject construction: outer module with consts=
+// [funcCode, nil], names=[f], StackSize=1; inner function with
+// ArgCount=1, Flags=0x3, LocalsPlusNames=[x], LocalsPlusKinds=
+// [LocalsKindArg], StackSize=1.
+func TestBuildFuncDefSimple(t *testing.T) {
+	src := []byte("def f(x):\n    return x\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.FunctionDef{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Name: "f",
+			Args: &ast.Arguments{
+				Args: []*ast.Arg{
+					{P: ast.Pos{Line: 1, Col: 6}, Name: "x"},
+				},
+			},
+			Body: []ast.Stmt{
+				&ast.Return{
+					P:     ast.Pos{Line: 2, Col: 4},
+					Value: &ast.Name{P: ast.Pos{Line: 2, Col: 11}, Id: "x"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "f" {
+		t.Fatalf("outer names = %v, want [f]", co.Names)
+	}
+	if len(co.Consts) != 2 {
+		t.Fatalf("outer consts len = %d, want 2", len(co.Consts))
+	}
+	if co.Consts[1] != nil {
+		t.Fatalf("outer consts[1] = %v, want nil", co.Consts[1])
+	}
+	inner, ok := co.Consts[0].(*bytecode.CodeObject)
+	if !ok || inner == nil {
+		t.Fatalf("outer consts[0] = %T, want *bytecode.CodeObject", co.Consts[0])
+	}
+	if inner.ArgCount != 1 {
+		t.Fatalf("inner ArgCount = %d, want 1", inner.ArgCount)
+	}
+	if inner.Flags != 0x3 {
+		t.Fatalf("inner Flags = %#x, want 0x3", inner.Flags)
+	}
+	if inner.StackSize != 1 {
+		t.Fatalf("inner StackSize = %d, want 1", inner.StackSize)
+	}
+	if len(inner.LocalsPlusNames) != 1 || inner.LocalsPlusNames[0] != "x" {
+		t.Fatalf("inner LocalsPlusNames = %v, want [x]", inner.LocalsPlusNames)
+	}
+	if len(inner.LocalsPlusKinds) != 1 || inner.LocalsPlusKinds[0] != bytecode.LocalsKindArg {
+		t.Fatalf("inner LocalsPlusKinds = %v, want [LocalsKindArg]", inner.LocalsPlusKinds)
+	}
+	if inner.Name != "f" || inner.QualName != "f" {
+		t.Fatalf("inner Name/QualName = %q/%q, want f/f", inner.Name, inner.QualName)
+	}
+	if co.StackSize != 1 {
+		t.Fatalf("outer StackSize = %d, want 1", co.StackSize)
+	}
+}
+
+// TestBuildFuncDefDifferentNames asserts the inner code object's
+// Name and QualName both equal the function name (no `<module>.`
+// prefix at module scope).
+func TestBuildFuncDefDifferentNames(t *testing.T) {
+	src := []byte("def myFunc(arg):\n    return arg\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.FunctionDef{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Name: "myFunc",
+			Args: &ast.Arguments{
+				Args: []*ast.Arg{
+					{P: ast.Pos{Line: 1, Col: 11}, Name: "arg"},
+				},
+			},
+			Body: []ast.Stmt{
+				&ast.Return{
+					P:     ast.Pos{Line: 2, Col: 4},
+					Value: &ast.Name{P: ast.Pos{Line: 2, Col: 11}, Id: "arg"},
+				},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	inner := co.Consts[0].(*bytecode.CodeObject)
+	if inner.Name != "myFunc" || inner.QualName != "myFunc" {
+		t.Fatalf("inner Name/QualName = %q/%q, want myFunc/myFunc",
+			inner.Name, inner.QualName)
+	}
+	if len(inner.LocalsPlusNames) != 1 || inner.LocalsPlusNames[0] != "arg" {
+		t.Fatalf("inner LocalsPlusNames = %v, want [arg]", inner.LocalsPlusNames)
+	}
+}
+
+// TestBuildFuncDefMismatchedReturnFallsThrough rejects
+// `def f(x): return y` where the return target name differs from
+// the arg name.
+func TestBuildFuncDefMismatchedReturnFallsThrough(t *testing.T) {
+	src := []byte("def f(x):\n    return y\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.FunctionDef{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Name: "f",
+			Args: &ast.Arguments{
+				Args: []*ast.Arg{
+					{P: ast.Pos{Line: 1, Col: 6}, Name: "x"},
+				},
+			},
+			Body: []ast.Stmt{
+				&ast.Return{
+					P:     ast.Pos{Line: 2, Col: 4},
+					Value: &ast.Name{P: ast.Pos{Line: 2, Col: 11}, Id: "y"},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(mismatched return) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildFuncDefMultipleArgsFallsThrough rejects
+// `def f(x, y): return x` — modFuncDef requires exactly one arg.
+func TestBuildFuncDefMultipleArgsFallsThrough(t *testing.T) {
+	src := []byte("def f(x, y):\n    return x\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.FunctionDef{
+			P:    ast.Pos{Line: 1, Col: 0},
+			Name: "f",
+			Args: &ast.Arguments{
+				Args: []*ast.Arg{
+					{P: ast.Pos{Line: 1, Col: 6}, Name: "x"},
+					{P: ast.Pos{Line: 1, Col: 9}, Name: "y"},
+				},
+			},
+			Body: []ast.Stmt{
+				&ast.Return{
+					P:     ast.Pos{Line: 2, Col: 4},
+					Value: &ast.Name{P: ast.Pos{Line: 2, Col: 11}, Id: "x"},
+				},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(2-arg func) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildFuncDefDecoratorFallsThrough rejects `@d\ndef f(x):
+// return x` — modFuncDef requires no decorators.
+func TestBuildFuncDefDecoratorFallsThrough(t *testing.T) {
+	src := []byte("@d\ndef f(x):\n    return x\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.FunctionDef{
+			P:    ast.Pos{Line: 2, Col: 0},
+			Name: "f",
+			Args: &ast.Arguments{
+				Args: []*ast.Arg{
+					{P: ast.Pos{Line: 2, Col: 6}, Name: "x"},
+				},
+			},
+			Body: []ast.Stmt{
+				&ast.Return{
+					P:     ast.Pos{Line: 3, Col: 4},
+					Value: &ast.Name{P: ast.Pos{Line: 3, Col: 11}, Id: "x"},
+				},
+			},
+			DecoratorList: []ast.Expr{
+				&ast.Name{P: ast.Pos{Line: 1, Col: 1}, Id: "d"},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(decorated func) = %v, want ErrUnsupported", err)
+	}
+}
