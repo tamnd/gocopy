@@ -1497,6 +1497,110 @@ func TestBuildBoolOpAssignWithTailFallsThrough(t *testing.T) {
 	}
 }
 
+// TestBuildTernaryAssignBasic covers `x = a if c else b`:
+// POP_JUMP_IF_FALSE 5 + two return-bearing branches.
+func TestBuildTernaryAssignBasic(t *testing.T) {
+	src := []byte("x = a if c else b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.IfExp{
+				P:      ast.Pos{Line: 1, Col: 4},
+				Test:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "c"},
+				Body:   &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				OrElse: &ast.Name{P: ast.Pos{Line: 1, Col: 16}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(ternary): %v", err)
+	}
+	wantBC := bytecode.TernaryBytecode()
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.TernaryLineTable(1, 9, 1, 4, 1, 16, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 4 || co.Names[0] != "c" || co.Names[1] != "a" || co.Names[2] != "b" || co.Names[3] != "x" {
+		t.Fatalf("names = %v, want [c a b x]", co.Names)
+	}
+	if co.StackSize < 1 {
+		t.Fatalf("stacksize = %d, want >= 1", co.StackSize)
+	}
+}
+
+// TestBuildTernaryAssignMultiCharNames exercises the column
+// arithmetic with names longer than one char.
+func TestBuildTernaryAssignMultiCharNames(t *testing.T) {
+	// `result = trueVal if cond else falseVal`
+	//  0       9       17 20    25   30
+	src := []byte("result = trueVal if cond else falseVal\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.IfExp{
+				P:      ast.Pos{Line: 1, Col: 9},
+				Test:   &ast.Name{P: ast.Pos{Line: 1, Col: 20}, Id: "cond"},
+				Body:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "trueVal"},
+				OrElse: &ast.Name{P: ast.Pos{Line: 1, Col: 30}, Id: "falseVal"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(ternary multichar): %v", err)
+	}
+	wantLT := bytecode.TernaryLineTable(1, 20, 4, 9, 7, 30, 8, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 4 || co.Names[0] != "cond" || co.Names[1] != "trueVal" || co.Names[2] != "falseVal" || co.Names[3] != "result" {
+		t.Fatalf("names = %v, want [cond trueVal falseVal result]", co.Names)
+	}
+}
+
+// TestBuildTernaryAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the v0.0.x TernaryBytecode helper has no slot
+// for them, so multi-statement modules must fall through to the
+// classifier path.
+func TestBuildTernaryAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a if c else b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.IfExp{
+				P:      ast.Pos{Line: 1, Col: 4},
+				Test:   &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "c"},
+				Body:   &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				OrElse: &ast.Name{P: ast.Pos{Line: 1, Col: 16}, Id: "b"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(ternary+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
