@@ -599,3 +599,205 @@ func TestBuildChainedAssignNone(t *testing.T) {
 		t.Fatalf("consts = %v, want [nil]", co.Consts)
 	}
 }
+
+// TestBuildAugAssignSmallSmall covers the canonical aug-assign
+// shape: `x = 0; x += 1`. Both values are LOAD_SMALL_INT; consts =
+// [0, nil] (phantom slot for init, None last).
+func TestBuildAugAssignSmallSmall(t *testing.T) {
+	src := []byte("x = 0\nx += 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(0)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Add",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(aug small/small): %v", err)
+	}
+	wantBC := bytecode.AugAssignBytecode(0, 1, bytecode.NbInplaceAdd, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.AugAssignLineTable(1, 1, 4, 5, 2, 5, 6, nil)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != int64(0) || co.Consts[1] != nil {
+		t.Fatalf("consts = %v, want [0, nil]", co.Consts)
+	}
+	if len(co.Names) != 1 || co.Names[0] != "x" {
+		t.Fatalf("names = %v, want [x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildAugAssignSmallLarge covers `x = 0; x += 1000`: the aug
+// value is too large for LOAD_SMALL_INT and lands at consts[1].
+func TestBuildAugAssignSmallLarge(t *testing.T) {
+	src := []byte("x = 0\nx += 1000\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(0)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Add",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1000)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(aug small/large): %v", err)
+	}
+	wantBC := bytecode.AugAssignBytecode(0, 1000, bytecode.NbInplaceAdd, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Consts) != 3 || co.Consts[0] != int64(0) ||
+		co.Consts[1] != int64(1000) || co.Consts[2] != nil {
+		t.Fatalf("consts = %v, want [0, 1000, nil]", co.Consts)
+	}
+}
+
+// TestBuildAugAssignLargeSmall covers `x = 1000; x += 1`: the init
+// value is the LOAD_CONST 0 path; aug stays small.
+func TestBuildAugAssignLargeSmall(t *testing.T) {
+	src := []byte("x = 1000\nx += 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(1000)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Add",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(aug large/small): %v", err)
+	}
+	wantBC := bytecode.AugAssignBytecode(1000, 1, bytecode.NbInplaceAdd, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	if len(co.Consts) != 2 || co.Consts[0] != int64(1000) || co.Consts[1] != nil {
+		t.Fatalf("consts = %v, want [1000, nil]", co.Consts)
+	}
+}
+
+// TestBuildAugAssignSub covers operator dispatch via augOpargFromOp:
+// `x = 0; x -= 1` produces BINARY_OP NbInplaceSubtract.
+func TestBuildAugAssignSub(t *testing.T) {
+	src := []byte("x = 0\nx -= 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(0)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Sub",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(aug -=): %v", err)
+	}
+	wantBC := bytecode.AugAssignBytecode(0, 1, bytecode.NbInplaceSubtract, 0)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildAugAssignWithTail covers aug-assign followed by a single
+// tail no-op: the trailing pair shifts to the tail's Loc and the
+// final STORE_NAME shrinks to a 1-unit entry.
+func TestBuildAugAssignWithTail(t *testing.T) {
+	src := []byte("x = 0\nx += 1\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "int", Value: int64(0)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Add",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1)},
+		},
+		&ast.Pass{P: ast.Pos{Line: 3}},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(aug+tail): %v", err)
+	}
+	wantLT := bytecode.AugAssignLineTable(
+		1, 1, 4, 5, 2, 5, 6,
+		[]bytecode.NoOpStmt{{Line: 3, EndCol: 4}},
+	)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+}
+
+// TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
+// the aug-assign classifier does not own (non-int init value).
+func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
+	src := []byte("x = 0.0\nx += 1\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value:   &ast.Constant{P: ast.Pos{Line: 1, Col: 4}, Kind: "float", Value: float64(0.0)},
+		},
+		&ast.AugAssign{
+			P:      ast.Pos{Line: 2, Col: 0},
+			Target: &ast.Name{P: ast.Pos{Line: 2, Col: 0}, Id: "x"},
+			Op:     "Add",
+			Value:  &ast.Constant{P: ast.Pos{Line: 2, Col: 5}, Kind: "int", Value: int64(1)},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(float init) = %v, want ErrUnsupported", err)
+	}
+}
