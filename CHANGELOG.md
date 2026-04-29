@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.10.3](changelog/v0.7.10.3.md) - insert_superinstructions 1:1 port (compiler/flowgraph/) + delete fuseLflblflbTail (2026-04-30)
 - [v0.7.10.2](changelog/v0.7.10.2.md) - codegen_if 1:1 port (visit_if.go: codegenIf + codegenJumpIf + validateIfStmt) (2026-04-30)
 - [v0.7.10.1](changelog/v0.7.10.1.md) - open tests/fixtures/funcbody/ + 8 baselines (2026-04-30)
 - [v0.7.10](changelog/v0.7.10.md) - general function bodies (visit_funcbody_stmt + visit_func_stmt + scope_ops) (2026-04-30)

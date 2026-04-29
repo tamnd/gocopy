@@ -42,7 +42,10 @@
 // SOURCE: CPython 3.14 Python/flowgraph.c.
 package optimize
 
-import "github.com/tamnd/gocopy/compiler/ir"
+import (
+	"github.com/tamnd/gocopy/compiler/flowgraph"
+	"github.com/tamnd/gocopy/compiler/ir"
+)
 
 // Run applies the configured optimizer passes to seq in place and
 // returns it.
@@ -51,12 +54,24 @@ import "github.com/tamnd/gocopy/compiler/ir"
 // deliberate and matches CPython's flowgraph.c: passes mutate the
 // CFG owned by the compiler driver and the driver discards it after
 // assembly.
+//
+// Pipeline order (gocopy approximation of CPython 3.14
+// _PyCfg_OptimizeCodeUnit, Python/flowgraph.c:3659):
+//
+//  1. eliminateEmptyBlocks — drops empty labelled blocks.
+//  2. inlineSmallExitBlocks — duplicates RETURN_VALUE-tail blocks.
+//  3. flowgraph.InsertSuperinstructions — fuses LOAD_FAST/STORE_FAST
+//     pairs into super-instructions. v0.7.10.3 ports
+//     Python/flowgraph.c:2588 insert_superinstructions.
+//  4. resolveJumps — relocates labels to byte distances and flattens
+//     to a single block.
 func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 	if seq == nil {
 		return nil
 	}
 	eliminateEmptyBlocks(seq)
 	inlineSmallExitBlocks(seq)
+	flowgraph.InsertSuperinstructions(seq)
 	resolveJumps(seq)
 	return seq
 }

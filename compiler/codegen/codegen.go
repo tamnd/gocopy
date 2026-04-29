@@ -97,6 +97,11 @@
 // visit_if.go, mirroring CPython 3.14 Python/codegen.c::codegen_if
 // and codegen_jump_if. First v0.7.10.x release with explicit
 // `// MIRRORS:` 1:1 port headers. No fixture coverage change.
+// v0.7.10.3 ports CPython's insert_superinstructions
+// (Python/flowgraph.c:2588) into compiler/flowgraph/. Visitor
+// stops pre-fusing LFLBLFLB pairs at emit time; the new pass
+// runs inside optimize.Run between inlineSmallExitBlocks and
+// resolveJumps. fuseLflblflbTail is deleted from visit_func_stmt.go.
 // Anything reaching codegen.Build now returns ErrUnsupported and
 // the caller falls back to the classifier.
 //
