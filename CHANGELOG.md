@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.21](changelog/v0.6.21.md) - codegen module-level: genExpr (closes band A) (2026-04-29)
 - [v0.6.20](changelog/v0.6.20.md) - codegen module-level: call assign (2026-04-29)
 - [v0.6.19](changelog/v0.6.19.md) - codegen module-level: subscript + attribute store (2026-04-29)
 - [v0.6.18](changelog/v0.6.18.md) - codegen module-level: subscript + attribute load (2026-04-29)

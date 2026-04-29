@@ -48,6 +48,14 @@
 // every positional arg are Names of 1..15 ASCII chars on the same
 // source line. N >= 0; keyword args and unpacking are out of scope.
 // First codegen path to emit `PUSH_NULL` and `CALL` (3 cache words).
+// v0.6.21 closes band A with modGenExpr: a single
+// `<target> = <expr>` where the right-hand side is recursively
+// composed of Name, small-int Constant (0..255), BinOp (any of the
+// 13 supported operators), or UnaryOp (USub or Invert) — all on
+// the same source line. First codegen path that is itself a
+// recursive walker rather than a closed-form template, and the
+// first to emit `LOAD_SMALL_INT`, `UNARY_NEGATIVE`, and
+// `UNARY_INVERT`.
 // Anything else returns ErrUnsupported and the caller falls back to
 // the classifier.
 //
@@ -140,6 +148,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if c, ok := classifyCallAssignModule(mod, opts.Source); ok {
 		return buildCallAssignModule(c, opts)
+	}
+	if g, ok := classifyGenExprModule(mod, opts.Source); ok {
+		return buildGenExprModule(g, opts)
 	}
 	return nil, ErrUnsupported
 }
