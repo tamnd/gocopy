@@ -10,8 +10,10 @@
 // more no-op statements. v0.6.10 adds two natural extensions of
 // modAssign: modMultiAssign (N >= 2 independent simple-constant
 // assignments) and modChainedAssign (`t0 = t1 = ... = tN-1 =
-// <const>`). Anything else returns ErrUnsupported and the caller
-// falls back to the classifier.
+// <const>`). v0.6.11 adds modAugAssign: `<name> = <initInt>`
+// followed by `<name> <op>= <augInt>` for non-negative ints and any
+// of the 12 in-place binary operators. Anything else returns
+// ErrUnsupported and the caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -66,6 +68,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if c, ok := classifyChainedAssignModule(mod, opts.Source); ok {
 		return buildChainedAssignModule(c, opts)
+	}
+	if a, ok := classifyAugAssignModule(mod, opts.Source); ok {
+		return buildAugAssignModule(a, opts)
 	}
 	return nil, ErrUnsupported
 }
