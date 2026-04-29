@@ -14,8 +14,11 @@
 // followed by `<name> <op>= <augInt>` for non-negative ints and any
 // of the 12 in-place binary operators. v0.6.12 adds modBinOpAssign:
 // a single `<target> = <left> <op> <right>` with all operands as
-// Names and any of the 13 BinOp operators. Anything else returns
-// ErrUnsupported and the caller falls back to the classifier.
+// Names and any of the 13 BinOp operators. v0.6.13 adds
+// modUnaryAssign: a single `<target> = -<operand>`,
+// `<target> = ~<operand>`, or `<target> = not <operand>` with the
+// operand as a Name. Anything else returns ErrUnsupported and the
+// caller falls back to the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -76,6 +79,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if b, ok := classifyBinOpAssignModule(mod, opts.Source); ok {
 		return buildBinOpAssignModule(b, opts)
+	}
+	if u, ok := classifyUnaryAssignModule(mod, opts.Source); ok {
+		return buildUnaryAssignModule(u, opts)
 	}
 	return nil, ErrUnsupported
 }
