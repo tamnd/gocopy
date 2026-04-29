@@ -175,6 +175,12 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			t.Fatalf("classifier compileTernary: %v", err)
 		}
 		return co
+	case modCollection:
+		co, err := compileCollection(filename, cls)
+		if err != nil {
+			t.Fatalf("classifier compileCollection: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
