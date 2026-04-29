@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.6.8](changelog/v0.6.8.md) - codegen module-level: docstring (2026-04-29)
 - [v0.6.7](changelog/v0.6.7.md) - codegen module-level: no-op statements (2026-04-29)
 - [v0.6.6](changelog/v0.6.6.md) - codegen module-level (foundation): empty-module shape (2026-04-29)
 - [v0.6.5](changelog/v0.6.5.md) - assembler with PEP 626 line-table encoder and stack-depth analysis (2026-04-29)
