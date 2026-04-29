@@ -31,8 +31,15 @@
 // modCollection: a single `<target> = [...]`, `<target> = (...)`,
 // `<target> = {...}` (set), or `<target> = {k: v, ...}` (dict)
 // where every element is a Name on the same source line, plus the
-// empty `[]`, `()`, and `{}` (dict) cases. Anything else returns
-// ErrUnsupported and the caller falls back to the classifier.
+// empty `[]`, `()`, and `{}` (dict) cases. v0.6.18 adds
+// modSubscriptLoad and modAttrLoad: a single `<target> = <obj>[<key>]`
+// or `<target> = <obj>.<attr>` where every operand is a Name (and
+// `attr` is an identifier) of 1..15 ASCII chars on the same source
+// line. modSubscriptLoad is the first codegen path to emit
+// `BINARY_OP NbGetItem` and modAttrLoad is the first to emit
+// `LOAD_ATTR` with a 10-code-unit run split 8+2 in the line table.
+// Anything else returns ErrUnsupported and the caller falls back to
+// the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -108,6 +115,12 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if c, ok := classifyCollectionModule(mod, opts.Source); ok {
 		return buildCollectionModule(c, opts)
+	}
+	if s, ok := classifySubscriptLoadModule(mod, opts.Source); ok {
+		return buildSubscriptLoadModule(s, opts)
+	}
+	if a, ok := classifyAttrLoadModule(mod, opts.Source); ok {
+		return buildAttrLoadModule(a, opts)
 	}
 	return nil, ErrUnsupported
 }
