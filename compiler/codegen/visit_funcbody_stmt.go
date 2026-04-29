@@ -216,7 +216,7 @@ func emitFuncBodyAssign(u *compileUnit, a *ast.Assign, lines [][]byte) error {
 			Col: uint16(v.P.Col), EndCol: uint16(endCol),
 		}
 		emitFuncBodyConstLoad(u, val, rhsLoc)
-	case *ast.BinOp:
+	case *ast.BinOp, *ast.Compare:
 		if _, _, err := visitFuncExpr(u, v, lines); err != nil {
 			return err
 		}
@@ -313,6 +313,17 @@ func validateFuncBodyAssignRHS(e ast.Expr) bool {
 			return false
 		}
 		return validateFuncBodyAssignRHS(v.Left) && validateFuncBodyAssignRHS(v.Right)
+	case *ast.Compare:
+		if v.P.Col > 255 {
+			return false
+		}
+		if len(v.Ops) != 1 || len(v.Comparators) != 1 {
+			return false
+		}
+		if _, _, ok := cmpOpFromAstOp(v.Ops[0]); !ok {
+			return false
+		}
+		return validateFuncBodyAssignRHS(v.Left) && validateFuncBodyAssignRHS(v.Comparators[0])
 	}
 	return false
 }

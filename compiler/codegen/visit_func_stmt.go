@@ -26,6 +26,8 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 		return visitFuncConstantExpr(u, v, lines)
 	case *ast.BinOp:
 		return visitFuncBinOpExpr(u, v, lines)
+	case *ast.Compare:
+		return visitFuncCompareExpr(u, v, lines)
 	}
 	return 0, 0, ErrNotImplemented
 }
@@ -126,6 +128,44 @@ func visitFuncBinOpExpr(u *compileUnit, b *ast.BinOp, lines [][]byte) (uint16, u
 	}
 	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
 		Op: bytecode.BINARY_OP, Arg: uint32(oparg), Loc: loc,
+	})
+	return lc, re, nil
+}
+
+// visitFuncCompareExpr emits a value-context Compare in function
+// scope. v0.7.10 supports a single op with one Comparator (no
+// chained `a < b < c` — that emits a different shape via
+// JUMP_IF_FALSE_OR_POP).
+//
+// Both operands are recursed via visitFuncExpr; the trailing
+// COMPARE_OP / IS_OP / CONTAINS_OP uses the value-context oparg
+// (no +16 conditional bit) and a Loc spanning (left.start,
+// right.end).
+//
+// SOURCE: CPython 3.14 Python/codegen.c::codegen_compare.
+func visitFuncCompareExpr(u *compileUnit, c *ast.Compare, lines [][]byte) (uint16, uint16, error) {
+	if len(c.Ops) != 1 || len(c.Comparators) != 1 {
+		return 0, 0, ErrNotImplemented
+	}
+	op, base, ok := cmpOpFromAstOp(c.Ops[0])
+	if !ok {
+		return 0, 0, ErrNotImplemented
+	}
+	lc, _, err := visitFuncExpr(u, c.Left, lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	_, re, err := visitFuncExpr(u, c.Comparators[0], lines)
+	if err != nil {
+		return 0, 0, err
+	}
+	fuseLflblflbTail(u)
+	loc := bytecode.Loc{
+		Line: uint32(c.P.Line), EndLine: uint32(c.P.Line),
+		Col: lc, EndCol: re,
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs, ir.Instr{
+		Op: op, Arg: uint32(base), Loc: loc,
 	})
 	return lc, re, nil
 }
