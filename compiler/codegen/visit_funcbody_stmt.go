@@ -291,8 +291,9 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 // validateFuncBodyIf reports whether ifs is one of the if-statement
 // shapes the v0.7.10 visitor accepts:
 //
-//   - No Orelse (the trailing function-body return supplies the
-//     "else").
+//   - Orelse is empty (trailing function-body return supplies the
+//     "else"), OR Orelse is a single *ast.If that itself validates
+//     (the elif chain).
 //   - Body is exactly one *ast.Return with a non-nil value, OR a
 //     single *ast.Assign with one Name target (validated via
 //     validateFuncBodyAssign).
@@ -303,7 +304,7 @@ func emitFuncBodyAugAssign(u *compileUnit, a *ast.AugAssign, lines [][]byte) err
 //   - Both Compare operands validate via validateFuncBodyAssignRHS,
 //     as does the body's value when it is a Return.
 func validateFuncBodyIf(ifs *ast.If) bool {
-	if ifs.P.Col > 255 || len(ifs.Orelse) != 0 || len(ifs.Body) != 1 {
+	if ifs.P.Col > 255 || len(ifs.Body) != 1 {
 		return false
 	}
 	cmp, ok := ifs.Test.(*ast.Compare)
@@ -319,9 +320,25 @@ func validateFuncBodyIf(ifs *ast.If) bool {
 	}
 	switch body := ifs.Body[0].(type) {
 	case *ast.Return:
-		return body.Value != nil && body.P.Col <= 255 && validateFuncBodyReturnValue(body.Value)
+		if body.Value == nil || body.P.Col > 255 || !validateFuncBodyReturnValue(body.Value) {
+			return false
+		}
 	case *ast.Assign:
-		return validateFuncBodyAssign(body)
+		if !validateFuncBodyAssign(body) {
+			return false
+		}
+	default:
+		return false
+	}
+	switch len(ifs.Orelse) {
+	case 0:
+		return true
+	case 1:
+		elif, ok := ifs.Orelse[0].(*ast.If)
+		if !ok {
+			return false
+		}
+		return validateFuncBodyIf(elif)
 	}
 	return false
 }
@@ -427,6 +444,11 @@ func emitFuncBodyIf(u *compileUnit, ifs *ast.If, lines [][]byte) error {
 
 	afterBlock := u.Seq.AddBlock()
 	u.Seq.BindLabel(afterThenLabel, afterBlock)
+	if len(ifs.Orelse) == 1 {
+		if elif, ok := ifs.Orelse[0].(*ast.If); ok {
+			return emitFuncBodyIf(u, elif, lines)
+		}
+	}
 	return nil
 }
 
