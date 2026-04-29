@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.1](changelog/v0.7.1.md) - visit_Constant + visit_Name + visit_Module: empty / no-ops / docstring (2026-04-29)
 - [v0.7.0](changelog/v0.7.0.md) - visitor pipeline scaffolding (driver pivot) (2026-04-29)
 - [v0.6.26](changelog/v0.6.26.md) - codegen module-level: closuredef (band C) (2026-04-29)
 - [v0.6.25](changelog/v0.6.25.md) - codegen module-level: funcdef (band C start) (2026-04-29)
