@@ -43,8 +43,13 @@
 // operand is a Name (and `attr` is an identifier) of 1..15 ASCII
 // chars on the same source line. These are the first codegen paths
 // to emit `STORE_SUBSCR` (1 cache word) and `STORE_ATTR` (4 cache
-// words). Anything else returns ErrUnsupported and the caller falls
-// back to the classifier.
+// words). v0.6.20 adds modCallAssign: a single
+// `<target> = <func>(<arg0>, ..., <argN-1>)` where target, func and
+// every positional arg are Names of 1..15 ASCII chars on the same
+// source line. N >= 0; keyword args and unpacking are out of scope.
+// First codegen path to emit `PUSH_NULL` and `CALL` (3 cache words).
+// Anything else returns ErrUnsupported and the caller falls back to
+// the classifier.
 //
 // SOURCE: CPython 3.14 Python/codegen.c.
 package codegen
@@ -132,6 +137,9 @@ func Build(mod *ast.Module, scope *symtable.Scope, opts Options) (*bytecode.Code
 	}
 	if a, ok := classifyAttrStoreModule(mod, opts.Source); ok {
 		return buildAttrStoreModule(a, opts)
+	}
+	if c, ok := classifyCallAssignModule(mod, opts.Source); ok {
+		return buildCallAssignModule(c, opts)
 	}
 	return nil, ErrUnsupported
 }
