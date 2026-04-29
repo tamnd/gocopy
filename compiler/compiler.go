@@ -86,6 +86,7 @@ func Compile(source []byte, opts Options) (*bytecode.CodeObject, error) {
 	// classifier. Other codegen errors (a malformed IR is a bug, not
 	// "this shape is not yet wired") propagate.
 	if co, cgErr := codegen.Build(mod, scope, codegen.Options{
+		Source:      source,
 		Filename:    opts.Filename,
 		Name:        "<module>",
 		QualName:    "<module>",
