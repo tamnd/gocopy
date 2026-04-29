@@ -127,6 +127,18 @@ func compileViaClassifier(t *testing.T, source []byte, filename string, mod *par
 			bytecode.AssignBytecode(noneIdx, len(cls.stmts)),
 			lt, consts, []string{cls.asgnName},
 		)
+	case modMultiAssign:
+		co, err := compileMultiAssign(filename, cls.asgns, cls.stmts)
+		if err != nil {
+			t.Fatalf("classifier compileMultiAssign: %v", err)
+		}
+		return co
+	case modChainedAssign:
+		co, err := compileChainedAssign(filename, cls.chainLine, cls.chainTargets, cls.chainValStart, cls.chainValEnd, cls.chainValue, cls.stmts)
+		if err != nil {
+			t.Fatalf("classifier compileChainedAssign: %v", err)
+		}
+		return co
 	}
 	t.Fatalf("classifier path for kind %d not exposed to parity test yet", cls.kind)
 	return nil
