@@ -776,6 +776,191 @@ func TestBuildAugAssignWithTail(t *testing.T) {
 	}
 }
 
+// TestBuildBinOpAssignAdd covers the canonical binop shape:
+// `x = a + b`. Both operands are LOAD_NAME; consts = [None].
+func TestBuildBinOpAssignAdd(t *testing.T) {
+	src := []byte("x = a + b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(binop add): %v", err)
+	}
+	wantBC := bytecode.BinOpAssignBytecode(bytecode.NbAdd)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+	wantLT := bytecode.BinOpAssignLineTable(1, 4, 1, 8, 1, 1)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Consts) != 1 || co.Consts[0] != nil {
+		t.Fatalf("consts = %v, want [nil]", co.Consts)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "a" || co.Names[1] != "b" || co.Names[2] != "x" {
+		t.Fatalf("names = %v, want [a b x]", co.Names)
+	}
+	if co.StackSize < 2 {
+		t.Fatalf("stacksize = %d, want >= 2", co.StackSize)
+	}
+}
+
+// TestBuildBinOpAssignSub covers operator dispatch via
+// binOpargFromOp: `x = a - b` produces BINARY_OP NbSubtract.
+func TestBuildBinOpAssignSub(t *testing.T) {
+	src := []byte("x = a - b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "Sub",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(binop sub): %v", err)
+	}
+	wantBC := bytecode.BinOpAssignBytecode(bytecode.NbSubtract)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildBinOpAssignBitwise covers `x = a & b`: same cache
+// zero-fill path, different oparg.
+func TestBuildBinOpAssignBitwise(t *testing.T) {
+	src := []byte("x = a & b\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "BitAnd",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(binop bitand): %v", err)
+	}
+	wantBC := bytecode.BinOpAssignBytecode(bytecode.NbAnd)
+	if !bytes.Equal(co.Bytecode, wantBC) {
+		t.Fatalf("bytecode = %x, want %x", co.Bytecode, wantBC)
+	}
+}
+
+// TestBuildBinOpAssignMultiCharNames covers `result = lhs + rhs`:
+// names longer than 1 char must still SHORT0-encode (lengths
+// 1..15 stay in range).
+func TestBuildBinOpAssignMultiCharNames(t *testing.T) {
+	src := []byte("result = lhs + rhs\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "result"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 9},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 9}, Id: "lhs"},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 15}, Id: "rhs"},
+			},
+		},
+	}}
+	co, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build(binop multichar): %v", err)
+	}
+	wantLT := bytecode.BinOpAssignLineTable(1, 9, 3, 15, 3, 6)
+	if !bytes.Equal(co.LineTable, wantLT) {
+		t.Fatalf("linetable = %x, want %x", co.LineTable, wantLT)
+	}
+	if len(co.Names) != 3 || co.Names[0] != "lhs" || co.Names[1] != "rhs" || co.Names[2] != "result" {
+		t.Fatalf("names = %v, want [lhs rhs result]", co.Names)
+	}
+}
+
+// TestBuildBinOpAssignWithTailFallsThrough ensures codegen rejects
+// trailing no-ops — the v0.0.16 BinOpAssignBytecode helper has no
+// slot for them, so multi-statement modules must fall through to
+// the classifier path to stay byte-equal.
+func TestBuildBinOpAssignWithTailFallsThrough(t *testing.T) {
+	src := []byte("x = a + b\npass\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.BinOp{
+				P:     ast.Pos{Line: 1, Col: 4},
+				Left:  &ast.Name{P: ast.Pos{Line: 1, Col: 4}, Id: "a"},
+				Op:    "Add",
+				Right: &ast.Name{P: ast.Pos{Line: 1, Col: 8}, Id: "b"},
+			},
+		},
+		&ast.Pass{P: ast.Pos{Line: 2}},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(binop+tail) = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBuildBinOpAssignUnaryFallsThrough ensures codegen leaves
+// unary expressions to the classifier (`x = -a`).
+func TestBuildBinOpAssignUnaryFallsThrough(t *testing.T) {
+	src := []byte("x = -a\n")
+	mod := &ast.Module{Body: []ast.Stmt{
+		&ast.Assign{
+			P:       ast.Pos{Line: 1, Col: 0},
+			Targets: []ast.Expr{&ast.Name{P: ast.Pos{Line: 1, Col: 0}, Id: "x"}},
+			Value: &ast.UnaryOp{
+				P:       ast.Pos{Line: 1, Col: 4},
+				Op:      "USub",
+				Operand: &ast.Name{P: ast.Pos{Line: 1, Col: 5}, Id: "a"},
+			},
+		},
+	}}
+	_, err := Build(mod, nil, Options{
+		Source: src, Filename: "x.py", Name: "<module>",
+		QualName: "<module>", FirstLineNo: 1,
+	})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Build(unary) = %v, want ErrUnsupported", err)
+	}
+}
+
 // TestBuildAugAssignFloatFallsThrough ensures codegen rejects shapes
 // the aug-assign classifier does not own (non-int init value).
 func TestBuildAugAssignFloatFallsThrough(t *testing.T) {
