@@ -49,16 +49,22 @@ run_oracle() {
     expected="$pycache_dir/__pycache__/$(basename "$src" .py).cpython-314.pyc"
 
     actual="$(mktemp -t gocopy.XXXXXX)"
-    bin/gocopy compile "$src" -o "$actual"
+    # Don't let `set -e` bail on a gocopy compile failure — we want to
+    # count it as a fixture failure and continue. Fixture corpus expansion
+    # (spec 1574) deliberately includes fixtures that current visitor
+    # arms reject; the harness must report all of them in one run, not
+    # exit at the first.
+    if ! bin/gocopy compile "$src" -o "$actual" 2>/dev/null; then
+        echo "FAIL $src (gocopy compile error)"
+        fail=$((fail + 1))
+        rm -f "$actual"
+        return 0
+    fi
 
     if cmp "$expected" "$actual" >/dev/null; then
         echo "ok   $src"
     else
         echo "FAIL $src"
-        echo "  expected:"
-        xxd "$expected" | sed 's/^/    /'
-        echo "  actual:"
-        xxd "$actual" | sed 's/^/    /'
         fail=$((fail + 1))
     fi
     rm -f "$actual"
