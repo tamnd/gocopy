@@ -4,7 +4,6 @@ import (
 	"github.com/tamnd/gocopy/bytecode"
 	"github.com/tamnd/gocopy/compiler/assemble"
 	"github.com/tamnd/gocopy/compiler/flowgraph"
-	"github.com/tamnd/gocopy/compiler/optimize"
 )
 
 // pushChildUnit allocates and returns a fresh compileUnit linked to u
@@ -49,10 +48,8 @@ func (u *compileUnit) pushChildUnit(name, qualName string, firstLineNo int32) *c
 // SOURCE: CPython 3.14 Python/compile.c::compiler_exit_scope.
 func (u *compileUnit) popChildUnit(child *compileUnit, opts assemble.Options) (*bytecode.CodeObject, error) {
 	child.finalizeDeferred()
-	flowgraph.OptimizeLoadConst(child.Seq, child.Consts)
-	child.Consts = flowgraph.FoldTupleOfConstants(child.Seq, child.Consts)
-	child.Consts = flowgraph.RemoveUnusedConsts(child.Seq, child.Consts)
-	seq := optimize.Run(child.Seq)
+	seq, consts := flowgraph.OptimizeCodeUnit(child.Seq, child.Consts)
+	child.Consts = consts
 	opts.Consts = child.Consts
 	if opts.Consts == nil {
 		opts.Consts = []any{}

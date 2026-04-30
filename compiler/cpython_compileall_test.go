@@ -12,8 +12,8 @@ import (
 
 	"github.com/tamnd/gocopy/compiler/assemble"
 	"github.com/tamnd/gocopy/compiler/codegen"
+	"github.com/tamnd/gocopy/compiler/flowgraph"
 	"github.com/tamnd/gocopy/compiler/lower"
-	"github.com/tamnd/gocopy/compiler/optimize"
 	"github.com/tamnd/gocopy/compiler/symtable"
 )
 
@@ -21,8 +21,8 @@ import (
 // unless GOCOPY_CPYTHON_LIB points at a CPython 3.14 Lib/ directory.
 //
 // When set: walk *.py files under that directory, run them through
-// the visitor pipeline (codegen.Generate → optimize.Run →
-// assemble.Assemble), and report counts for byte-identical / not-
+// the visitor pipeline (codegen.Generate → flowgraph.OptimizeCodeUnit
+// → assemble.Assemble), and report counts for byte-identical / not-
 // implemented / errored. The byte-identical comparison vs.
 // `python3.14 -m py_compile` is added in v0.7.13 once the optimizer
 // passes give the visitor a chance to match. At v0.7.0 the harness
@@ -102,7 +102,7 @@ func TestCompileallLib(t *testing.T) {
 			}
 			return nil
 		}
-		seq = optimize.Run(seq)
+		seq, consts = flowgraph.OptimizeCodeUnit(seq, consts)
 		if _, asmErr := assemble.Assemble(seq, assemble.Options{
 			Filename: filepath.Base(path),
 			Name:     "<module>",

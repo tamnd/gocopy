@@ -260,8 +260,19 @@ func instructionUnits(instr ir.Instr) int {
 	return units
 }
 
-// isJump reports whether the opcode transfers control to a non-
-// fallthrough successor.
+// isJump reports whether the opcode has a jump target oparg —
+// gocopy's analogue of CPython 3.14's OPCODE_HAS_JUMP. The set is the
+// union of IS_UNCONDITIONAL_JUMP_OPCODE (JUMP_FORWARD / JUMP_BACKWARD)
+// and IS_CONDITIONAL_JUMP_OPCODE (POP_JUMP_IF_*), plus FOR_ITER which
+// flowgraph.c marks HAS_JUMP_FLAG. gocopy does not yet emit JUMP /
+// JUMP_NO_INTERRUPT / JUMP_BACKWARD_NO_INTERRUPT, so they are absent
+// here; the visitor lowers them to JUMP_FORWARD / JUMP_BACKWARD before
+// IR construction.
+//
+// SOURCE: CPython 3.14 Include/internal/pycore_opcode_utils.h:39
+// IS_UNCONDITIONAL_JUMP_OPCODE + line 46 IS_CONDITIONAL_JUMP_OPCODE
+// (FOR_ITER's HAS_JUMP_FLAG comes from
+// Include/internal/pycore_opcode_metadata.h).
 func isJump(op bytecode.Opcode) bool {
 	switch op {
 	case bytecode.JUMP_FORWARD,
@@ -277,7 +288,13 @@ func isJump(op bytecode.Opcode) bool {
 }
 
 // isConditionalJump reports whether the opcode is a jump with a
-// fallthrough path.
+// fallthrough successor — POP_JUMP_IF_* plus FOR_ITER (whose
+// fallthrough is the loop body and whose jump target is the exit).
+//
+// SOURCE: CPython 3.14 Include/internal/pycore_opcode_utils.h:46
+// IS_CONDITIONAL_JUMP_OPCODE (FOR_ITER added because flowgraph.c
+// treats it as a conditional branch — see Python/flowgraph.c:516
+// fallthrough computation).
 func isConditionalJump(op bytecode.Opcode) bool {
 	switch op {
 	case bytecode.POP_JUMP_IF_FALSE,
@@ -290,13 +307,16 @@ func isConditionalJump(op bytecode.Opcode) bool {
 	return false
 }
 
-// isTerminator reports whether the opcode ends a basic block.
-// Conditional jumps are technically jumps but not terminators in the
-// sense used here — they have fallthrough successors.
+// isTerminator reports whether the opcode ends a basic block with no
+// fallthrough successor — i.e. CPython's
+// `IS_SCOPE_EXIT_OPCODE(op) || IS_UNCONDITIONAL_JUMP_OPCODE(op)`,
+// which is the predicate `basicblock_nofallthrough` evaluates per
+// block. gocopy does not yet emit RERAISE / JUMP / JUMP_NO_INTERRUPT
+// / JUMP_BACKWARD_NO_INTERRUPT, so they are absent here.
 //
-// Mirrors CPython 3.14's IS_SCOPE_EXIT_OPCODE | IS_UNCONDITIONAL_JUMP_OPCODE
-// in Python/flowgraph.c: a block ends after an unconditional jump or any
-// scope-exit (return, raise) — none of which fall through.
+// SOURCE: CPython 3.14 Include/internal/pycore_opcode_utils.h:52
+// IS_SCOPE_EXIT_OPCODE + line 39 IS_UNCONDITIONAL_JUMP_OPCODE,
+// combined per Python/flowgraph.c:239 basicblock_nofallthrough.
 func isTerminator(op bytecode.Opcode) bool {
 	switch op {
 	case bytecode.RETURN_VALUE,

@@ -12,7 +12,7 @@ import (
 //   - STORE_FAST + LOAD_FAST  → STORE_FAST_LOAD_FAST
 //   - STORE_FAST + STORE_FAST → STORE_FAST_STORE_FAST
 //
-// MIRRORS: Python/flowgraph.c:2588 insert_superinstructions.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2588 insert_superinstructions.
 //
 // The pass operates over each block's Instrs slice in place. The
 // CPython implementation replaces the second instruction of a fused
@@ -60,7 +60,7 @@ func InsertSuperinstructions(seq *ir.InstrSeq) {
 //     lines must match (CPython skips fusion across line boundaries
 //     so PEP 626 line attribution stays correct).
 //
-// MIRRORS: Python/flowgraph.c:2572 make_super_instruction.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2572 make_super_instruction.
 func makeSuperInstruction(a, b ir.Instr) (ir.Instr, bool) {
 	if a.Loc.Line != 0 && b.Loc.Line != 0 && a.Loc.Line != b.Loc.Line {
 		return ir.Instr{}, false

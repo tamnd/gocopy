@@ -12,7 +12,7 @@ import (
 // when the docstring is None. Returns the condensed pool and rewrites
 // every surviving LOAD_CONST oparg to its new index.
 //
-// MIRRORS: Python/flowgraph.c:3174 remove_unused_consts.
+// SOURCE: CPython 3.14 Python/flowgraph.c:3174 remove_unused_consts.
 //
 // The CPython implementation builds an index_map[old]=new array and
 // rewrites bytecode in two passes (mark used, then remap). gocopy
@@ -99,7 +99,8 @@ func RemoveUnusedConsts(seq *ir.InstrSeq, consts []any) []any {
 // variants LOAD_CONST_IMMORTAL / LOAD_CONST_MORTAL with
 // HAS_CONST_FLAG. The visitor only ever emits LOAD_CONST.
 //
-// MIRRORS: pycore_opcode_metadata.h OPCODE_HAS_CONST.
+// SOURCE: CPython 3.14 Include/internal/pycore_opcode_metadata.h
+// OPCODE_HAS_CONST.
 func opcodeHasConst(op bytecode.Opcode) bool {
 	return op == bytecode.LOAD_CONST
 }

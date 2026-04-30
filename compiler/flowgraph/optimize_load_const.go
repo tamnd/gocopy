@@ -10,10 +10,6 @@ import (
 // oparg. The const-pool entry is left in place; remove_unused_consts
 // is the pass that condenses the pool afterwards.
 //
-// MIRRORS: Python/flowgraph.c:2168 basicblock_optimize_load_const
-// (LOAD_SMALL_INT-rewriting half) + Python/flowgraph.c:1408
-// maybe_instr_make_load_smallint.
-//
 // Out of scope here (split into later v0.7.10.x sub-releases):
 //
 //   - The LOAD_CONST + COPY-of-LOAD_CONST + POP_JUMP_IF_* / IS_OP /
@@ -23,6 +19,10 @@ import (
 //   - The fold_const_unaryop / fold_const_binop /
 //     fold_tuple_of_constants passes, which run alongside this one
 //     in CPython's optimize_basic_block.
+//
+// SOURCE: CPython 3.14 Python/flowgraph.c:2169
+// basicblock_optimize_load_const (LOAD_SMALL_INT-rewriting half)
+// + Python/flowgraph.c:1408 maybe_instr_make_load_smallint.
 func OptimizeLoadConst(seq *ir.InstrSeq, consts []any) {
 	if seq == nil {
 		return
@@ -45,7 +45,8 @@ func OptimizeLoadConst(seq *ir.InstrSeq, consts []any) {
 // LOAD_SMALL_INT v when v is an int in [0, 255]. Returns true when
 // the rewrite happens.
 //
-// MIRRORS: Python/flowgraph.c:1408 maybe_instr_make_load_smallint.
+// SOURCE: CPython 3.14 Python/flowgraph.c:1408
+// maybe_instr_make_load_smallint.
 func maybeInstrMakeLoadSmallInt(inst *ir.Instr, v any) bool {
 	iv, ok := v.(int64)
 	if !ok {

@@ -134,6 +134,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	var assert *ast.Assert
 	var termWhile *ast.While
 	var termFor *ast.For
+	var termPass *ast.Pass
 	switch last := s.Body[lastIdx].(type) {
 	case *ast.Return:
 		if last.Value == nil || last.P.Col > 255 || !validateFuncBodyReturnValue(last.Value) {
@@ -165,6 +166,18 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 		termFor = last
+	case *ast.Pass:
+		// CPython 3.14 codegen_function_body has no terminator
+		// requirement; a Pass-terminated body falls through to the
+		// implicit return planted by _PyCodegen_AddReturnAtEnd.
+		// Pass survives the validation gate trivially (no fields to
+		// check) — if its column or line are out of range, the
+		// per-stmt emit still works; the visitor's outer loc inherits
+		// the Pass span.
+		if last.P.Col > 255 || last.P.Line < 1 {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		termPass = last
 	default:
 		return bytecode.Loc{}, ErrNotImplemented
 	}
@@ -196,6 +209,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if !validateFuncBodyAnnAssign(st) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
+		case *ast.Pass:
+			// No validation. CPython 3.14
+			// Python/codegen.c::codegen_visit_stmt Pass_kind arm
+			// is one line: ADDOP(c, LOC(s), NOP).
 		case *ast.Global:
 			if !validateFuncBodyGlobalNonlocal(st.Names, st.P) {
 				return bytecode.Loc{}, ErrNotImplemented
@@ -210,6 +227,25 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			}
 		case *ast.FunctionDef:
 			if !validateFuncBodyInnerDef(st) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+		case *ast.ExprStmt:
+			if st.P.Col > 255 || st.P.Line < 1 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			// Constant-as-ExprStmt covers two surface cases:
+			// (a) function-scope docstring (body[0] string literal),
+			// which CPython 3.14 codegen_function_body skips entirely
+			// (Python/codegen.c:1347-1359 first_instr=1 + co_consts[0]
+			// = cleandoc), and (b) a discarded constant elsewhere,
+			// which codegen_stmt_expr collapses to NOP. The visitor
+			// does not yet implement docstring promotion, so reject
+			// every Constant ExprStmt and let the legacy classifier
+			// handle docstring-bearing bodies for now.
+			if _, isConst := st.Value.(*ast.Constant); isConst {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if !validateFuncBodyAssignRHS(st.Value) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
 		default:
@@ -292,6 +328,21 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if err := emitFuncBodyAnnAssign(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
+		case *ast.Pass:
+			// CPython 3.14 Python/codegen.c::codegen_visit_stmt
+			// Pass_kind: ADDOP(c, LOC(s), NOP). LOC(s) carries the
+			// stmt's exact span (col_offset..end_col_offset). The
+			// "pass" keyword is 4 chars wide.
+			loc := bytecode.Loc{
+				Line:    uint32(st.P.Line),
+				EndLine: uint32(st.P.Line),
+				Col:     uint16(st.P.Col),
+				EndCol:  uint16(st.P.Col) + 4,
+			}
+			block := child.currentBlock()
+			block.Instrs = append(block.Instrs, ir.Instr{
+				Op: bytecode.NOP, Arg: 0, Loc: loc,
+			})
 		case *ast.Global, *ast.Nonlocal:
 			// Pure symtable directives — no bytecode output.
 			// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt
@@ -302,6 +353,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			}
 		case *ast.FunctionDef:
 			if err := emitFuncBodyInnerDef(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
+		case *ast.ExprStmt:
+			if err := emitFuncBodyExprStmt(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
 		}
@@ -344,6 +399,21 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 		bodyEndCol = c
 		bodyEndLine = line
+	case termPass != nil:
+		// CPython 3.14 Python/codegen.c::codegen_visit_stmt Pass_kind:
+		// ADDOP(c, LOC(s), NOP). The Pass span is fixed at the
+		// keyword width (4 chars).
+		loc := bytecode.Loc{
+			Line:    uint32(termPass.P.Line),
+			EndLine: uint32(termPass.P.Line),
+			Col:     uint16(termPass.P.Col),
+			EndCol:  uint16(termPass.P.Col) + 4,
+		}
+		child.currentBlock().Instrs = append(child.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.NOP, Arg: 0, Loc: loc},
+		)
+		bodyEndCol = uint16(termPass.P.Col) + 4
+		bodyEndLine = termPass.P.Line
 	default:
 		c, line, _, err := codegenIf(child, termIf, lines)
 		if err != nil {
@@ -352,6 +422,18 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		bodyEndCol = c
 		bodyEndLine = line
 	}
+
+	// CPython 3.14 Python/codegen.c:1378 codegen_function_body
+	// always calls _PyCompile_OptimizeAndAssemble(c, 1), which in turn
+	// invokes Python/codegen.c:6473 _PyCodegen_AddReturnAtEnd to plant
+	// LOAD_CONST None + RETURN_VALUE at NO_LOCATION on a fresh trailing
+	// block. When the body already returned (via Return / Raise /
+	// Assert / While-exit / For-exit), this trailing block is
+	// unreachable and Python/flowgraph.c:996 remove_unreachable zeroes
+	// its instructions, leaving byte parity intact. When the body fell
+	// through (e.g. a Pass-terminated body), the trailing block becomes
+	// the implicit return.
+	addReturnAtEnd(child, true)
 	if len(child.Consts) == 0 {
 		child.addConst(nil)
 	}
@@ -751,7 +833,7 @@ func emitFuncBodyRaise(u *compileUnit, r *ast.Raise, lines [][]byte) (uint16, er
 //     retLoc(retCol, ternEnd).
 //
 // The end-merge block is the structural equivalent of CPython's
-// `end:` label after codegen_ifexp returns. inlineSmallExitBlocks
+// `end:` label after codegen_ifexp returns. inlineSmallOrNoLinenoBlocks
 // duplicates RETURN_VALUE into the JUMP_FORWARD predecessor (the
 // true branch) but keeps the merge block alive for the
 // fall-through (false) branch — that asymmetry is exactly what
@@ -1026,6 +1108,47 @@ func emitFuncBodyAnnAssign(u *compileUnit, n *ast.AnnAssign, lines [][]byte) err
 		Col: uint16(target.P.Col), EndCol: uint16(target.P.Col) + uint16(len(target.Id)),
 	}
 	u.emitNameStore(target.Id, tgtLoc)
+	return nil
+}
+
+// emitFuncBodyExprStmt emits the IR for a bare-expression statement
+// (e.g. `g(x)`, `a.b`) inside a function body. Mirrors CPython 3.14
+// Python/codegen.c:2962 codegen_stmt_expr (non-interactive arm):
+//
+//	if (value->kind == Constant_kind) {
+//	    ADDOP(c, loc, NOP);
+//	    return SUCCESS;
+//	}
+//	VISIT(c, expr, value);
+//	ADDOP(c, NO_LOCATION, POP_TOP);
+//
+// The Constant_kind arm collapses the statement to a NOP so the
+// CFG carries a placeholder for the line table (matters when the
+// expression is a docstring literal); gocopy does not yet bind
+// docstrings at function scope, so the NOP is harmless. The general
+// case discards the unused value with a POP_TOP at NO_LOCATION,
+// which propagateLineNumbers fills from the predecessor's last loc.
+//
+// SOURCE: CPython 3.14 Python/codegen.c:2962 codegen_stmt_expr.
+func emitFuncBodyExprStmt(u *compileUnit, st *ast.ExprStmt, lines [][]byte) error {
+	if c, ok := st.Value.(*ast.Constant); ok {
+		loc := bytecode.Loc{
+			Line:    uint32(c.P.Line),
+			EndLine: uint32(c.P.Line),
+			Col:     uint16(c.P.Col),
+			EndCol:  uint16(astExprEndCol(lines, c.P.Line, c)),
+		}
+		u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.NOP, Arg: 0, Loc: loc},
+		)
+		return nil
+	}
+	if _, _, err := visitFuncExpr(u, st.Value, lines); err != nil {
+		return err
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+		ir.Instr{Op: bytecode.POP_TOP, Arg: 0, Loc: bytecode.Loc{}},
+	)
 	return nil
 }
 

@@ -22,7 +22,7 @@ import (
 // Mixed sequences (e.g., one LOAD_NAME among the loaders) leave the
 // BUILD_TUPLE unchanged.
 //
-// MIRRORS: Python/flowgraph.c:1436 fold_tuple_of_constants +
+// SOURCE: CPython 3.14 Python/flowgraph.c:1454 fold_tuple_of_constants +
 // :1293 get_const_value + :1350 get_const_loading_instrs +
 // :1412 instr_make_load_const.
 //
@@ -100,7 +100,7 @@ func foldTupleOfConstantsInBlock(b *ir.Block, consts []any) []any {
 // marked for removal (so a later BUILD_TUPLE cannot reuse a loader
 // already claimed by an earlier fold).
 //
-// MIRRORS: Python/flowgraph.c:1350 get_const_loading_instrs.
+// SOURCE: CPython 3.14 Python/flowgraph.c:1367 get_const_loading_instrs.
 func getConstLoadingInstrs(b *ir.Block, start, n int, drop map[int]bool) []int {
 	out := make([]int, 0, n)
 	for i := start; i >= 0 && len(out) < n; i-- {
@@ -129,7 +129,7 @@ func getConstLoadingInstrs(b *ir.Block, start, n int, drop map[int]bool) []int {
 // value directly in oparg as int64 (CPython's small-int range is
 // 0..255 and the assembler treats the oparg as unsigned).
 //
-// MIRRORS: Python/flowgraph.c:1293 get_const_value.
+// SOURCE: CPython 3.14 Python/flowgraph.c:1294 get_const_value.
 func constValueOfLoader(inst *ir.Instr, consts []any) any {
 	switch inst.Op {
 	case bytecode.LOAD_CONST:
