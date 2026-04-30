@@ -196,6 +196,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if !validateFuncBodyAnnAssign(st) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
+		case *ast.Pass:
+			// No validation. CPython 3.14
+			// Python/codegen.c::codegen_visit_stmt Pass_kind arm
+			// is one line: ADDOP(c, LOC(s), NOP).
 		case *ast.Global:
 			if !validateFuncBodyGlobalNonlocal(st.Names, st.P) {
 				return bytecode.Loc{}, ErrNotImplemented
@@ -292,6 +296,21 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if err := emitFuncBodyAnnAssign(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
+		case *ast.Pass:
+			// CPython 3.14 Python/codegen.c::codegen_visit_stmt
+			// Pass_kind: ADDOP(c, LOC(s), NOP). LOC(s) carries the
+			// stmt's exact span (col_offset..end_col_offset). The
+			// "pass" keyword is 4 chars wide.
+			loc := bytecode.Loc{
+				Line:    uint32(st.P.Line),
+				EndLine: uint32(st.P.Line),
+				Col:     uint16(st.P.Col),
+				EndCol:  uint16(st.P.Col) + 4,
+			}
+			block := child.currentBlock()
+			block.Instrs = append(block.Instrs, ir.Instr{
+				Op: bytecode.NOP, Arg: 0, Loc: loc,
+			})
 		case *ast.Global, *ast.Nonlocal:
 			// Pure symtable directives — no bytecode output.
 			// SOURCE: CPython 3.14 Python/codegen.c::codegen_visit_stmt
