@@ -218,6 +218,8 @@ func astExprCol(e ast.Expr) byte {
 		return byte(n.P.Col)
 	case *ast.Tuple:
 		return byte(n.P.Col)
+	case *ast.BoolOp:
+		return byte(n.P.Col)
 	}
 	return 0
 }
@@ -264,6 +266,10 @@ func astExprEndCol(lines [][]byte, line int, e ast.Expr) byte {
 		return byte(obj.P.Col) + byte(len(obj.Id)) + 1 + byte(len(n.Attr))
 	case *ast.Subscript:
 		return scanSubscriptEnd(lines, line, astExprEndCol(lines, line, n.Slice))
+	case *ast.BoolOp:
+		if len(n.Values) > 0 {
+			return astExprEndCol(lines, line, n.Values[len(n.Values)-1])
+		}
 	case *ast.Call:
 		var lastEnd byte
 		if len(n.Args) > 0 {
