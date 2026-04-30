@@ -1,4 +1,4 @@
-package optimize
+package flowgraph
 
 import (
 	"fmt"
@@ -107,44 +107,15 @@ func hasLabelledBlock(seq *ir.InstrSeq) bool {
 	return false
 }
 
-// instructionUnits returns the on-disk size of an instruction in
-// code units (one unit = 2 bytes), including any leading
-// EXTENDED_ARG words and trailing inline-cache words. Mirrors
-// flowgraph.instructionUnits byte-for-byte.
-func instructionUnits(instr ir.Instr) int {
-	units := 1
-	if instr.Arg > 0xFF {
-		if instr.Arg > 0xFFFF {
-			units++
-			if instr.Arg > 0xFFFFFF {
-				units++
-			}
-		}
-		units++
-	}
-	units += int(bytecode.CacheSize[instr.Op])
-	return units
-}
+// isJumpOp / isTerminatorOp are local aliases for the merged-package
+// equivalents in cfg.go (isJump / isTerminator). The semantics differ
+// in one place: this *Op variant of isTerminator excludes
+// RAISE_VARARGS (resolve_jumps inlines RETURN_VALUE-tail blocks only,
+// not raise-tail blocks), so we can't drop in cfg.go's directly. Once
+// spec 1573 Phase D's optimize_basic_block lands the inliner gains
+// RAISE_VARARGS coverage and these aliases collapse.
+func isJumpOp(op bytecode.Opcode) bool { return isJump(op) }
 
-// isJumpOp reports whether op transfers control to a non-fallthrough
-// successor. Mirrors flowgraph.isJump.
-func isJumpOp(op bytecode.Opcode) bool {
-	switch op {
-	case bytecode.JUMP_FORWARD,
-		bytecode.JUMP_BACKWARD,
-		bytecode.POP_JUMP_IF_FALSE,
-		bytecode.POP_JUMP_IF_TRUE,
-		bytecode.POP_JUMP_IF_NONE,
-		bytecode.POP_JUMP_IF_NOT_NONE,
-		bytecode.FOR_ITER:
-		return true
-	}
-	return false
-}
-
-// isTerminatorOp reports whether op ends a basic block.
-// Conditional jumps are jumps but not terminators here — they have
-// fallthrough successors.
 func isTerminatorOp(op bytecode.Opcode) bool {
 	switch op {
 	case bytecode.RETURN_VALUE,

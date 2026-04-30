@@ -1,4 +1,4 @@
-package optimize
+package flowgraph
 
 import "github.com/tamnd/gocopy/compiler/ir"
 
