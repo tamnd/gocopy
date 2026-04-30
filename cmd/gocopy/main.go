@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/tamnd/gocopy/compiler"
+	"github.com/tamnd/gocopy/v1"
 	"github.com/tamnd/gocopy/pyc"
 )
 
