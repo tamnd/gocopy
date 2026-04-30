@@ -15,7 +15,6 @@ import (
 	"github.com/tamnd/gocopy/compiler/codegen"
 	"github.com/tamnd/gocopy/compiler/flowgraph"
 	"github.com/tamnd/gocopy/compiler/lower"
-	"github.com/tamnd/gocopy/compiler/optimize"
 	"github.com/tamnd/gocopy/compiler/symtable"
 )
 
@@ -94,10 +93,7 @@ func TestVisitorParity(t *testing.T) {
 			}
 			continue
 		}
-		flowgraph.OptimizeLoadConst(seq, consts)
-		consts = flowgraph.FoldTupleOfConstants(seq, consts)
-		consts = flowgraph.RemoveUnusedConsts(seq, consts)
-		seq = optimize.Run(seq)
+		seq, consts = flowgraph.OptimizeCodeUnit(seq, consts)
 		got, asmErr := assemble.Assemble(seq, assemble.Options{
 			Filename: filepath.Base(f),
 			Name:     "<module>",

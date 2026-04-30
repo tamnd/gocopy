@@ -180,7 +180,8 @@ func (u *compileUnit) finalizeDeferred() {
 // Generate is the visitor pipeline's entry point. It builds a
 // compileUnit for the module, dispatches into the visit_<node>
 // family, and returns the populated InstrSeq for the caller to feed
-// into compiler/optimize.Run and compiler/assemble.Assemble.
+// into compiler/flowgraph.OptimizeCodeUnit and
+// compiler/assemble.Assemble.
 //
 // The Consts and Names tables populated on the unit are exposed via
 // the Generate*Result helpers for assemble.Assemble.

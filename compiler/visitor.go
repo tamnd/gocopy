@@ -6,7 +6,6 @@ import (
 	"github.com/tamnd/gocopy/compiler/ast"
 	"github.com/tamnd/gocopy/compiler/codegen"
 	"github.com/tamnd/gocopy/compiler/flowgraph"
-	"github.com/tamnd/gocopy/compiler/optimize"
 	"github.com/tamnd/gocopy/compiler/symtable"
 )
 
@@ -33,13 +32,9 @@ func runVisitorShadow(mod *ast.Module, scope *symtable.Scope, source []byte, opt
 	if err != nil {
 		return nil
 	}
-	// Run the same const-pool passes the child-unit pipeline does, so
-	// module-level def-statements with default arguments fold their
-	// BUILD_TUPLE chains identically to CPython.
-	flowgraph.OptimizeLoadConst(seq, consts)
-	consts = flowgraph.FoldTupleOfConstants(seq, consts)
-	consts = flowgraph.RemoveUnusedConsts(seq, consts)
-	seq = optimize.Run(seq)
+	// Single-driver post-codegen pipeline (spec 1573 Phase A): mirrors
+	// CPython 3.14 Python/flowgraph.c:3659 _PyCfg_OptimizeCodeUnit.
+	seq, consts = flowgraph.OptimizeCodeUnit(seq, consts)
 	co, err := assemble.Assemble(seq, assemble.Options{
 		Filename: opts.Filename,
 		Name:     "<module>",
