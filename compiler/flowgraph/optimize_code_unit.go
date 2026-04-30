@@ -66,19 +66,19 @@ func OptimizeCodeUnit(seq *ir.InstrSeq, consts []any) (*ir.InstrSeq, []any) {
 		return nil, consts
 	}
 	// optimize_cfg (flowgraph.c:2552)
-	inlineSmallExitBlocks(seq)              // line 2557
-	removeUnreachable(seq)                  // line 2558
-	propagateLineNumbers(seq)               // line 2559
-	OptimizeLoadConst(seq, consts)          // line 2560
+	inlineSmallOrNoLinenoBlocks(seq)           // line 2557
+	removeUnreachable(seq)                     // line 2558
+	propagateLineNumbers(seq)                  // line 2559
+	OptimizeLoadConst(seq, consts)             // line 2560
 	consts = FoldTupleOfConstants(seq, consts) // line 2562 (part of optimize_basic_block)
-	removeRedundantNops(seq)                // line 2564
-	removeUnreachable(seq)                  // line 2565
+	removeRedundantNops(seq)                   // line 2564
+	removeUnreachable(seq)                     // line 2565
 	// _PyCfg_OptimizeCodeUnit tail (flowgraph.c:3659)
 	consts = RemoveUnusedConsts(seq, consts) // line 3697
-	InsertSuperinstructions(seq)            // line 3701
+	InsertSuperinstructions(seq)             // line 3701
 	// _PyCfg_OptimizedCfgToInstructionSequence (flowgraph.c:4025)
-	OptimizeLoadFast(seq)                   // line 4062
-	resolveJumps(seq)                       // _PyCfg_ToInstructionSequence (line 4065)
+	OptimizeLoadFast(seq) // line 4062
+	resolveJumps(seq)     // _PyCfg_ToInstructionSequence (line 4065)
 	return seq, consts
 }
 
@@ -90,7 +90,7 @@ func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 	if seq == nil {
 		return nil
 	}
-	inlineSmallExitBlocks(seq)
+	inlineSmallOrNoLinenoBlocks(seq)
 	removeUnreachable(seq)
 	propagateLineNumbers(seq)
 	removeRedundantNops(seq)

@@ -100,7 +100,7 @@
 // v0.7.10.3 ports CPython's insert_superinstructions
 // (Python/flowgraph.c:2588) into compiler/flowgraph/. Visitor
 // stops pre-fusing LFLBLFLB pairs at emit time; the new pass
-// runs inside optimize.Run between inlineSmallExitBlocks and
+// runs inside optimize.Run between inlineSmallOrNoLinenoBlocks and
 // resolveJumps. fuseLflblflbTail is deleted from visit_func_stmt.go.
 // Anything reaching codegen.Build now returns ErrUnsupported and
 // the caller falls back to the classifier.

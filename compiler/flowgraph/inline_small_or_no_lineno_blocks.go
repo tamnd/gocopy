@@ -5,7 +5,7 @@ import (
 	"github.com/tamnd/gocopy/compiler/ir"
 )
 
-// inlineSmallExitBlocks duplicates a small terminator block (one
+// inlineSmallOrNoLinenoBlocks duplicates a small terminator block (one
 // ending in RETURN_VALUE, with at most maxInlineExitInstrs
 // instructions) into every predecessor that reaches it via an
 // unconditional JUMP_FORWARD, replacing the JUMP_FORWARD with the
@@ -54,7 +54,7 @@ import (
 // SOURCE: CPython 3.14 Python/flowgraph.c:1211
 // basicblock_inline_small_or_no_lineno_blocks +
 // Python/flowgraph.c:1245 inline_small_or_no_lineno_blocks.
-func inlineSmallExitBlocks(seq *ir.InstrSeq) {
+func inlineSmallOrNoLinenoBlocks(seq *ir.InstrSeq) {
 	if seq == nil || len(seq.Blocks) <= 1 {
 		return
 	}

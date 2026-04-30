@@ -770,7 +770,7 @@ func emitFuncBodyRaise(u *compileUnit, r *ast.Raise, lines [][]byte) (uint16, er
 //     retLoc(retCol, ternEnd).
 //
 // The end-merge block is the structural equivalent of CPython's
-// `end:` label after codegen_ifexp returns. inlineSmallExitBlocks
+// `end:` label after codegen_ifexp returns. inlineSmallOrNoLinenoBlocks
 // duplicates RETURN_VALUE into the JUMP_FORWARD predecessor (the
 // true branch) but keeps the merge block alive for the
 // fall-through (false) branch — that asymmetry is exactly what

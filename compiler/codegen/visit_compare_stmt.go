@@ -152,7 +152,7 @@ func emitBoolOpValue(u *compileUnit, b *ast.BoolOp, line uint32, _ uint16) error
 //   - into a fresh merge block bound to endLabel — left as
 //     u.currentBlock() for the visitor tail to flow into.
 //
-// inlineSmallExitBlocks duplicates the merge-block tail into both
+// inlineSmallOrNoLinenoBlocks duplicates the merge-block tail into both
 // branches; resolveJumps then rewrites POP_JUMP_IF_FALSE's Arg
 // (5 in the canonical shape) and drops the consumed JUMP_FORWARD.
 //
