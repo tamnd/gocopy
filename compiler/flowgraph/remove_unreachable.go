@@ -45,7 +45,7 @@ func removeUnreachable(seq *ir.InstrSeq) {
 		// Jump target.
 		if len(b.Instrs) > 0 {
 			last := b.Instrs[len(b.Instrs)-1]
-			if isJumpOp(last.Op) {
+			if isJump(last.Op) {
 				if target := jumpTargetBlock(seq, ir.LabelID(last.Arg)); target != nil && !visited[target.ID] {
 					visited[target.ID] = true
 					stack = append(stack, target)
@@ -71,7 +71,7 @@ func blockFallsThrough(b *ir.Block) bool {
 		return true
 	}
 	last := b.Instrs[len(b.Instrs)-1]
-	return !isTerminatorOp(last.Op)
+	return !isTerminator(last.Op)
 }
 
 // nextBlockBySliceOrder returns the block at seq.Blocks[i+1] where

@@ -371,6 +371,18 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		bodyEndCol = c
 		bodyEndLine = line
 	}
+
+	// CPython 3.14 Python/codegen.c:1378 codegen_function_body
+	// always calls _PyCompile_OptimizeAndAssemble(c, 1), which in turn
+	// invokes Python/codegen.c:6473 _PyCodegen_AddReturnAtEnd to plant
+	// LOAD_CONST None + RETURN_VALUE at NO_LOCATION on a fresh trailing
+	// block. When the body already returned (via Return / Raise /
+	// Assert / While-exit / For-exit), this trailing block is
+	// unreachable and Python/flowgraph.c:996 remove_unreachable zeroes
+	// its instructions, leaving byte parity intact. When the body fell
+	// through (e.g. a Pass-terminated body), the trailing block becomes
+	// the implicit return.
+	addReturnAtEnd(child, true)
 	if len(child.Consts) == 0 {
 		child.addConst(nil)
 	}

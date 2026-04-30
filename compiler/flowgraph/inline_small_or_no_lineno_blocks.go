@@ -127,7 +127,7 @@ func collectInlinablePredecessors(seq *ir.InstrSeq, idx int, b *ir.Block) (jumpP
 			continue
 		}
 		last := p.Instrs[len(p.Instrs)-1]
-		if isJumpOp(last.Op) {
+		if isJump(last.Op) {
 			if last.Arg != uint32(b.Label) {
 				continue
 			}
@@ -137,7 +137,7 @@ func collectInlinablePredecessors(seq *ir.InstrSeq, idx int, b *ir.Block) (jumpP
 			}
 			return nil, false, false
 		}
-		if isTerminatorOp(last.Op) {
+		if isTerminator(last.Op) {
 			continue
 		}
 		if j+1 == idx {

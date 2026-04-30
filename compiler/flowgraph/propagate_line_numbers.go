@@ -61,7 +61,7 @@ func propagateLineNumbers(seq *ir.InstrSeq) {
 		}
 		last := b.Instrs[len(b.Instrs)-1]
 		// Fall-through successor.
-		if !isTerminatorOp(last.Op) {
+		if !isTerminator(last.Op) {
 			if bi+1 < len(seq.Blocks) {
 				succ := seq.Blocks[bi+1]
 				if preds[succ.ID] == 1 && len(succ.Instrs) > 0 && isNoLocation(succ.Instrs[0].Loc) {
@@ -70,7 +70,7 @@ func propagateLineNumbers(seq *ir.InstrSeq) {
 			}
 		}
 		// Jump target.
-		if isJumpOp(last.Op) {
+		if isJump(last.Op) {
 			if target := jumpTargetBlock(seq, ir.LabelID(last.Arg)); target != nil {
 				if preds[target.ID] == 1 && len(target.Instrs) > 0 && isNoLocation(target.Instrs[0].Loc) {
 					target.Instrs[0].Loc = prev
@@ -110,12 +110,12 @@ func blockPredecessorCounts(seq *ir.InstrSeq) map[uint32]int {
 			continue
 		}
 		last := b.Instrs[len(b.Instrs)-1]
-		if !isTerminatorOp(last.Op) {
+		if !isTerminator(last.Op) {
 			if i+1 < len(seq.Blocks) {
 				preds[seq.Blocks[i+1].ID]++
 			}
 		}
-		if isJumpOp(last.Op) {
+		if isJump(last.Op) {
 			if target := jumpTargetBlock(seq, ir.LabelID(last.Arg)); target != nil {
 				preds[target.ID]++
 			}

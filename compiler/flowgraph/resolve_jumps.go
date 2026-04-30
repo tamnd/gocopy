@@ -85,7 +85,7 @@ func resolveJumps(seq *ir.InstrSeq) {
 		for k := range b.Instrs {
 			instr := &b.Instrs[k]
 			units := instructionUnits(*instr)
-			if !isJumpOp(instr.Op) {
+			if !isJump(instr.Op) {
 				off += units
 				continue
 			}
@@ -117,21 +117,3 @@ func resolveJumps(seq *ir.InstrSeq) {
 	seq.Blocks = []*ir.Block{flat}
 }
 
-// isJumpOp / isTerminatorOp are local aliases for the merged-package
-// equivalents in cfg.go (isJump / isTerminator). The semantics differ
-// in one place: this *Op variant of isTerminator excludes
-// RAISE_VARARGS (resolve_jumps inlines RETURN_VALUE-tail blocks only,
-// not raise-tail blocks), so we can't drop in cfg.go's directly. Once
-// spec 1573 Phase D's optimize_basic_block lands the inliner gains
-// RAISE_VARARGS coverage and these aliases collapse.
-func isJumpOp(op bytecode.Opcode) bool { return isJump(op) }
-
-func isTerminatorOp(op bytecode.Opcode) bool {
-	switch op {
-	case bytecode.RETURN_VALUE,
-		bytecode.JUMP_FORWARD,
-		bytecode.JUMP_BACKWARD:
-		return true
-	}
-	return false
-}
