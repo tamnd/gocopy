@@ -54,7 +54,7 @@ run_oracle() {
     # (spec 1574) deliberately includes fixtures that current visitor
     # arms reject; the harness must report all of them in one run, not
     # exit at the first.
-    if ! bin/gocopy compile "$src" -o "$actual" 2>/dev/null; then
+    if ! bin/gocopy compile "$src" -o "$actual" >/dev/null 2>&1; then
         echo "FAIL $src (gocopy compile error)"
         fail=$((fail + 1))
         rm -f "$actual"
@@ -66,8 +66,29 @@ run_oracle() {
     else
         echo "FAIL $src"
         fail=$((fail + 1))
+        diff_dis "$expected" "$actual"
     fi
     rm -f "$actual"
+}
+
+# diff_dis <expected.pyc> <actual.pyc>
+#   Disassembles both pyc files via tests/scripts/dis_pyc.py and prints
+#   a unified diff of the listings. Memory addresses (`at 0xNNN`) are
+#   stripped since they vary by load address and are not the
+#   divergence we care about. Output is indented for readability and
+#   capped at 80 lines so a single failing fixture cannot drown the
+#   summary.
+diff_dis() {
+    exp_dis="$(mktemp -t gocopy.exp.XXXXXX)"
+    act_dis="$(mktemp -t gocopy.act.XXXXXX)"
+    python3.14 tests/scripts/dis_pyc.py "$1" 2>&1 |
+        sed 's/at 0x[0-9a-f]*/at 0xADDR/g' >"$exp_dis"
+    python3.14 tests/scripts/dis_pyc.py "$2" 2>&1 |
+        sed 's/at 0x[0-9a-f]*/at 0xADDR/g' >"$act_dis"
+    diff -u --label expected --label actual "$exp_dis" "$act_dis" |
+        head -80 |
+        sed 's/^/  | /'
+    rm -f "$exp_dis" "$act_dis"
 }
 
 # Top-level fixtures.
