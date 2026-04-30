@@ -48,8 +48,9 @@ const (
 	JUMP_FORWARD      Opcode = 77
 	LIST_APPEND       Opcode = 78
 	LIST_EXTEND       Opcode = 79
-	LOAD_ATTR         Opcode = 80
-	LOAD_CONST        Opcode = 82
+	LOAD_ATTR             Opcode = 80
+	LOAD_COMMON_CONSTANT  Opcode = 81
+	LOAD_CONST            Opcode = 82
 	LOAD_DEREF        Opcode = 83
 	LOAD_FAST                         Opcode = 84
 	LOAD_FAST_BORROW                  Opcode = 86
@@ -63,6 +64,7 @@ const (
 	POP_JUMP_IF_NONE     Opcode = 101
 	POP_JUMP_IF_NOT_NONE Opcode = 102
 	POP_JUMP_IF_TRUE     Opcode = 103
+	RAISE_VARARGS          Opcode = 104
 	SET_FUNCTION_ATTRIBUTE Opcode = 108
 	STORE_NAME             Opcode = 116
 	STORE_ATTR             Opcode = 110

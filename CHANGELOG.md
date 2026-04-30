@@ -4,6 +4,7 @@ Per-version changelogs live in `changelog/`. Each file covers one release.
 
 ## Releases
 
+- [v0.7.10.11](changelog/v0.7.10.11.md) - raise + assert + global + AnnAssign in funcbody (8 fixtures) + LOAD_COMMON_CONSTANT/RAISE_VARARGS opcodes + RAISE_VARARGS as scope-exit terminator + `_PyCode_Validate` min-stacksize-1 bump + symtable global-wins-over-local; nonlocal deferred to v0.7.10.12 (2026-04-30)
 - [v0.7.10.10](changelog/v0.7.10.10.md) - Name decorators in funcbody: @d single + @d1\n@d2 chain (2 fixtures); attr/call decorators + annotations + visitor collapse deferred (2026-04-30)
 - [v0.7.10.9](changelog/v0.7.10.9.md) - codegen_boolop in funcbody: and / or 2-operand + same-op chain (4 fixtures); nested deferred (2026-04-30)
 - [v0.7.10.8](changelog/v0.7.10.8.md) - positional + kw-only defaults (visitFuncBodyDef) + fold_tuple_of_constants 1:1 port (4 fixtures, 8 flowgraph tests) (2026-04-30)
