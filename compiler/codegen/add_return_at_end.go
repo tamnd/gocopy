@@ -6,7 +6,7 @@ import (
 )
 
 // addReturnAtEnd appends LOAD_CONST None + RETURN_VALUE (or just
-// RETURN_VALUE when addNone is false) at NO_LOCATION to the
+// RETURN_VALUE when addNone is false) at NO_LOCATION on a fresh
 // trailing block of u.Seq. Mirrors CPython 3.14
 // Python/codegen.c::_PyCodegen_AddReturnAtEnd verbatim:
 //
@@ -25,16 +25,23 @@ import (
 // dedupes by equality so callers may invoke this helper safely
 // after their own const-pool emits.
 //
+// CPython's cfg_builder auto-splits a new block after every
+// terminator (return / raise / unconditional jump), so AddReturnAtEnd
+// always lands in a fresh block. gocopy's currentBlock() doesn't
+// auto-split; addReturnAtEnd allocates a fresh trailing block to
+// match. When the body already terminated, the new block has zero
+// predecessors and removeUnreachable zeroes it. When the body fell
+// through, the new block becomes the fallthrough successor and
+// propagateLineNumbers backfills the loc from the predecessor's
+// last instr.
+//
 // SOURCE: CPython 3.14 Python/codegen.c:6473
 // _PyCodegen_AddReturnAtEnd.
 func addReturnAtEnd(u *compileUnit, addNone bool) {
 	if u == nil || u.Seq == nil {
 		return
 	}
-	block := u.currentBlock()
-	if block == nil {
-		block = u.Seq.AddBlock()
-	}
+	block := u.Seq.AddBlock()
 	if addNone {
 		idx := u.addConst(nil)
 		block.Instrs = append(block.Instrs, ir.Instr{
