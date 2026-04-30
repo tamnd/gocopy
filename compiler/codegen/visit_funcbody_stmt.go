@@ -134,6 +134,7 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	var assert *ast.Assert
 	var termWhile *ast.While
 	var termFor *ast.For
+	var termPass *ast.Pass
 	switch last := s.Body[lastIdx].(type) {
 	case *ast.Return:
 		if last.Value == nil || last.P.Col > 255 || !validateFuncBodyReturnValue(last.Value) {
@@ -165,6 +166,18 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 		termFor = last
+	case *ast.Pass:
+		// CPython 3.14 codegen_function_body has no terminator
+		// requirement; a Pass-terminated body falls through to the
+		// implicit return planted by _PyCodegen_AddReturnAtEnd.
+		// Pass survives the validation gate trivially (no fields to
+		// check) — if its column or line are out of range, the
+		// per-stmt emit still works; the visitor's outer loc inherits
+		// the Pass span.
+		if last.P.Col > 255 || last.P.Line < 1 {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		termPass = last
 	default:
 		return bytecode.Loc{}, ErrNotImplemented
 	}
@@ -363,6 +376,21 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 		bodyEndCol = c
 		bodyEndLine = line
+	case termPass != nil:
+		// CPython 3.14 Python/codegen.c::codegen_visit_stmt Pass_kind:
+		// ADDOP(c, LOC(s), NOP). The Pass span is fixed at the
+		// keyword width (4 chars).
+		loc := bytecode.Loc{
+			Line:    uint32(termPass.P.Line),
+			EndLine: uint32(termPass.P.Line),
+			Col:     uint16(termPass.P.Col),
+			EndCol:  uint16(termPass.P.Col) + 4,
+		}
+		child.currentBlock().Instrs = append(child.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.NOP, Arg: 0, Loc: loc},
+		)
+		bodyEndCol = uint16(termPass.P.Col) + 4
+		bodyEndLine = termPass.P.Line
 	default:
 		c, line, _, err := codegenIf(child, termIf, lines)
 		if err != nil {
