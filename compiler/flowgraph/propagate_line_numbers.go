@@ -7,7 +7,7 @@ import (
 
 // propagateLineNumbers fills NO_LOCATION slots in the line table by
 // inheriting locations from predecessors. Mirrors CPython 3.14
-// Python/flowgraph.c:3614 propagate_line_numbers verbatim:
+// Python/flowgraph.c:3616 propagate_line_numbers verbatim:
 //
 //	"If an instruction has no line number, but it's predecessor in
 //	 the BB does, then copy the line number. If a successor block
@@ -33,7 +33,7 @@ import (
 // codegen-level NO_LOCATION emits (e.g. addReturnAtEnd, MAKE_CELL
 // prologue) all carry Line == 0, which this pass backfills.
 //
-// SOURCE: CPython 3.14 Python/flowgraph.c:3614 propagate_line_numbers.
+// SOURCE: CPython 3.14 Python/flowgraph.c:3616 propagate_line_numbers.
 func propagateLineNumbers(seq *ir.InstrSeq) {
 	if seq == nil || len(seq.Blocks) == 0 {
 		return

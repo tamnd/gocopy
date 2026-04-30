@@ -8,7 +8,7 @@ import (
 // instrFlag is the bitset CPython 3.14 uses on each LOAD_FAST(_LOAD_FAST)
 // instruction during optimize_load_fast's per-block scan.
 //
-// MIRRORS: Python/flowgraph.c:2696 LoadFastInstrFlag.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2696 LoadFastInstrFlag.
 type instrFlag uint8
 
 const (
@@ -39,7 +39,7 @@ const dummyInstr = -1
 // instruction index that produced the value and (for LOAD_FAST
 // products) the local slot that supports the borrow.
 //
-// MIRRORS: Python/flowgraph.c:2691 ref.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2691 ref.
 type ref struct {
 	instr int
 	local int
@@ -50,7 +50,7 @@ type ref struct {
 // LOAD_FAST_BORROW_LOAD_FAST_BORROW where the per-block lifetime
 // analysis proves the borrow is safe.
 //
-// MIRRORS: Python/flowgraph.c:2776 optimize_load_fast.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2776 optimize_load_fast.
 //
 // The pass walks every basic block once via DFS from the entry. For
 // each block:
@@ -272,7 +272,7 @@ func OptimizeLoadFast(seq *ir.InstrSeq) {
 // killLocal sets supportKilled on every load instruction whose ref
 // is currently on the operand stack and whose local matches.
 //
-// MIRRORS: Python/flowgraph.c:2707 kill_local.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2707 kill_local.
 func killLocal(flags []instrFlag, refs []ref, local int) {
 	for _, r := range refs {
 		if r.local == local && r.instr >= 0 && r.instr < len(flags) {
@@ -285,7 +285,7 @@ func killLocal(flags []instrFlag, refs []ref, local int) {
 // the popped ref's source instruction as storedAsLocal (unless the
 // ref was a synthetic dummy from block-entry priming).
 //
-// MIRRORS: Python/flowgraph.c:2718 store_local.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2719 store_local.
 func storeLocal(flags []instrFlag, refs []ref, local int, r ref) {
 	killLocal(flags, refs, local)
 	if r.instr != dummyInstr && r.instr >= 0 && r.instr < len(flags) {
@@ -296,7 +296,7 @@ func storeLocal(flags []instrFlag, refs []ref, local int, r ref) {
 // loadFastPushBlock primes target's startDepth and marks it visited
 // so the DFS visits it exactly once.
 //
-// MIRRORS: Python/flowgraph.c:2728 load_fast_push_block.
+// SOURCE: CPython 3.14 Python/flowgraph.c:2728 load_fast_push_block.
 //
 // (Implemented inline as the closure pushBlock inside OptimizeLoadFast
 // because Go closures over the local visited / startDepth maps and
@@ -354,7 +354,7 @@ func isScopeExit(op bytecode.Opcode) bool {
 // counts mirror CPython's _PyOpcode_num_popped / _PyOpcode_num_pushed
 // for each opcode; opcodes the visitor never produces return ok=false.
 //
-// MIRRORS: Python/opcode_metadata.h _PyOpcode_num_popped /
+// SOURCE: CPython 3.14 Python/opcode_metadata.h _PyOpcode_num_popped /
 // _PyOpcode_num_pushed (subset).
 func numPoppedPushed(op bytecode.Opcode, oparg uint32) (popped, pushed int, ok bool) {
 	switch op {

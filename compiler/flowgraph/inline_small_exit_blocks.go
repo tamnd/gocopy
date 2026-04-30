@@ -51,7 +51,9 @@ import (
 // no-op. v0.7.6 calls it once; v0.7.13's full optimize_cfg loop
 // runs it together with the rest of the CFG passes.
 //
-// SOURCE: CPython 3.14 Python/flowgraph.c::basicblock_inline_small_or_no_lineno_blocks.
+// SOURCE: CPython 3.14 Python/flowgraph.c:1211
+// basicblock_inline_small_or_no_lineno_blocks +
+// Python/flowgraph.c:1245 inline_small_or_no_lineno_blocks.
 func inlineSmallExitBlocks(seq *ir.InstrSeq) {
 	if seq == nil || len(seq.Blocks) <= 1 {
 		return
