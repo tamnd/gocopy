@@ -709,6 +709,22 @@ func validateFuncBodyAssignRHS(e ast.Expr) bool {
 			}
 		}
 		return true
+	case *ast.BoolOp:
+		if v.P.Col > 255 || len(v.Values) < 2 {
+			return false
+		}
+		if v.Op != "And" && v.Op != "Or" {
+			return false
+		}
+		for _, x := range v.Values {
+			if _, nested := x.(*ast.BoolOp); nested {
+				return false
+			}
+			if !validateFuncBodyAssignRHS(x) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

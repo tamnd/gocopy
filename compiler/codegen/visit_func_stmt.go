@@ -38,8 +38,69 @@ func visitFuncExpr(u *compileUnit, e ast.Expr, lines [][]byte) (uint16, uint16, 
 		return visitFuncSubscriptExpr(u, v, lines)
 	case *ast.Tuple:
 		return visitFuncTupleExpr(u, v, lines)
+	case *ast.BoolOp:
+		return visitFuncBoolOpExpr(u, v, lines)
 	}
 	return 0, 0, ErrNotImplemented
+}
+
+// visitFuncBoolOpExpr emits a chained `and` / `or` expression in
+// recursive function-scope context. Each non-final operand is
+// followed by COPY 1, TO_BOOL 0, and a short-circuit conditional
+// jump (POP_JUMP_IF_FALSE for `And`, POP_JUMP_IF_TRUE for `Or`) to
+// a shared end label; the path-not-taken side starts a fresh block
+// with NOT_TAKEN 0 + POP_TOP 0 before visiting the next operand.
+// The final operand falls through; the merge block bound to
+// endLabel is left as u.currentBlock() for the visitor tail.
+//
+// Loc handling: every COPY / TO_BOOL / JUMP / NOT_TAKEN / POP_TOP
+// shares spanLoc (start col of the first operand → end col of the
+// last operand, on b.P.Line). Each operand's load uses its own
+// span via the recursive visitFuncExpr call.
+//
+// MIRRORS: CPython 3.14 Python/codegen.c::codegen_boolop.
+func visitFuncBoolOpExpr(u *compileUnit, b *ast.BoolOp, lines [][]byte) (uint16, uint16, error) {
+	if len(b.Values) < 2 || b.P.Col > 255 {
+		return 0, 0, ErrNotImplemented
+	}
+	var jumpOp bytecode.Opcode
+	switch b.Op {
+	case "And":
+		jumpOp = bytecode.POP_JUMP_IF_FALSE
+	case "Or":
+		jumpOp = bytecode.POP_JUMP_IF_TRUE
+	default:
+		return 0, 0, ErrNotImplemented
+	}
+	startCol := uint16(b.P.Col)
+	endCol := uint16(astExprEndCol(lines, b.P.Line, b.Values[len(b.Values)-1]))
+	spanLoc := bytecode.Loc{
+		Line: uint32(b.P.Line), EndLine: uint32(b.P.Line),
+		Col: startCol, EndCol: endCol,
+	}
+	endLabel := u.Seq.AllocLabel()
+	for i := 0; i < len(b.Values)-1; i++ {
+		if _, _, err := visitFuncExpr(u, b.Values[i], lines); err != nil {
+			return 0, 0, err
+		}
+		blk := u.currentBlock()
+		blk.Instrs = append(blk.Instrs,
+			ir.Instr{Op: bytecode.COPY, Arg: 1, Loc: spanLoc},
+			ir.Instr{Op: bytecode.TO_BOOL, Arg: 0, Loc: spanLoc},
+		)
+		blk.AddJump(jumpOp, endLabel, spanLoc)
+		next := u.Seq.AddBlock()
+		next.Instrs = append(next.Instrs,
+			ir.Instr{Op: bytecode.NOT_TAKEN, Arg: 0, Loc: spanLoc},
+			ir.Instr{Op: bytecode.POP_TOP, Arg: 0, Loc: spanLoc},
+		)
+	}
+	if _, _, err := visitFuncExpr(u, b.Values[len(b.Values)-1], lines); err != nil {
+		return 0, 0, err
+	}
+	merge := u.Seq.AddBlock()
+	u.Seq.BindLabel(endLabel, merge)
+	return startCol, endCol, nil
 }
 
 // visitFuncNameExpr emits a load for n in function (or any non-
