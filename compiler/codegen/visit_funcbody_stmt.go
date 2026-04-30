@@ -229,6 +229,25 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if !validateFuncBodyInnerDef(st) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
+		case *ast.ExprStmt:
+			if st.P.Col > 255 || st.P.Line < 1 {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			// Constant-as-ExprStmt covers two surface cases:
+			// (a) function-scope docstring (body[0] string literal),
+			// which CPython 3.14 codegen_function_body skips entirely
+			// (Python/codegen.c:1347-1359 first_instr=1 + co_consts[0]
+			// = cleandoc), and (b) a discarded constant elsewhere,
+			// which codegen_stmt_expr collapses to NOP. The visitor
+			// does not yet implement docstring promotion, so reject
+			// every Constant ExprStmt and let the legacy classifier
+			// handle docstring-bearing bodies for now.
+			if _, isConst := st.Value.(*ast.Constant); isConst {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
+			if !validateFuncBodyAssignRHS(st.Value) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
 		default:
 			return bytecode.Loc{}, ErrNotImplemented
 		}
@@ -334,6 +353,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			}
 		case *ast.FunctionDef:
 			if err := emitFuncBodyInnerDef(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
+		case *ast.ExprStmt:
+			if err := emitFuncBodyExprStmt(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
 		}
@@ -1085,6 +1108,47 @@ func emitFuncBodyAnnAssign(u *compileUnit, n *ast.AnnAssign, lines [][]byte) err
 		Col: uint16(target.P.Col), EndCol: uint16(target.P.Col) + uint16(len(target.Id)),
 	}
 	u.emitNameStore(target.Id, tgtLoc)
+	return nil
+}
+
+// emitFuncBodyExprStmt emits the IR for a bare-expression statement
+// (e.g. `g(x)`, `a.b`) inside a function body. Mirrors CPython 3.14
+// Python/codegen.c:2962 codegen_stmt_expr (non-interactive arm):
+//
+//	if (value->kind == Constant_kind) {
+//	    ADDOP(c, loc, NOP);
+//	    return SUCCESS;
+//	}
+//	VISIT(c, expr, value);
+//	ADDOP(c, NO_LOCATION, POP_TOP);
+//
+// The Constant_kind arm collapses the statement to a NOP so the
+// CFG carries a placeholder for the line table (matters when the
+// expression is a docstring literal); gocopy does not yet bind
+// docstrings at function scope, so the NOP is harmless. The general
+// case discards the unused value with a POP_TOP at NO_LOCATION,
+// which propagateLineNumbers fills from the predecessor's last loc.
+//
+// SOURCE: CPython 3.14 Python/codegen.c:2962 codegen_stmt_expr.
+func emitFuncBodyExprStmt(u *compileUnit, st *ast.ExprStmt, lines [][]byte) error {
+	if c, ok := st.Value.(*ast.Constant); ok {
+		loc := bytecode.Loc{
+			Line:    uint32(c.P.Line),
+			EndLine: uint32(c.P.Line),
+			Col:     uint16(c.P.Col),
+			EndCol:  uint16(astExprEndCol(lines, c.P.Line, c)),
+		}
+		u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+			ir.Instr{Op: bytecode.NOP, Arg: 0, Loc: loc},
+		)
+		return nil
+	}
+	if _, _, err := visitFuncExpr(u, st.Value, lines); err != nil {
+		return err
+	}
+	u.currentBlock().Instrs = append(u.currentBlock().Instrs,
+		ir.Instr{Op: bytecode.POP_TOP, Arg: 0, Loc: bytecode.Loc{}},
+	)
 	return nil
 }
 
