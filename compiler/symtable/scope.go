@@ -215,8 +215,13 @@ func (s *Scope) LocalsPlusNames() []string {
 		out = append(out, p)
 	}
 
-	// 2. Plain locals: in OrderedNames, anything that is SymLocal
-	//    and not a Param and not in Frees.
+	// 2. Plain locals (SymLocal without SymCell), then cells
+	//    (SymCell without SymParam) — both walks of OrderedNames so
+	//    source order is preserved within each group. CPython orders
+	//    co_varnames before co_cellvars in the combined LocalsPlus
+	//    table, and a name that is both SymLocal and SymCell is a cell
+	//    only when it is a non-param (params that became cells stay
+	//    grouped with the params via SymParam).
 	freeSet := map[string]bool{}
 	for _, f := range s.Frees {
 		freeSet[f] = true
@@ -230,7 +235,16 @@ func (s *Scope) LocalsPlusNames() []string {
 			continue
 		}
 		sym := s.Symbols[n]
-		if sym.Flags.HasAny(SymLocal | SymCell) {
+		if sym.Flags.Has(SymLocal) && !sym.Flags.Has(SymCell) {
+			out = append(out, n)
+		}
+	}
+	for _, n := range s.OrderedNames {
+		if paramSet[n] || freeSet[n] {
+			continue
+		}
+		sym := s.Symbols[n]
+		if sym.Flags.Has(SymCell) {
 			out = append(out, n)
 		}
 	}
