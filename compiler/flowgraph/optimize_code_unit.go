@@ -40,6 +40,9 @@ func OptimizeCodeUnit(seq *ir.InstrSeq, consts []any) (*ir.InstrSeq, []any) {
 	consts = FoldTupleOfConstants(seq, consts)
 	consts = RemoveUnusedConsts(seq, consts)
 	eliminateEmptyBlocks(seq)
+	removeUnreachable(seq)
+	removeRedundantNops(seq)
+	propagateLineNumbers(seq)
 	inlineSmallExitBlocks(seq)
 	InsertSuperinstructions(seq)
 	OptimizeLoadFast(seq)
@@ -56,6 +59,9 @@ func Run(seq *ir.InstrSeq) *ir.InstrSeq {
 		return nil
 	}
 	eliminateEmptyBlocks(seq)
+	removeUnreachable(seq)
+	removeRedundantNops(seq)
+	propagateLineNumbers(seq)
 	inlineSmallExitBlocks(seq)
 	InsertSuperinstructions(seq)
 	OptimizeLoadFast(seq)
