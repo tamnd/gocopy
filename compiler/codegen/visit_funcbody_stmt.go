@@ -43,8 +43,14 @@ import (
 // Python/compile.c::compiler_enter_scope/compiler_exit_scope.
 func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast bool) (bytecode.Loc, error) {
 	_ = isLast
-	if len(s.DecoratorList) != 0 || s.Returns != nil || len(s.TypeParams) != 0 {
+	if s.Returns != nil || len(s.TypeParams) != 0 {
 		return bytecode.Loc{}, ErrNotImplemented
+	}
+	for _, d := range s.DecoratorList {
+		n, ok := d.(*ast.Name)
+		if !ok || n.P.Col > 255 || len(n.Id) < 1 || len(n.Id) > 15 || n.P.Line < 1 {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
 	}
 	args := s.Args
 	if args == nil {
@@ -180,6 +186,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	if defLine < 1 {
 		return bytecode.Loc{}, ErrNotImplemented
 	}
+	firstLineno := defLine
+	if len(s.DecoratorList) > 0 {
+		firstLineno = s.DecoratorList[0].(*ast.Name).P.Line
+	}
 
 	// Stamp Symbol.Index by computing the slot table once.
 	localsPlusNames := childScope.LocalsPlusNames()
@@ -193,12 +203,12 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 	}
 
-	child := u.pushChildUnit(s.Name, s.Name, int32(defLine))
+	child := u.pushChildUnit(s.Name, s.Name, int32(firstLineno))
 	child.Scope = childScope
 	childBlock := child.Seq.AddBlock()
 
 	resumeLoc := bytecode.Loc{
-		Line: uint32(defLine), EndLine: uint32(defLine),
+		Line: uint32(firstLineno), EndLine: uint32(firstLineno),
 		Col: 0, EndCol: 0,
 	}
 	childBlock.Instrs = append(childBlock.Instrs,
@@ -304,6 +314,19 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 	}
 
+	decoLoc := func(n *ast.Name) bytecode.Loc {
+		return bytecode.Loc{
+			Line:    uint32(n.P.Line),
+			EndLine: uint32(n.P.Line),
+			Col:     uint16(n.P.Col),
+			EndCol:  uint16(n.P.Col) + uint16(len(n.Id)),
+		}
+	}
+	for _, d := range s.DecoratorList {
+		n := d.(*ast.Name)
+		u.emitNameLoad(n.Id, decoLoc(n))
+	}
+
 	hasDefaults := len(args.Defaults) > 0
 	if hasDefaults {
 		for _, d := range args.Defaults {
@@ -348,6 +371,12 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	if hasDefaults {
 		block.Instrs = append(block.Instrs,
 			ir.Instr{Op: bytecode.SET_FUNCTION_ATTRIBUTE, Arg: 1, Loc: outerLoc},
+		)
+	}
+	for i := len(s.DecoratorList) - 1; i >= 0; i-- {
+		n := s.DecoratorList[i].(*ast.Name)
+		block.Instrs = append(block.Instrs,
+			ir.Instr{Op: bytecode.CALL, Arg: 0, Loc: decoLoc(n)},
 		)
 	}
 	block.Instrs = append(block.Instrs,
