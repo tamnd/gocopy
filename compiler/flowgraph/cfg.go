@@ -293,9 +293,14 @@ func isConditionalJump(op bytecode.Opcode) bool {
 // isTerminator reports whether the opcode ends a basic block.
 // Conditional jumps are technically jumps but not terminators in the
 // sense used here — they have fallthrough successors.
+//
+// Mirrors CPython 3.14's IS_SCOPE_EXIT_OPCODE | IS_UNCONDITIONAL_JUMP_OPCODE
+// in Python/flowgraph.c: a block ends after an unconditional jump or any
+// scope-exit (return, raise) — none of which fall through.
 func isTerminator(op bytecode.Opcode) bool {
 	switch op {
 	case bytecode.RETURN_VALUE,
+		bytecode.RAISE_VARARGS,
 		bytecode.JUMP_FORWARD,
 		bytecode.JUMP_BACKWARD:
 		return true

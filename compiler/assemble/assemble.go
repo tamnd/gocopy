@@ -76,6 +76,13 @@ func Assemble(seq *ir.InstrSeq, opts Options) (*bytecode.CodeObject, error) {
 	ltab := EncodeLineTable(seq)
 	etab := EncodeExcTable(nil)
 	stack := StackDepth(cfg)
+	// Mirror CPython 3.14 Objects/codeobject.c::_PyCode_Validate
+	// (lines 517-519): every code object's stacksize is bumped to
+	// at least 1. Functions that emit only zero-effect ops (e.g.
+	// bare `raise`) would otherwise compute stacksize=0.
+	if stack == 0 {
+		stack = 1
+	}
 
 	co := &bytecode.CodeObject{
 		Bytecode:    bcode,

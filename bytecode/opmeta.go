@@ -89,11 +89,17 @@ var OpMetaTable = func() [256]OpMeta {
 	// table mirrors that for parity even though the runtime pops
 	// the return value off the stack before returning.
 	set(RETURN_VALUE, OpMeta{Name: "RETURN_VALUE", HasArg: false, ArgKind: ArgNone, Flags: OpTerminator, StackEff: 0})
+	// RAISE_VARARGS pops `oparg` items (0..2) and never falls through.
+	// dis.stack_effect reports 0 for terminators; the table mirrors
+	// that with StackVar=true so callers know the effect depends on
+	// the oparg.
+	set(RAISE_VARARGS, OpMeta{Name: "RAISE_VARARGS", HasArg: true, ArgKind: ArgRaw, Flags: OpTerminator, StackVar: true})
 	set(COPY_FREE_VARS, OpMeta{Name: "COPY_FREE_VARS", HasArg: true, ArgKind: ArgRaw, StackEff: 0})
 	set(MAKE_FUNCTION, OpMeta{Name: "MAKE_FUNCTION", HasArg: false, ArgKind: ArgNone, StackEff: 0})
 
 	// Constant / small-int / name loads.
 	set(LOAD_CONST, OpMeta{Name: "LOAD_CONST", HasArg: true, ArgKind: ArgConst, StackEff: 1})
+	set(LOAD_COMMON_CONSTANT, OpMeta{Name: "LOAD_COMMON_CONSTANT", HasArg: true, ArgKind: ArgRaw, StackEff: 1})
 	set(LOAD_SMALL_INT, OpMeta{Name: "LOAD_SMALL_INT", HasArg: true, ArgKind: ArgRaw, StackEff: 1})
 	set(LOAD_NAME, OpMeta{Name: "LOAD_NAME", HasArg: true, ArgKind: ArgName, StackEff: 1})
 	set(STORE_NAME, OpMeta{Name: "STORE_NAME", HasArg: true, ArgKind: ArgName, StackEff: -1})

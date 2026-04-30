@@ -246,9 +246,17 @@ func (b *builder) visitStmt(s *Scope, st ast.Stmt) error {
 	case *ast.ClassDef:
 		return &UnsupportedScopeError{Kind: "class def", Pos: n.P}
 
+	case *ast.Assert:
+		if err := b.visitExpr(s, n.Test); err != nil {
+			return err
+		}
+		if n.Msg != nil {
+			return b.visitExpr(s, n.Msg)
+		}
+		return nil
+
 	case *ast.Try, *ast.TryStar, *ast.With, *ast.AsyncWith,
-		*ast.AsyncFor, *ast.Match, *ast.TypeAlias, *ast.Delete,
-		*ast.Assert:
+		*ast.AsyncFor, *ast.Match, *ast.TypeAlias, *ast.Delete:
 		return &UnsupportedScopeError{Kind: fmt.Sprintf("%T", st), Pos: stmtPos(st)}
 
 	default:
@@ -640,6 +648,12 @@ func (b *builder) analyze(s *Scope) error {
 
 		switch {
 		case sym.Flags.Has(SymGlobal):
+			// Global wins over local — mirrors CPython's
+			// symtable.c::analyze_block. `global x; x = 1` keeps
+			// x as global, not local. visitTarget unconditionally
+			// adds SymLocal for assignment targets, so strip it
+			// here when the global declaration is in force.
+			sym.Flags &^= SymLocal
 			s.Globals = append(s.Globals, name)
 
 		case sym.Flags.Has(SymFree):

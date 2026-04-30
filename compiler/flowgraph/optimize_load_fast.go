@@ -343,7 +343,7 @@ func isUnconditionalJump(op bytecode.Opcode) bool {
 // Mirrors CPython's IS_SCOPE_EXIT_OPCODE.
 func isScopeExit(op bytecode.Opcode) bool {
 	switch op {
-	case bytecode.RETURN_VALUE:
+	case bytecode.RETURN_VALUE, bytecode.RAISE_VARARGS:
 		return true
 	}
 	return false
