@@ -67,14 +67,17 @@ func (u *compileUnit) resolveNameOp(name string) (nameOpKind, uint32) {
 	}
 	if sym, ok := scope.Symbols[name]; ok {
 		switch {
-		case sym.Flags.Has(symtable.SymCell):
+		case sym.Flags.HasAny(symtable.SymCell | symtable.SymFree):
+			// Cell and free both lower to LOAD_DEREF / STORE_DEREF —
+			// the slot index is the LocalsPlus position. SymFree must
+			// win over SymLocal here: a `nonlocal x; x = 2` binding
+			// has both flags set, but the deref must run against the
+			// parent's cell, not the fast slot.
 			return nameOpDeref, uint32(sym.Index)
 		case sym.Flags.HasAny(symtable.SymParam | symtable.SymLocal):
 			return nameOpFast, uint32(sym.Index)
 		case sym.Flags.HasAny(symtable.SymGlobal | symtable.SymGlobalImplicit | symtable.SymBuiltin):
 			return nameOpGlobal, u.addName(name)
-		case sym.Flags.Has(symtable.SymFree):
-			return nameOpDeref, uint32(sym.Index)
 		}
 	}
 	return nameOpGlobal, u.addName(name)

@@ -132,6 +132,8 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	var termIf *ast.If
 	var raise *ast.Raise
 	var assert *ast.Assert
+	var termWhile *ast.While
+	var termFor *ast.For
 	switch last := s.Body[lastIdx].(type) {
 	case *ast.Return:
 		if last.Value == nil || last.P.Col > 255 || !validateFuncBodyReturnValue(last.Value) {
@@ -153,6 +155,16 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			return bytecode.Loc{}, ErrNotImplemented
 		}
 		assert = last
+	case *ast.While:
+		if !validateFuncBodyWhile(last) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		termWhile = last
+	case *ast.For:
+		if !validateFuncBodyFor(last) {
+			return bytecode.Loc{}, ErrNotImplemented
+		}
+		termFor = last
 	default:
 		return bytecode.Loc{}, ErrNotImplemented
 	}
@@ -196,6 +208,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if !validateIfStmt(st, false) {
 				return bytecode.Loc{}, ErrNotImplemented
 			}
+		case *ast.FunctionDef:
+			if !validateFuncBodyInnerDef(st) {
+				return bytecode.Loc{}, ErrNotImplemented
+			}
 		default:
 			return bytecode.Loc{}, ErrNotImplemented
 		}
@@ -231,6 +247,28 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 	child.Scope = childScope
 	childBlock := child.Seq.AddBlock()
 
+	// MAKE_CELL prologue. CPython 3.14 Python/compile.c::compiler_make_cell
+	// emits MAKE_CELL with the LocalsPlus slot index for every cell var
+	// (in the order they appear in u_cellvars). Synthetic ops carry
+	// NO_LOCATION which the line-table encoder serialises as the
+	// implicit-prologue NO_INFO entry.
+	for _, name := range childScope.Cells {
+		if sym, ok := childScope.Symbols[name]; ok {
+			childBlock.Instrs = append(childBlock.Instrs, ir.Instr{
+				Op: bytecode.MAKE_CELL, Arg: uint32(sym.Index), Loc: bytecode.Loc{},
+			})
+		}
+	}
+	// COPY_FREE_VARS prologue. CPython 3.14
+	// Python/compile.c::compiler_make_closure emits COPY_FREE_VARS N at
+	// the top of every nested function whose code captures N free
+	// variables from an enclosing scope.
+	if n := len(childScope.Frees); n > 0 {
+		childBlock.Instrs = append(childBlock.Instrs, ir.Instr{
+			Op: bytecode.COPY_FREE_VARS, Arg: uint32(n), Loc: bytecode.Loc{},
+		})
+	}
+
 	resumeLoc := bytecode.Loc{
 		Line: uint32(firstLineno), EndLine: uint32(firstLineno),
 		Col: 0, EndCol: 0,
@@ -262,6 +300,10 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 			if _, _, _, err := codegenIf(child, st, lines); err != nil {
 				return bytecode.Loc{}, err
 			}
+		case *ast.FunctionDef:
+			if err := emitFuncBodyInnerDef(child, st, lines); err != nil {
+				return bytecode.Loc{}, err
+			}
 		}
 	}
 	var bodyEndCol uint16
@@ -288,6 +330,20 @@ func visitFuncBodyDef(u *compileUnit, s *ast.FunctionDef, source []byte, isLast 
 		}
 		bodyEndCol = c
 		bodyEndLine = assert.P.Line
+	case termWhile != nil:
+		c, line, err := emitFuncBodyWhile(child, termWhile, lines)
+		if err != nil {
+			return bytecode.Loc{}, err
+		}
+		bodyEndCol = c
+		bodyEndLine = line
+	case termFor != nil:
+		c, line, err := emitFuncBodyFor(child, termFor, lines)
+		if err != nil {
+			return bytecode.Loc{}, err
+		}
+		bodyEndCol = c
+		bodyEndLine = line
 	default:
 		c, line, _, err := codegenIf(child, termIf, lines)
 		if err != nil {
